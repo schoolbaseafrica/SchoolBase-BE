@@ -1,4 +1,3 @@
-/* eslint-disable prettier/prettier */
 import * as crypto from 'crypto';
 
 import {
@@ -76,11 +75,10 @@ export class InviteService {
       );
       expiresAt.setDate(expiresAt.getDate() + tokenExpirationDays);
 
-      // Check for Pending Invite
+      // Check for any existing invite for this email
       const existingInvite = await this.inviteModelAction.get({
         identifierOptions: {
           email: inviteUserDto.email,
-          status: InviteStatus.PENDING,
         } as FindOptionsWhere<Invite>,
       });
 
