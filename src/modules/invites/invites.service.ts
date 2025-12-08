@@ -1,3 +1,4 @@
+/* eslint-disable prettier/prettier */
 import * as crypto from 'crypto';
 
 import {
@@ -65,7 +66,17 @@ export class InviteService {
         throw new ConflictException(sysMsg.ACCOUNT_ALREADY_EXISTS);
       }
 
-      // Check if there's a pending invite
+      // Generate Tokens
+      const token = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+      const expiresAt = new Date();
+      const tokenExpirationDays = parseInt(
+        this.configService.get<string>('invite.expiry'),
+      );
+      expiresAt.setDate(expiresAt.getDate() + tokenExpirationDays);
+
+      // Check for Pending Invite
       const existingInvite = await this.inviteModelAction.get({
         identifierOptions: {
           email: inviteUserDto.email,
@@ -73,50 +84,59 @@ export class InviteService {
         } as FindOptionsWhere<Invite>,
       });
 
-      if (existingInvite && new Date() < existingInvite.expires_at) {
-        throw new ConflictException(sysMsg.ACTIVE_INVITE_EXISTS);
-      }
+      let savedInvite: Invite;
 
-      // Generate token
-      const token = crypto.randomBytes(32).toString('hex');
-      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      if (existingInvite) {
+        // Update exisitng invite and resend
+        savedInvite = await this.inviteModelAction.update({
+          identifierOptions: { id: existingInvite.id },
+          updatePayload: {
+            token_hash: tokenHash,
+            expires_at: expiresAt,
+            role: inviteUserDto.role,
+            full_name: inviteUserDto.full_name,
+          },
+          transactionOptions: {
+            useTransaction: true,
+            transaction: manager,
+          },
+        });
 
-      // Create invite
-      const expiresAt = new Date();
-      const tokenExpirationDays = parseInt(
-        this.configService.get<string>('invite.expiry'),
-      );
-      expiresAt.setDate(expiresAt.getDate() + tokenExpirationDays);
-
-      const savedInvite = await this.inviteModelAction.create({
-        createPayload: {
+        this.logger.info('User invitation updated (Resent)', {
+          invite_id: savedInvite.id,
           email: inviteUserDto.email,
-          role: inviteUserDto.role,
-          full_name: inviteUserDto.full_name,
-          token_hash: tokenHash,
-          expires_at: expiresAt,
-          status: InviteStatus.PENDING,
-          accepted: false,
-        },
-        transactionOptions: {
-          useTransaction: true,
-          transaction: manager,
-        },
-      });
+        });
+      } else {
+        // Create new invite
+        savedInvite = await this.inviteModelAction.create({
+          createPayload: {
+            email: inviteUserDto.email,
+            role: inviteUserDto.role,
+            full_name: inviteUserDto.full_name,
+            token_hash: tokenHash,
+            expires_at: expiresAt,
+            status: InviteStatus.PENDING,
+            accepted: false,
+          },
+          transactionOptions: {
+            useTransaction: true,
+            transaction: manager,
+          },
+        });
+
+        this.logger.info('User invitation created', {
+          invite_id: savedInvite.id,
+          email: inviteUserDto.email,
+        });
+      }
 
       // Send invitation email
       await this.sendInvitationEmail(inviteUserDto, token);
 
-      this.logger.info('User invitation created and email sent', {
-        invite_id: savedInvite.id,
-        email: inviteUserDto.email,
-        role: inviteUserDto.role,
-      });
-
       return {
         id: savedInvite.id,
         email: savedInvite.email,
-        invited_at: savedInvite.invited_at,
+        invited_at: savedInvite.invited_at || savedInvite.createdAt,
         role: savedInvite.role,
         full_name: savedInvite.full_name,
       };
