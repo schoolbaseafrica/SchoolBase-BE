@@ -39,4 +39,3 @@ lerna-debug.log*
 .env.setup.backup.*
 logs/
 # package-lock.json
-package-lock.json
