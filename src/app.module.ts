@@ -15,7 +15,6 @@ import { TermModule } from './modules/academic-term/term.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ClassModule } from './modules/class/class.module';
-import { ContactModule } from './modules/contact/contact.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DatabaseModule } from './modules/database-setup/database.module';
 import { EmailModule } from './modules/email/email.module';
@@ -38,7 +37,6 @@ import { TeacherSubjectModule } from './modules/teacher-subject/teacher-subject.
 import { TimetableModule } from './modules/timetable/timetable.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UserModule } from './modules/user/user.module';
-import { WaitlistModule } from './modules/waitlist/waitlist.module';
 @Module({
   imports: [
     LoggerModule,
@@ -63,7 +61,6 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
       }),
     }),
     AuthModule,
-    WaitlistModule,
     UserModule,
     EmailModule,
     SchoolModule,
@@ -80,7 +77,6 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
     TermModule,
     StreamModule,
     RoomModule,
-    ContactModule,
     StudentModule,
     DashboardModule,
     DatabaseModule,
