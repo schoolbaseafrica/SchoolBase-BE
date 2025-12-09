@@ -15,6 +15,7 @@ import {
 import {
   ReviewTeacherManualCheckinResponseDto,
   TeacherAttendanceTodaySummaryResponseDto,
+  TeacherAutomaticCheckinResponseDto,
   TeacherCheckinRequestResponseDto,
   TeacherManualCheckinResponseDto,
 } from '../dto';
@@ -193,6 +194,37 @@ export const ApiAutoManualCheckinDocs = () =>
       status: HttpStatus.CREATED,
       description: 'Check-in successful, attendance marked automatically',
       type: TeacherManualCheckinResponseDto,
+    }),
+    ApiBadRequestResponse({
+      description:
+        'Future date / Date too far in past / Check-in time outside school hours / Teacher inactive',
+    }),
+    ApiConflictResponse({
+      description:
+        'Already checked in for this date / Pending manual check-in request exists',
+    }),
+    ApiNotFoundResponse({
+      description: 'Teacher not found',
+    }),
+    ApiInternalServerErrorResponse({
+      description: 'Internal server error',
+    }),
+  );
+
+// --- AUTOMATIC CHECK-IN (NFC) ---
+export const ApiAutomaticCheckinDocs = () =>
+  applyDecorators(
+    ApiTags('Attendance'),
+    ApiBearerAuth(),
+    ApiOperation({
+      summary: 'Automatic check-in (Teacher only)',
+      description:
+        'Automatically marks teacher as Present/Late. Date defaults to today if not provided.',
+    }),
+    ApiResponse({
+      status: HttpStatus.CREATED,
+      description: 'Check-in successful, attendance marked automatically',
+      type: TeacherAutomaticCheckinResponseDto,
     }),
     ApiBadRequestResponse({
       description:

@@ -15,10 +15,13 @@ import {
   CreateTeacherCheckoutDto,
   ListTeacherCheckinRequestsQueryDto,
   ReviewTeacherManualCheckinDto,
+  CreateTeacherAutomaticCheckinDto,
 } from '../dto';
 import {
   TeacherDailyAttendanceDecisionEnum,
   TeacherManualCheckinStatusEnum,
+  TeacherDailyAttendanceStatusEnum,
+  TeacherDailyAttendanceSourceEnum,
 } from '../enums';
 import { TeacherManualCheckinModelAction } from '../model-actions';
 import { TeacherDailyAttendanceModelAction } from '../model-actions/teacher-daily-attendance.action';
@@ -1051,8 +1054,10 @@ describe('TeachersAttendanceService', () => {
 
   describe('createAutoManualCheckin', () => {
     it('should successfully create auto manual checkin with PRESENT status', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '08:30:00',
         reason: 'Late due to traffic',
       };
@@ -1093,8 +1098,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should create auto manual checkin with LATE status when check-in time is at or after 9 AM', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '09:30:00',
         reason: 'Traffic',
       };
@@ -1164,8 +1171,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw NotFoundException when teacher not found', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '08:30:00',
         reason: 'Late',
       };
@@ -1181,8 +1190,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw BadRequestException when teacher is not active', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '08:30:00',
         reason: 'Late',
       };
@@ -1243,8 +1254,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw BadRequestException when check-in time is before school hours', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '06:30:00',
         reason: 'Early',
       };
@@ -1260,8 +1273,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw BadRequestException when check-in time is at or after 5 PM', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '17:00:00',
         reason: 'Late',
       };
@@ -1277,16 +1292,19 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw ConflictException when attendance already exists for the date', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '08:30:00',
         reason: 'Late',
       };
 
+      today.setHours(0, 0, 0, 0);
       const existingAttendance = {
         id: 'attendance-123',
         teacher_id: mockTeacher.id,
-        date: new Date(dto.date),
+        date: today,
       };
 
       teacherModelAction.get.mockResolvedValue(mockTeacher as never);
@@ -1303,16 +1321,19 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw ConflictException when pending manual checkin request exists', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '08:30:00',
         reason: 'Late',
       };
 
+      today.setHours(0, 0, 0, 0);
       const pendingRequest = {
         id: 'pending-123',
         teacher_id: mockTeacher.id,
-        check_in_date: new Date(dto.date),
+        check_in_date: today,
         status: TeacherManualCheckinStatusEnum.PENDING,
       };
 
@@ -1333,8 +1354,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should accept check-in time at 7 AM', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '07:00:00',
         reason: 'On time',
       };
@@ -1358,8 +1381,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should accept check-in time at 4:59 PM', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: todayStr,
         check_in_time: '16:59:00',
         reason: 'Just in time',
       };
@@ -1409,6 +1434,391 @@ describe('TeachersAttendanceService', () => {
       const result = await service.createAutoManualCheckin(mockUser, dto);
 
       expect(result.message).toBe(sysMsg.TEACHER_AUTO_CHECKIN_SUCCESS);
+    });
+  });
+
+  describe('createAutomaticCheckin', () => {
+    const getValidDto = (): CreateTeacherAutomaticCheckinDto => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      return {
+        date: todayStr,
+        check_in_time: '08:30:00',
+        reason: 'NFC check-in',
+      };
+    };
+
+    it('should successfully create automatic checkin with PRESENT status', async () => {
+      const validDto = getValidDto();
+      const today = new Date(validDto.date);
+      today.setHours(0, 0, 0, 0);
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        date: today,
+        check_in_time: new Date(`${validDto.date}T${validDto.check_in_time}`),
+        status: TeacherDailyAttendanceStatusEnum.PRESENT,
+        source: TeacherDailyAttendanceSourceEnum.AUTOMATED,
+        marked_by: mockUser.user.userId,
+        marked_at: new Date(),
+        notes: validDto.reason,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      const result = await service.createAutomaticCheckin(mockUser, validDto);
+
+      expect(result.message).toBe(sysMsg.TEACHER_AUTO_CHECKIN_SUCCESS);
+      expect(result.data).toBeDefined();
+      expect(teacherDailyAttendanceModelAction.create).toHaveBeenCalledWith({
+        createPayload: expect.objectContaining({
+          teacher_id: mockTeacher.id,
+          status: TeacherDailyAttendanceStatusEnum.PRESENT,
+          source: TeacherDailyAttendanceSourceEnum.AUTOMATED,
+          marked_by: mockUser.user.userId,
+          notes: validDto.reason,
+        }),
+        transactionOptions: { useTransaction: false },
+      });
+    });
+
+    it('should create automatic checkin with LATE status when check-in time is at or after 9 AM', async () => {
+      const validDto = getValidDto();
+      const lateDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        check_in_time: '09:30:00',
+      };
+
+      const today = new Date(lateDto.date);
+      today.setHours(0, 0, 0, 0);
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        date: today,
+        check_in_time: new Date(`${lateDto.date}T${lateDto.check_in_time}`),
+        status: TeacherDailyAttendanceStatusEnum.LATE,
+        source: TeacherDailyAttendanceSourceEnum.AUTOMATED,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      await service.createAutomaticCheckin(mockUser, lateDto);
+
+      expect(teacherDailyAttendanceModelAction.create).toHaveBeenCalledWith({
+        createPayload: expect.objectContaining({
+          status: TeacherDailyAttendanceStatusEnum.LATE,
+          source: TeacherDailyAttendanceSourceEnum.AUTOMATED,
+        }),
+        transactionOptions: { useTransaction: false },
+      });
+    });
+
+    it('should throw NotFoundException when teacher not found', async () => {
+      const validDto = getValidDto();
+      teacherModelAction.get.mockResolvedValue(null);
+
+      await expect(
+        service.createAutomaticCheckin(mockUser, validDto),
+      ).rejects.toThrow(NotFoundException);
+      await expect(
+        service.createAutomaticCheckin(mockUser, validDto),
+      ).rejects.toThrow(sysMsg.TEACHER_NOT_FOUND);
+    });
+
+    it('should throw BadRequestException when teacher is not active', async () => {
+      const validDto = getValidDto();
+      const inactiveTeacher = { ...mockTeacher, is_active: false };
+      teacherModelAction.get.mockResolvedValue(inactiveTeacher as never);
+
+      await expect(
+        service.createAutomaticCheckin(mockUser, validDto),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.createAutomaticCheckin(mockUser, validDto),
+      ).rejects.toThrow(sysMsg.TEACHER_IS_NOT_ACTIVE);
+    });
+
+    it('should throw BadRequestException when check-in date is in the future', async () => {
+      const validDto = getValidDto();
+      const futureDate = new Date();
+      futureDate.setDate(futureDate.getDate() + 5);
+      const futureDateStr = futureDate.toISOString().split('T')[0];
+
+      const futureDateDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        date: futureDateStr,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+
+      await expect(
+        service.createAutomaticCheckin(mockUser, futureDateDto),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.createAutomaticCheckin(mockUser, futureDateDto),
+      ).rejects.toThrow(sysMsg.CHECK_IN_DATE_IS_IN_THE_FUTURE);
+    });
+
+    it('should throw BadRequestException when check-in date is more than 7 days in the past', async () => {
+      const validDto = getValidDto();
+      const pastDate = new Date();
+      pastDate.setDate(pastDate.getDate() - 8);
+      const pastDateStr = pastDate.toISOString().split('T')[0];
+
+      const pastDateDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        date: pastDateStr,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+
+      await expect(
+        service.createAutomaticCheckin(mockUser, pastDateDto),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.createAutomaticCheckin(mockUser, pastDateDto),
+      ).rejects.toThrow(
+        sysMsg.CHECK_IN_DATE_CANNOT_BE_MORE_THAN_DAYS_IN_THE_PAST(7),
+      );
+    });
+
+    it('should accept date exactly 7 days in the past', async () => {
+      const validDto = getValidDto();
+      const pastDate = new Date();
+      pastDate.setDate(pastDate.getDate() - 7);
+      const pastDateStr = pastDate.toISOString().split('T')[0];
+
+      const pastDateDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        date: pastDateStr,
+      };
+
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        status: TeacherDailyAttendanceStatusEnum.PRESENT,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      const result = await service.createAutomaticCheckin(
+        mockUser,
+        pastDateDto,
+      );
+
+      expect(result.message).toBe(sysMsg.TEACHER_AUTO_CHECKIN_SUCCESS);
+    });
+
+    it('should throw BadRequestException when check-in time is before 7 AM', async () => {
+      const validDto = getValidDto();
+      const earlyDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        check_in_time: '06:30:00',
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+
+      await expect(
+        service.createAutomaticCheckin(mockUser, earlyDto),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.createAutomaticCheckin(mockUser, earlyDto),
+      ).rejects.toThrow(sysMsg.CHECK_IN_TIME_NOT_WITHIN_SCHOOL_HOURS);
+    });
+
+    it('should throw BadRequestException when check-in time is at or after 5 PM', async () => {
+      const validDto = getValidDto();
+      const lateDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        check_in_time: '17:00:00',
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+
+      await expect(
+        service.createAutomaticCheckin(mockUser, lateDto),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.createAutomaticCheckin(mockUser, lateDto),
+      ).rejects.toThrow(sysMsg.CHECK_IN_TIME_NOT_WITHIN_SCHOOL_HOURS);
+    });
+
+    it('should accept check-in time at 7 AM', async () => {
+      const validDto = getValidDto();
+      const boundaryDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        check_in_time: '07:00:00',
+      };
+
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        status: TeacherDailyAttendanceStatusEnum.PRESENT,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      const result = await service.createAutomaticCheckin(
+        mockUser,
+        boundaryDto,
+      );
+
+      expect(result.message).toBe(sysMsg.TEACHER_AUTO_CHECKIN_SUCCESS);
+    });
+
+    it('should accept check-in time at 4:59 PM', async () => {
+      const validDto = getValidDto();
+      const boundaryDto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        check_in_time: '16:59:00',
+      };
+
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        status: TeacherDailyAttendanceStatusEnum.PRESENT,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      const result = await service.createAutomaticCheckin(
+        mockUser,
+        boundaryDto,
+      );
+
+      expect(result.message).toBe(sysMsg.TEACHER_AUTO_CHECKIN_SUCCESS);
+    });
+
+    it('should throw ConflictException when attendance already exists for the date', async () => {
+      const validDto = getValidDto();
+      const today = new Date(validDto.date);
+      today.setHours(0, 0, 0, 0);
+      const existingAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        date: today,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(
+        existingAttendance as never,
+      );
+
+      await expect(
+        service.createAutomaticCheckin(mockUser, validDto),
+      ).rejects.toThrow(ConflictException);
+      await expect(
+        service.createAutomaticCheckin(mockUser, validDto),
+      ).rejects.toThrow(sysMsg.ALREADY_CHECKED_IN_FOR_THE_SAME_DATE);
+    });
+
+    it('should mark attendance as LATE when check-in time is exactly 9 AM', async () => {
+      const validDto = getValidDto();
+      const dto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        check_in_time: '09:00:00',
+      };
+
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        status: TeacherDailyAttendanceStatusEnum.LATE,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      await service.createAutomaticCheckin(mockUser, dto);
+
+      expect(teacherDailyAttendanceModelAction.create).toHaveBeenCalledWith({
+        createPayload: expect.objectContaining({
+          status: TeacherDailyAttendanceStatusEnum.LATE,
+        }),
+        transactionOptions: { useTransaction: false },
+      });
+    });
+
+    it('should mark attendance as PRESENT when check-in time is 8:59 AM', async () => {
+      const validDto = getValidDto();
+      const dto: CreateTeacherAutomaticCheckinDto = {
+        ...validDto,
+        check_in_time: '08:59:00',
+      };
+
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        status: TeacherDailyAttendanceStatusEnum.PRESENT,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      await service.createAutomaticCheckin(mockUser, dto);
+
+      expect(teacherDailyAttendanceModelAction.create).toHaveBeenCalledWith({
+        createPayload: expect.objectContaining({
+          status: TeacherDailyAttendanceStatusEnum.PRESENT,
+        }),
+        transactionOptions: { useTransaction: false },
+      });
+    });
+
+    it('should create checkin without reason when reason is not provided', async () => {
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      const dtoWithoutReason: CreateTeacherAutomaticCheckinDto = {
+        date: todayStr,
+        check_in_time: '08:30:00',
+      };
+
+      const mockAttendance = {
+        id: 'attendance-123',
+        teacher_id: mockTeacher.id,
+        status: TeacherDailyAttendanceStatusEnum.PRESENT,
+        notes: undefined,
+      };
+
+      teacherModelAction.get.mockResolvedValue(mockTeacher as never);
+      teacherDailyAttendanceModelAction.get.mockResolvedValue(null);
+      teacherDailyAttendanceModelAction.create.mockResolvedValue(
+        mockAttendance as never,
+      );
+
+      await service.createAutomaticCheckin(mockUser, dtoWithoutReason);
+
+      expect(teacherDailyAttendanceModelAction.create).toHaveBeenCalledWith({
+        createPayload: expect.objectContaining({
+          notes: undefined,
+        }),
+        transactionOptions: { useTransaction: false },
+      });
     });
   });
 });

@@ -22,6 +22,7 @@ import { UserRole } from 'src/modules/shared/enums';
 import { IRequestWithUser } from '../../../common/types/request-with-user.interface';
 import {
   ApiAutoManualCheckinDocs,
+  ApiAutomaticCheckinDocs,
   ApiCreateTeacherManualCheckinDocs,
   ApiGetTodayAttendanceSummaryDocs,
   ApiListTeacherCheckinRequestsDocs,
@@ -29,6 +30,7 @@ import {
   ApiTeacherCheckoutDocs,
 } from '../docs';
 import {
+  CreateTeacherAutomaticCheckinDto,
   CreateTeacherManualCheckinDto,
   ListTeacherCheckinRequestsQueryDto,
   ReviewTeacherManualCheckinDto,
@@ -116,5 +118,17 @@ export class TeachersAttendanceController {
     @Body() dto: CreateTeacherManualCheckinDto,
   ) {
     return this.teachersAttendanceService.createAutoManualCheckin(req, dto);
+  }
+
+  // --- AUTOMATIC CHECK-IN (NFC FALLBACK) ---
+  @Post('automatic-checkin')
+  @Roles(UserRole.TEACHER)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiAutomaticCheckinDocs()
+  async createAutomaticCheckin(
+    @Req() req: IRequestWithUser,
+    @Body() dto: CreateTeacherAutomaticCheckinDto,
+  ) {
+    return this.teachersAttendanceService.createAutomaticCheckin(req, dto);
   }
 }
