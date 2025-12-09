@@ -4,7 +4,7 @@ export default () => ({
   port: parseInt(process.env.PORT, 10) || 3008,
 
   app: {
-    name: process.env.APP_NAME || 'Open School Portal',
+    name: process.env.APP_NAME || 'SchoolBase',
     slug: process.env.APP_SLUG,
     logo_url: process.env.LOGO_URL,
   },
