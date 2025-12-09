@@ -559,8 +559,7 @@ export const CHECK_IN_DATE_CANNOT_BE_MORE_THAN_DAYS_IN_THE_PAST = (
 ) => `Check-in date cannot be more than ${maxPastDays} days in the past`;
 export const PENDING_MANUAL_CHECKIN_REQUEST_EXISTS_FOR_THIS_DATE =
   'A pending manual check-in request exists for this date. Please wait for approval or cancel the request.';
-export const TEACHER_AUTO_CHECKIN_SUCCESS =
-  'Teacher auto checkin created successfully';
+export const TEACHER_AUTO_CHECKIN_SUCCESS = 'Teacher checked in successfully';
 //attendance message
 export const REGISTRATION_NUMBER_REQUIRED =
   'Child registration number is required';
