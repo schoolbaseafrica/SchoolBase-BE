@@ -14,7 +14,11 @@ import { Student } from 'src/modules/student/entities';
 import { IPaginationMeta } from '../../../common/types/base-response.interface';
 import * as sysMsg from '../../../constants/system.messages';
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
-import { TermName } from '../../academic-term/entities/term.entity';
+import {
+  Term,
+  TermName,
+  TermStatus,
+} from '../../academic-term/entities/term.entity';
 import { TermModelAction } from '../../academic-term/model-actions';
 import { ClassStudent } from '../../class/entities/class-student.entity';
 import { ClassTeacher } from '../../class/entities/class-teacher.entity';
@@ -34,14 +38,14 @@ import { ScheduleBasedAttendance } from '../entities';
 import { StudentDailyAttendance } from '../entities/student-daily-attendance.entity';
 import {
   AttendanceStatus,
-  DailyAttendanceStatus,
   AttendanceType,
+  DailyAttendanceStatus,
   EditRequestStatus,
 } from '../enums/attendance-status.enum';
 import {
+  AttendanceEditRequestModelAction,
   AttendanceModelAction,
   StudentDailyAttendanceModelAction,
-  AttendanceEditRequestModelAction,
 } from '../model-actions';
 
 @Injectable()
@@ -888,42 +892,32 @@ export class AttendanceService {
   }
 
   /**
-   * Get daily attendance summary for an entire class
-   * Shows each student's attendance across all periods for a specific date
-   */
-  /**
    * Get total daily attendance for a class on a specific date
    * Returns student daily attendance records (check-in/check-out based)
    */
-  async getClassDailyAttendance(
-    classId: string,
-    date: string,
-  ): Promise<{
-    message: string;
-    class_id: string;
-    date: string;
-    students: Array<{
-      student_id: string;
-      first_name: string;
-      middle_name?: string;
-      last_name: string;
-      attendance_id?: string;
-      status?: string;
-      check_in_time?: string;
-      check_out_time?: string;
-      notes?: string;
-    }>;
-    summary: {
-      total_students: number;
-      present_count: number;
-      absent_count: number;
-      late_count: number;
-      excused_count: number;
-      half_day_count: number;
-      not_marked_count: number;
-    };
-  }> {
-    // Get all students enrolled in the class
+  async getClassDailyAttendance(classId: string, date?: string) {
+    let dateString = date;
+
+    if (!dateString) {
+      const today = new Date();
+      const year = today.getFullYear();
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const day = String(today.getDate()).padStart(2, '0');
+      dateString = `${year}-${month}-${day}`;
+    }
+
+    // Validate date format
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString))
+      throw new BadRequestException(sysMsg.INVALID_DATE_FORMAT);
+
+    const activeTerm = await this.dataSource.manager.findOne(Term, {
+      where: { status: TermStatus.ACTIVE },
+    });
+
+    if (!activeTerm) {
+      throw new NotFoundException(sysMsg.NO_ACTIVE_TERM_FOUND);
+    }
+
     const enrolledStudents = await this.dataSource.manager.find(ClassStudent, {
       where: {
         class: { id: classId },
@@ -933,7 +927,7 @@ export class AttendanceService {
     });
 
     if (enrolledStudents.length === 0) {
-      throw new NotFoundException('No students enrolled in this class');
+      throw new NotFoundException(sysMsg.NO_STUDENTS_ENROLLED_IN_CLASS);
     }
 
     // Get all daily attendance records for this class on this date
@@ -941,7 +935,7 @@ export class AttendanceService {
     const attendanceRecords = await this.dataSource.manager
       .createQueryBuilder(StudentDailyAttendance, 'attendance')
       .where('attendance.class_id = :classId', { classId })
-      .andWhere('attendance.date = :date', { date })
+      .andWhere('attendance.date = :date', { date: dateString })
       .getMany();
 
     // Create a map of student attendance for quick lookup
@@ -952,7 +946,6 @@ export class AttendanceService {
     // Build student data with attendance information
     const students = enrolledStudents.map((enrollment) => {
       const attendance = attendanceMap.get(enrollment.student.id);
-
       return {
         student_id: enrollment.student.id,
         first_name: enrollment.student.user.first_name,
@@ -960,12 +953,8 @@ export class AttendanceService {
         last_name: enrollment.student.user.last_name,
         attendance_id: attendance?.id,
         status: attendance?.status,
-        check_in_time: attendance?.check_in_time
-          ? attendance.check_in_time.toString()
-          : undefined,
-        check_out_time: attendance?.check_out_time
-          ? attendance.check_out_time.toString()
-          : undefined,
+        check_in_time: attendance?.check_in_time?.toString(),
+        check_out_time: attendance?.check_out_time?.toString(),
         notes: attendance?.notes,
       };
     });
@@ -974,33 +963,37 @@ export class AttendanceService {
     const presentCount = attendanceRecords.filter(
       (r) => r.status === DailyAttendanceStatus.PRESENT,
     ).length;
-    const absentCount = attendanceRecords.filter(
-      (r) => r.status === DailyAttendanceStatus.ABSENT,
-    ).length;
-    const lateCount = attendanceRecords.filter(
-      (r) => r.status === DailyAttendanceStatus.LATE,
-    ).length;
-    const excusedCount = attendanceRecords.filter(
-      (r) => r.status === DailyAttendanceStatus.EXCUSED,
-    ).length;
-    const halfDayCount = attendanceRecords.filter(
-      (r) => r.status === DailyAttendanceStatus.HALF_DAY,
-    ).length;
-    const notMarkedCount = enrolledStudents.length - attendanceRecords.length;
+
+    // Calculate trend using the active term's start date as the baseline
+    const trendData = await this.calculateClassAttendanceTrend(
+      classId,
+      dateString,
+      presentCount,
+      activeTerm.startDate,
+    );
 
     return {
-      message: 'Class daily attendance retrieved successfully',
+      message: sysMsg.CLASS_DAILY_ATTENDANCE_RETRIEVED,
       class_id: classId,
-      date,
+      date: dateString,
       students,
       summary: {
         total_students: enrolledStudents.length,
         present_count: presentCount,
-        absent_count: absentCount,
-        late_count: lateCount,
-        excused_count: excusedCount,
-        half_day_count: halfDayCount,
-        not_marked_count: notMarkedCount,
+        absent_count: attendanceRecords.filter(
+          (r) => r.status === DailyAttendanceStatus.ABSENT,
+        ).length,
+        late_count: attendanceRecords.filter(
+          (r) => r.status === DailyAttendanceStatus.LATE,
+        ).length,
+        excused_count: attendanceRecords.filter(
+          (r) => r.status === DailyAttendanceStatus.EXCUSED,
+        ).length,
+        half_day_count: attendanceRecords.filter(
+          (r) => r.status === DailyAttendanceStatus.HALF_DAY,
+        ).length,
+        not_marked_count: enrolledStudents.length - attendanceRecords.length,
+        trend: trendData,
       },
     };
   }
@@ -1516,6 +1509,61 @@ export class AttendanceService {
         request_id: requestId,
         status: dto.status,
       },
+    };
+  }
+
+  // Calculates attendance trend by comparing the current day's count
+  // against the historical average within the current term.
+  private async calculateClassAttendanceTrend(
+    classId: string,
+    targetDateString: string,
+    currentPresentCount: number,
+    termStartDate: Date,
+  ) {
+    const termStartDateString = new Date(termStartDate)
+      .toISOString()
+      .split('T')[0];
+
+    // Calculate stats between Term Start and Yesterday
+    const historyStats = await this.dataSource.manager
+      .createQueryBuilder(StudentDailyAttendance, 'sda')
+      .select('COUNT(sda.id)', 'total_presents')
+      .addSelect('COUNT(DISTINCT sda.date)', 'total_days')
+      .where('sda.class_id = :classId', { classId })
+      .andWhere('sda.status = :status', {
+        status: DailyAttendanceStatus.PRESENT,
+      })
+      .andWhere('sda.date >= :termStart', { termStart: termStartDateString })
+      .andWhere('sda.date < :targetDate', { targetDate: targetDateString })
+      .getRawOne();
+
+    const historicalTotalPresents = parseInt(
+      historyStats.total_presents || '0',
+      10,
+    );
+    const historicalTotalDays = parseInt(historyStats.total_days || '0', 10);
+
+    const averageAttendance =
+      historicalTotalDays > 0
+        ? historicalTotalPresents / historicalTotalDays
+        : 0;
+
+    let direction: 'UP' | 'DOWN' | 'STABLE' = 'STABLE';
+    let percentage = 0;
+
+    if (averageAttendance > 0) {
+      const diff = currentPresentCount - averageAttendance;
+      percentage = (Math.abs(diff) / averageAttendance) * 100;
+
+      // Use a tolerance buffer (0.5) to avoid flickering on minor deviations
+      if (diff > 0.5) direction = 'UP';
+      else if (diff < -0.5) direction = 'DOWN';
+    }
+
+    return {
+      direction,
+      percentage: parseFloat(percentage.toFixed(1)),
+      baseline_avg: Math.round(averageAttendance),
     };
   }
 }

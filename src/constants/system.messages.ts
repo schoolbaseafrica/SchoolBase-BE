@@ -74,6 +74,7 @@ export const VALIDATION_ERROR = 'validation error';
 export const INVALID_PAYLOAD = 'invalid payload';
 export const INVALID_PARAMETER = 'invalid parameter';
 export const MISSING_FIELDS = 'missing fields';
+export const INVALID_DATE_FORMAT = 'invalid date format';
 
 // Resource / CRUD
 export const RESOURCE_CREATED = 'resource created';
@@ -284,6 +285,8 @@ export const STUDENT_NOT_ASSIGNED_TO_CLASS =
   'Student is not currently assigned to this class.';
 export const STUDENT_UNASSIGNED_SUCCESSFULLY =
   'Student unassigned successfully';
+export const NO_STUDENTS_ENROLLED_IN_CLASS =
+  'No students enrolled in this class';
 
 // Parent messages
 export const PARENT_CREATED = 'Parent created successfully';
@@ -323,6 +326,7 @@ export const DATABASE_CONFIGURATION_SUCCESS =
   'Database configuration successful';
 export const DATABASE_CONFIGURATION_UPDATED =
   'Database configuration updated successfully';
+
 // Student messages
 export const STUDENT_CREATED = 'Student created successfully';
 export const STUDENT_EMAIL_CONFLICT = `Student with email already exists.`;
@@ -349,7 +353,7 @@ export const INVALID_TERM =
   'Invalid term. Must be one of: FIRST, SECOND, THIRD';
 export const TERM_UPDATED = 'Term updated successfully';
 export const TERM_NOT_FOUND = 'Term not found';
-export const NO_ACTIVE_TERM = 'No active term found';
+export const NO_ACTIVE_TERM_FOUND = 'No active term found';
 export const TERM_UPDATE_FAILED = 'Failed to update term';
 export const ARCHIVED_TERM_LOCKED =
   'Cannot modify an archived term. Archived terms are read-only to preserve historical data.';
@@ -481,6 +485,8 @@ export const STUDENT_MONTHLY_ATTENDANCE_RETRIEVED =
   'Student monthly attendance retrieved successfully';
 export const STUDENTS_CAN_ONLY_VIEW_OWN_ATTENDANCE =
   'Students can only view their own attendance';
+export const CLASS_DAILY_ATTENDANCE_RETRIEVED =
+  'Class daily attendance retrieved successfully';
 
 // Attendance Lock message
 export const ATTENDANCE_LOCKED =

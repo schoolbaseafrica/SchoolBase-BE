@@ -15,9 +15,9 @@ import { TermModelAction } from '../../academic-term/model-actions';
 import { ScheduleBasedAttendance, StudentDailyAttendance } from '../entities';
 import { AttendanceStatus, DailyAttendanceStatus } from '../enums';
 import {
+  AttendanceEditRequestModelAction,
   AttendanceModelAction,
   StudentDailyAttendanceModelAction,
-  AttendanceEditRequestModelAction,
 } from '../model-actions';
 import { AttendanceService } from '../services/attendance.service';
 
@@ -412,51 +412,78 @@ describe('AttendanceService', () => {
   });
 
   describe('getClassDailyAttendance', () => {
-    it('should retrieve daily attendance records for a class', async () => {
+    it('should retrieve daily attendance records and calculate trends', async () => {
       const classId = 'class-123';
       const date = '2025-12-02';
+
+      mockFindOne.mockResolvedValue({
+        id: 'term-1',
+        startDate: new Date('2025-09-01'),
+        status: 'ACTIVE',
+      });
 
       mockFind.mockResolvedValue([
         {
           student: {
             id: 'student-001',
-            user: { first_name: 'John', middle_name: 'A', last_name: 'Doe' },
+            user: { first_name: 'John', last_name: 'Doe' },
           },
           is_active: true,
         },
         {
           student: {
             id: 'student-002',
-            user: { first_name: 'Jane', middle_name: 'B', last_name: 'Smith' },
+            user: { first_name: 'Jane', last_name: 'Smith' },
           },
           is_active: true,
         },
       ]);
 
-      // Mock createQueryBuilder to return schedules for the class
-      const mockQueryBuilder: Partial<SelectQueryBuilder<unknown>> = {
-        innerJoin: jest.fn().mockReturnThis(),
-        leftJoinAndSelect: jest.fn().mockReturnThis(),
+      const mockDailyAttendanceQuery: Partial<
+        SelectQueryBuilder<StudentDailyAttendance>
+      > = {
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         getMany: jest.fn().mockResolvedValue([
-          { id: 'schedule-1', period_order: 1 },
-          { id: 'schedule-2', period_order: 2 },
+          {
+            student_id: 'student-001',
+            status: 'PRESENT',
+            check_in_time: new Date(),
+          },
         ]),
-        getRawMany: jest.fn().mockResolvedValue([]),
       };
 
-      jest
+      const mockTrendQuery: Partial<
+        SelectQueryBuilder<StudentDailyAttendance>
+      > = {
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getRawOne: jest.fn().mockResolvedValue({
+          total_presents: '50',
+          total_days: '5',
+        }),
+      };
+
+      const createQueryBuilderSpy = jest
         .spyOn(service['dataSource'].manager, 'createQueryBuilder')
-        .mockReturnValue(mockQueryBuilder as SelectQueryBuilder<unknown>);
+        .mockReturnValueOnce(
+          mockDailyAttendanceQuery as unknown as SelectQueryBuilder<StudentDailyAttendance>,
+        )
+        .mockReturnValueOnce(
+          mockTrendQuery as unknown as SelectQueryBuilder<StudentDailyAttendance>,
+        );
 
       const result = await service.getClassDailyAttendance(classId, date);
 
-      expect(result.message).toBe(
-        'Class daily attendance retrieved successfully',
-      );
-      expect(result).toHaveProperty('students');
-      expect(Array.isArray(result.students)).toBe(true);
+      expect(result.summary.trend).toEqual({
+        direction: 'DOWN',
+        percentage: 90.0,
+        baseline_avg: 10,
+      });
+
+      expect(createQueryBuilderSpy).toHaveBeenCalledTimes(2);
     });
   });
 
