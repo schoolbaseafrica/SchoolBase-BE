@@ -101,7 +101,7 @@ export class AuthService {
         name: newUser.first_name,
         email: newUser.email,
         role: newUser.role,
-        password: signupPayload.password, // ⚠️ or a generated temporary password
+        password: signupPayload.password, // generated temporary password
         school_name: this.configService.get<string>('school.name'),
         logo_url: this.configService.get<string>('school.logoUrl'),
         change_password: `${this.configService.get<string>('frontend.url')}/reset-password`,
