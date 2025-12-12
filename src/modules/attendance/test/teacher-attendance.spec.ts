@@ -11,8 +11,8 @@ import { IRequestWithUser } from '../../../common/types/request-with-user.interf
 import * as sysMsg from '../../../constants/system.messages';
 import { TeacherModelAction } from '../../teacher/model-actions/teacher-actions';
 import {
-  CreateTeacherManualCheckinDto,
   CreateTeacherCheckoutDto,
+  CreateTeacherManualCheckinDto,
   ListTeacherCheckinRequestsQueryDto,
   ReviewTeacherManualCheckinDto,
 } from '../dto';
@@ -462,11 +462,15 @@ describe('TeachersAttendanceService', () => {
   });
 
   describe('reviewTeacherCheckinRequest', () => {
+    const today = new Date();
+    const checkInTime = new Date(today);
+    checkInTime.setHours(8, 30, 0, 0);
+
     const mockPendingCheckinRequest = {
       id: 'checkin-123',
       teacher_id: 'teacher-123',
-      check_in_date: new Date('2025-12-01'),
-      check_in_time: new Date('2025-12-01T08:30:00'),
+      check_in_date: today,
+      check_in_time: checkInTime,
       reason: 'Traffic',
       status: TeacherManualCheckinStatusEnum.PENDING,
       submitted_at: new Date(),
@@ -1051,9 +1055,13 @@ describe('TeachersAttendanceService', () => {
 
   describe('createAutoManualCheckin', () => {
     it('should successfully create auto manual checkin with PRESENT status', async () => {
+      const today = new Date();
+      const checkInTime = new Date(today);
+      checkInTime.setHours(8, 30, 0, 0);
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
-        check_in_time: '08:30:00',
+        date: today.toISOString().split('T')[0],
+        check_in_time: checkInTime.toTimeString().split(' ')[0],
         reason: 'Late due to traffic',
       };
 
@@ -1093,8 +1101,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should create auto manual checkin with LATE status when check-in time is at or after 9 AM', async () => {
+      const today = new Date();
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: today.toISOString().split('T')[0],
         check_in_time: '09:30:00',
         reason: 'Traffic',
       };
@@ -1243,8 +1253,12 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw BadRequestException when check-in time is before school hours', async () => {
+      const today = new Date();
+      const checkInTime = new Date(today);
+      checkInTime.setHours(8, 30, 0, 0);
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: today.toISOString().split('T')[0],
         check_in_time: '06:30:00',
         reason: 'Early',
       };
@@ -1260,8 +1274,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw BadRequestException when check-in time is at or after 5 PM', async () => {
+      const today = new Date();
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: today.toISOString().split('T')[0],
         check_in_time: '17:00:00',
         reason: 'Late',
       };
@@ -1277,8 +1293,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw ConflictException when attendance already exists for the date', async () => {
+      const today = new Date();
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: today.toISOString().split('T')[0],
         check_in_time: '08:30:00',
         reason: 'Late',
       };
@@ -1303,8 +1321,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should throw ConflictException when pending manual checkin request exists', async () => {
+      const today = new Date();
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: today.toISOString().split('T')[0],
         check_in_time: '08:30:00',
         reason: 'Late',
       };
@@ -1333,8 +1353,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should accept check-in time at 7 AM', async () => {
+      const today = new Date();
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: today.toISOString().split('T')[0],
         check_in_time: '07:00:00',
         reason: 'On time',
       };
@@ -1358,8 +1380,10 @@ describe('TeachersAttendanceService', () => {
     });
 
     it('should accept check-in time at 4:59 PM', async () => {
+      const today = new Date();
+
       const dto: CreateTeacherManualCheckinDto = {
-        date: '2025-12-01',
+        date: today.toISOString().split('T')[0],
         check_in_time: '16:59:00',
         reason: 'Just in time',
       };
