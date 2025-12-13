@@ -719,6 +719,7 @@ export const ApiGetClassDailyAttendance = () =>
       description:
         'Retrieves all daily attendance records for a class on a specific date. ' +
         'Returns details of student check-in/check-out times and daily status. ' +
+        'Includes a trend analysis comparing today’s attendance against the term average. ' +
         'If no date is provided, defaults to today.',
     }),
     ApiParam({
@@ -792,6 +793,31 @@ export const ApiGetClassDailyAttendance = () =>
                   excused_count: { type: 'number' },
                   half_day_count: { type: 'number' },
                   not_marked_count: { type: 'number' },
+                  trend: {
+                    type: 'object',
+                    nullable: true,
+                    description:
+                      'Trend analysis compared to historical term average.',
+                    properties: {
+                      direction: {
+                        type: 'string',
+                        enum: ['UP', 'DOWN', 'STABLE'],
+                        example: 'UP',
+                      },
+                      percentage: {
+                        type: 'number',
+                        example: 12.5,
+                        description:
+                          'Percentage deviation from the baseline average.',
+                      },
+                      baseline_avg: {
+                        type: 'number',
+                        example: 25,
+                        description:
+                          'The calculated average attendance for the active term (excluding the target date).',
+                      },
+                    },
+                  },
                 },
               },
             },
