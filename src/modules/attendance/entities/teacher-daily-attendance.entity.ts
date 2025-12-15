@@ -1,9 +1,8 @@
 import { Entity, Column, ManyToOne, JoinColumn, Index } from 'typeorm';
 
-import { Teacher } from 'src/modules/teacher/entities/teacher.entity';
-import { User } from 'src/modules/user/entities/user.entity';
-
 import { BaseEntity } from '../../../entities/base-entity';
+import { Teacher } from '../../teacher/entities/teacher.entity';
+import { User } from '../../user/entities/user.entity';
 import {
   TeacherDailyAttendanceSourceEnum,
   TeacherDailyAttendanceStatusEnum,
