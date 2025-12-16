@@ -70,20 +70,20 @@ export class MinioService implements OnModuleInit {
     }
 
     try {
-      // 1. Generate a unique filename (Minio doesn't auto-name like Cloudinary)
+      // Generate a unique filename
       const filename = `${uuidv4()}${path.extname(file.originalname)}`;
 
-      // 2. Construct the object path (folder/filename)
+      // Construct the object path (folder/filename)
       // If folder is provided, use it as a prefix.
       const objectName = folder ? `${folder}/${filename}` : filename;
 
-      // 3. Define metadata
+      // Define metadata
       const metaData = {
         contentType: file.mimetype,
         originalName: file.originalname,
       };
 
-      // 4. Upload to Minio
+      // Upload to Minio
       await this.minioClient.putObject(
         this.bucketName,
         objectName,
@@ -94,7 +94,7 @@ export class MinioService implements OnModuleInit {
 
       this.logger.info(`Image uploaded successfully to Minio: ${objectName}`);
 
-      // 5. Construct URL manually since Minio.putObject doesn't return it
+      // Construct URL manually since Minio.putObject doesn't return it
       // Note: This assumes the bucket handles public read access.
       // If private, you'd need presignedGetObject() here.
       const protocol = this.configService.get('minio.useSSL')
