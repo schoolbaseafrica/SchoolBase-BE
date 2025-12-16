@@ -15,11 +15,10 @@ import {
   OneToMany,
 } from 'typeorm';
 
-import { User } from 'src/modules/user/entities/user.entity';
-
 import { BaseEntity } from '../../../entities/base-entity';
 import { Term } from '../../academic-term/entities/term.entity';
 import { Class } from '../../class/entities/class.entity';
+import { User } from '../../user/entities/user.entity';
 import { FeeStatus } from '../enums/fees.enums';
 
 import { FeeAssignment } from './fee-assignment.entity';
