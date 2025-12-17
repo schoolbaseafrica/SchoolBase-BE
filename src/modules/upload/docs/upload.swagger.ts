@@ -23,9 +23,9 @@ export const ApiUploadBearerAuth = () => applyDecorators(ApiBearerAuth());
 export const ApiUploadPicture = () =>
   applyDecorators(
     ApiOperation({
-      summary: 'Upload a picture to Cloudinary',
+      summary: 'Upload a picture to MinIO',
       description:
-        'Uploads an image file (JPEG, PNG, WebP) to Cloudinary and returns the URL. Maximum file size is 5MB. Only authenticated users can access this endpoint.',
+        'Uploads an image file (JPEG, PNG, WebP) to MinIO and returns the URL. Maximum file size is 5MB. Only authenticated users can access this endpoint.',
     }),
     ApiConsumes('multipart/form-data'),
     ApiBody({

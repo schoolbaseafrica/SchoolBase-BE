@@ -202,8 +202,8 @@ describe('TermService', () => {
         id: 'term-1',
         sessionId,
         name: TermName.FIRST,
-        startDate: new Date('2025-09-01'),
-        endDate: new Date('2025-12-15'),
+        startDate: new Date('2026-09-01'),
+        endDate: new Date('2026-12-15'),
         status: TermStatus.ACTIVE,
         isCurrent: false,
         academicSession: null,
@@ -244,8 +244,8 @@ describe('TermService', () => {
       id: 'term-1',
       sessionId: 'session-123',
       name: TermName.FIRST,
-      startDate: new Date('2025-09-01'),
-      endDate: new Date('2025-12-15'),
+      startDate: new Date('2026-09-01'),
+      endDate: new Date('2026-12-15'),
       status: TermStatus.ACTIVE,
       isCurrent: false,
       academicSession: null,
@@ -285,8 +285,8 @@ describe('TermService', () => {
       id: 'term-1',
       sessionId: 'session-123',
       name: TermName.FIRST,
-      startDate: new Date('2025-09-01'),
-      endDate: new Date('2025-12-15'),
+      startDate: new Date('2026-09-01'),
+      endDate: new Date('2026-12-15'),
       status: TermStatus.ACTIVE,
       isCurrent: false,
       academicSession: null,
@@ -296,8 +296,8 @@ describe('TermService', () => {
 
     it('should update term dates successfully', async () => {
       const updateDto: UpdateTermDto = {
-        startDate: '2025-09-05',
-        endDate: '2025-12-20',
+        startDate: '2026-09-05',
+        endDate: '2026-12-20',
       };
 
       const updatedTerm = {
@@ -358,8 +358,8 @@ describe('TermService', () => {
 
     it('should throw BadRequestException when endDate is before startDate', async () => {
       const updateDto: UpdateTermDto = {
-        startDate: '2025-12-01',
-        endDate: '2025-11-01',
+        startDate: '2026-12-01',
+        endDate: '2026-11-01',
       };
 
       termModelAction.get.mockResolvedValue(mockTerm);
@@ -374,7 +374,7 @@ describe('TermService', () => {
 
     it('should throw BadRequestException when new startDate is after existing endDate', async () => {
       const updateDto: UpdateTermDto = {
-        startDate: '2025-12-20',
+        startDate: '2026-12-20',
       };
 
       termModelAction.get.mockResolvedValue(mockTerm);
@@ -389,7 +389,7 @@ describe('TermService', () => {
 
     it('should throw BadRequestException when new endDate is before existing startDate', async () => {
       const updateDto: UpdateTermDto = {
-        endDate: '2025-08-01',
+        endDate: '2026-08-01',
       };
 
       termModelAction.get.mockResolvedValue(mockTerm);
@@ -404,7 +404,7 @@ describe('TermService', () => {
 
     it('should throw BadRequestException when update fails', async () => {
       const updateDto: UpdateTermDto = {
-        startDate: '2025-09-05',
+        startDate: '2026-09-05',
       };
 
       termModelAction.get.mockResolvedValue(mockTerm);
@@ -424,7 +424,7 @@ describe('TermService', () => {
 
     it('should update only startDate when endDate is not provided', async () => {
       const updateDto: UpdateTermDto = {
-        startDate: '2025-09-05',
+        startDate: '2026-09-05',
       };
 
       const updatedTerm = {
@@ -454,7 +454,7 @@ describe('TermService', () => {
 
     it('should update only endDate when startDate is not provided', async () => {
       const updateDto: UpdateTermDto = {
-        endDate: '2025-12-20',
+        endDate: '2026-12-20',
       };
 
       const updatedTerm = {
