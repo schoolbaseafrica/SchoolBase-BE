@@ -3,13 +3,12 @@ import { ApiProperty } from '@nestjs/swagger';
 export class UploadPictureResponseDto {
   @ApiProperty({
     description: 'The URL of the uploaded picture',
-    example:
-      'https://res.cloudinary.com/example/image/upload/v1234567890/sample.jpg',
+    example: 'https://minio.deenai.app/schoolbase-uploads/sample.jpg',
   })
   url: string;
 
   @ApiProperty({
-    description: 'Public ID of the uploaded image in Cloudinary',
+    description: 'Public ID of the uploaded image in MinIO (object name)',
     example: 'sample',
   })
   publicId: string;
