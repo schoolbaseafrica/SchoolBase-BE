@@ -25,7 +25,7 @@ export const teacherPhotoConfig: MulterOptions = {
 };
 
 export const pictureUploadConfig: MulterOptions = {
-  storage: memoryStorage(), // Store in memory for Cloudinary upload
+  storage: memoryStorage(), // Store in memory for MinIO upload
   limits: {
     fileSize: MAX_PICTURE_UPLOAD_SIZE,
   },

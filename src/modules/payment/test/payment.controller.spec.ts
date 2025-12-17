@@ -122,10 +122,11 @@ describe('PaymentController', () => {
   describe('recordPayment', () => {
     it('should record payment WITH file upload successfully', async () => {
       const mockUploadResult = {
-        url: 'http://cloudinary.com/receipt.jpg',
+        url: 'https://minio.deenai.app/schoolbase-uploads/receipt.jpg',
         publicId: '123',
       };
-      const validatedUrl = 'http://cloudinary.com/receipt.jpg';
+      const validatedUrl =
+        'https://minio.deenai.app/schoolbase-uploads/receipt.jpg';
 
       mockUploadServiceValue.uploadPicture.mockResolvedValue(mockUploadResult);
       mockFileServiceValue.validatePhotoUrl.mockReturnValue(validatedUrl);
