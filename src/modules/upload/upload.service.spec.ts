@@ -5,14 +5,14 @@ import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { IMulterFile } from '../../common/types/multer.types';
 import * as sysMsg from '../../constants/system.messages';
 
-import { CloudinaryService } from './services/cloudinary.service';
+import { MinioService } from './services/minio.service';
 import { UploadService } from './upload.service';
 
 describe('UploadService', () => {
   let service: UploadService;
-  let cloudinaryService: CloudinaryService;
+  let minioService: MinioService;
 
-  const mockCloudinaryService = {
+  const mockMinioService = {
     uploadImage: jest.fn(),
     deleteImage: jest.fn(),
   };
@@ -39,8 +39,8 @@ describe('UploadService', () => {
       providers: [
         UploadService,
         {
-          provide: CloudinaryService,
-          useValue: mockCloudinaryService,
+          provide: MinioService,
+          useValue: mockMinioService,
         },
         {
           provide: WINSTON_MODULE_PROVIDER,
@@ -50,7 +50,7 @@ describe('UploadService', () => {
     }).compile();
 
     service = module.get<UploadService>(UploadService);
-    cloudinaryService = module.get<CloudinaryService>(CloudinaryService);
+    minioService = module.get<MinioService>(MinioService);
   });
 
   afterEach(() => {
@@ -65,17 +65,17 @@ describe('UploadService', () => {
     it('should upload a picture successfully with userId', async () => {
       const userId = 'user-uuid-123';
       const mockUploadResult = {
-        url: 'https://res.cloudinary.com/test/image/upload/v1234567890/test-image.jpg',
-        publicId: 'open-school-portal/users/user-uuid-123/test-image',
+        url: 'https://minio.deenai.app/schoolbase-uploads/test-image.jpg',
+        publicId: 'schoolbase-users/user-uuid-123/test-image',
       };
 
-      mockCloudinaryService.uploadImage.mockResolvedValue(mockUploadResult);
+      mockMinioService.uploadImage.mockResolvedValue(mockUploadResult);
 
       const result = await service.uploadPicture(mockFile, userId);
 
-      expect(cloudinaryService.uploadImage).toHaveBeenCalledWith(
+      expect(minioService.uploadImage).toHaveBeenCalledWith(
         mockFile,
-        `open-school-portal/users/${userId}`,
+        `schoolbase-users/${userId}`,
       );
       expect(result).toEqual({
         url: mockUploadResult.url,
@@ -88,17 +88,17 @@ describe('UploadService', () => {
 
     it('should upload a picture successfully without userId', async () => {
       const mockUploadResult = {
-        url: 'https://res.cloudinary.com/test/image/upload/v1234567890/test-image.jpg',
-        publicId: 'open-school-portal/uploads/test-image',
+        url: 'https://minio.deenai.app/schoolbase-uploads/test-image.jpg',
+        publicId: 'schoolbase-uploads/test-image',
       };
 
-      mockCloudinaryService.uploadImage.mockResolvedValue(mockUploadResult);
+      mockMinioService.uploadImage.mockResolvedValue(mockUploadResult);
 
       const result = await service.uploadPicture(mockFile);
 
-      expect(cloudinaryService.uploadImage).toHaveBeenCalledWith(
+      expect(minioService.uploadImage).toHaveBeenCalledWith(
         mockFile,
-        'open-school-portal/uploads',
+        'schoolbase-uploads',
       );
       expect(result).toEqual({
         url: mockUploadResult.url,
@@ -109,19 +109,19 @@ describe('UploadService', () => {
       });
     });
 
-    it('should throw error when Cloudinary upload fails', async () => {
+    it('should throw error when Minio upload fails', async () => {
       const error = new BadRequestException(sysMsg.IMAGE_UPLOAD_FAILED);
-      mockCloudinaryService.uploadImage.mockRejectedValue(error);
+      mockMinioService.uploadImage.mockRejectedValue(error);
 
       await expect(service.uploadPicture(mockFile)).rejects.toThrow(
         BadRequestException,
       );
-      expect(cloudinaryService.uploadImage).toHaveBeenCalled();
+      expect(minioService.uploadImage).toHaveBeenCalled();
     });
 
-    it('should propagate errors from CloudinaryService', async () => {
+    it('should propagate errors from MinioService', async () => {
       const error = new BadRequestException(sysMsg.FILE_TOO_LARGE);
-      mockCloudinaryService.uploadImage.mockRejectedValue(error);
+      mockMinioService.uploadImage.mockRejectedValue(error);
 
       await expect(service.uploadPicture(mockFile)).rejects.toThrow(
         BadRequestException,

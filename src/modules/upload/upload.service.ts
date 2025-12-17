@@ -5,21 +5,21 @@ import { Logger } from 'winston';
 import { IMulterFile } from '../../common/types/multer.types';
 
 import { UploadPictureResponseDto } from './dto';
-import { CloudinaryService } from './services/cloudinary.service';
+import { MinioService } from './services/minio.service';
 
 @Injectable()
 export class UploadService {
   private readonly logger: Logger;
 
   constructor(
-    private readonly cloudinaryService: CloudinaryService,
+    private readonly minioService: MinioService,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
   ) {
     this.logger = baseLogger.child({ context: UploadService.name });
   }
 
   /**
-   * Upload a picture to Cloudinary
+   * Upload a picture to MinIO
    * @param file - The file to upload
    * @param userId - Optional user ID for organizing uploads
    * @returns Upload response with URL and metadata
@@ -35,13 +35,10 @@ export class UploadService {
     try {
       // Determine folder based on user ID if provided
       const folder = userId
-        ? `open-school-portal/users/${userId}`
-        : 'open-school-portal/uploads';
+        ? `schoolbase-users/${userId}`
+        : 'schoolbase-uploads';
 
-      const uploadResult = await this.cloudinaryService.uploadImage(
-        file,
-        folder,
-      );
+      const uploadResult = await this.minioService.uploadImage(file, folder);
 
       this.logger.info(
         `Picture uploaded successfully: ${uploadResult.publicId}`,
