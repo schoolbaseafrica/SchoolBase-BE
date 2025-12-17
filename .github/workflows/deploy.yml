@@ -1,0 +1,95 @@
+name: Deploy
+
+on:
+  push:
+    branches: [staging, main, demo-prod, stpaul-prod]
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build application
+        run: npm run build
+        
+      - name: Create deployment archive
+        run: tar -czf build.tar.gz dist/ package.json package-lock.json
+        
+      - name: Deploy to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: "build.tar.gz"
+          target: "/tmp/"
+          
+      - name: Extract and restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Set environment variables based on branch
+            case "${{ github.ref_name }}" in
+              "staging")
+                APP_NAME="be-staging-schoolbase"
+                APP_DIR="/home/ubuntu/open-school/staging/open-school-portal-BE"
+                PORT="3001"
+                ;;
+              "main")
+                APP_NAME="be-prod-schoolbase"
+                APP_DIR="/home/ubuntu/open-school/prod/open-school-portal-BE"
+                PORT="3000"
+                ;;
+              "demo-prod")
+                APP_NAME="be-prod-demo-schoolbase"
+                APP_DIR="/home/ubuntu/open-school/prod/open-school-portal-BE-demo"
+                PORT="3006"
+                ;;
+              "stpaul-prod")
+                APP_NAME="be-prod-stpaul-schoolbase"
+                APP_DIR="/home/ubuntu/open-school/prod/open-school-portal-BE-stpaul"
+                PORT="3007"
+                ;;
+            esac
+            
+            # Install Node.js if not exists
+            if ! command -v node &> /dev/null; then
+              curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+              sudo apt-get install -y nodejs
+            fi
+            
+            # Create app directory if not exists
+            mkdir -p $APP_DIR
+            cd $APP_DIR
+            
+            # Extract build
+            tar -xzf /tmp/build.tar.gz -C .
+            
+            # Install production dependencies
+            npm ci --only=production
+            
+            # Reload or start PM2 process
+            pm2 reload $APP_NAME || pm2 start dist/main.js --name $APP_NAME --env production -- --port $PORT
+            
+            # Check PM2 status
+            pm2 list
+            pm2 status $APP_NAME
+            
+            # Cleanup
+            rm -f /tmp/build.tar.gz
