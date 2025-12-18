@@ -1,0 +1,35 @@
+name: Docker Deploy Backend
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Deploy backend service
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ubuntu
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd /home/ubuntu/open-school/openschool-docker/be
+            git pull origin main
+            cd ..
+            
+            # Check if Docker services are running
+            if ! docker-compose ps | grep -q "backend-stpaul.*Up\|backend-demo.*Up"; then
+              echo "Starting Docker services for the first time..."
+              docker-compose up --build -d backend-stpaul backend-demo
+            else
+              echo "Updating existing Docker services..."
+              # Zero-downtime deployment: build new images first
+              docker-compose build backend-stpaul backend-demo
+              # Rolling update: update one service at a time
+              docker-compose up -d --no-deps backend-stpaul
+              sleep 10
+              docker-compose up -d --no-deps backend-demo
+            fi
