@@ -56,11 +56,11 @@ import { UserModule } from './modules/user/user.module';
 
         return {
           type: 'postgres',
-          host: config.get<string>('DB_HOST'),
-          port: config.get<number>('DB_PORT'),
-          username: config.get<string>('DB_USER'),
-          password: String(config.get<string>('DB_PASS') || 'postgres'),
-          database: config.get<string>('DB_NAME'),
+          host: config.get<string>('database.host') || config.get<string>('DB_HOST'),
+          port: config.get<number>('database.port') || config.get<number>('DB_PORT'),
+          username: config.get<string>('database.user') || config.get<string>('DB_USER'),
+          password: String(config.get<string>('database.pass') || config.get<string>('DB_PASS') || 'postgres'),
+          database: config.get<string>('database.name') || config.get<string>('DB_NAME'),
 
           // Auto-load entities from TypeOrmModule.forFeature() in all modules
           autoLoadEntities: true,
@@ -77,10 +77,9 @@ import { UserModule } from './modules/user/user.module';
           migrationsTableName: 'migrations',
 
           // SSL configuration for production databases
-          ssl:
-            config.get<boolean>('database.ssl') || isProduction
-              ? { rejectUnauthorized: false }
-              : false,
+          ssl: config.get<boolean>('database.ssl')
+            ? { rejectUnauthorized: false }
+            : false,
 
           // Logging configuration
           logging: isDevelopment ? true : ['error', 'warn', 'migration'],
