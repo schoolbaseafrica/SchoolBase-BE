@@ -16,7 +16,7 @@ jobs:
           username: ubuntu
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /home/ubuntu/schoolbase/be
+            cd /home/ubuntu/open-school/openschool-docker/be
             git pull origin main
             cd ..
             # Zero-downtime deployment: build new images first
