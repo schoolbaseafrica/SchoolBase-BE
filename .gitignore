@@ -36,6 +36,8 @@ lerna-debug.log*
 
 # Environment variables
 .env
+.env.stpaul
+.env.demo
 .env.setup.backup.*
 logs/
 # package-lock.json
