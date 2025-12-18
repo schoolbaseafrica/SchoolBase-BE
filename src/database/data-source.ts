@@ -66,7 +66,7 @@ const dataSource = new DataSource({
   /**
    * SSL configuration for production databases
    */
-  ssl: database.ssl || isProduction ? { rejectUnauthorized: false } : false,
+  ssl: database.ssl ? { rejectUnauthorized: false } : false,
 
   /**
    * Logging configuration
