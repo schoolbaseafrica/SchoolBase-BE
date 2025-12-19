@@ -92,6 +92,24 @@ export class AuthService {
 
     this.logger.info(sysMsg.ACCOUNT_CREATED);
 
+    // ------------------ NEW ACCOUNT CREATED BY ADMIN OR SUPPER ADMIN CAN RECEIVE THEIR LOGIN DETAILs VIA EMAIL ------------------
+    const emailPayload: EmailPayload = {
+      to: [{ name: newUser.first_name, email: newUser.email }],
+      subject: `Your Account at ${this.configService.get<string>('school.name')}`,
+      templateNameID: EmailTemplateID.ACCOUNT_CREATED,
+      templateData: {
+        name: newUser.first_name,
+        email: newUser.email,
+        role: newUser.role,
+        password: signupPayload.password, // generated temporary password
+        school_name: this.configService.get<string>('school.name'),
+        logo_url: this.configService.get<string>('school.logoUrl'),
+        change_password: `${this.configService.get<string>('frontend.url')}/reset-password`,
+      },
+    };
+
+    await this.emailService.sendMail(emailPayload);
+
     return {
       message: sysMsg.ACCOUNT_CREATED,
       user: {
