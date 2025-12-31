@@ -249,6 +249,8 @@ export const INSTALLATION_UPDATED = 'school installation updated successfully';
 export const INSTALLATION_ALREADY_COMPLETED =
   'school installation already completed';
 export const SCHOOL_NOT_FOUND = 'School not found';
+export const SETUP_STATUS_RETRIEVED_SUCCESSFULLY =
+  'Setup status retrieved successfully';
 
 // Classes
 export const CLASS_OR_TEACHER_OR_SESSION_NOT_FOUND =

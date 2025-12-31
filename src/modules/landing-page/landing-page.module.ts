@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { SchoolModule } from '../school/school.module';
@@ -9,8 +9,12 @@ import { LandingPageService } from './landing-page.service';
 import { LandingPageModelAction } from './model-actions/landing-page.action';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([LandingPage]), SchoolModule],
+  imports: [
+    TypeOrmModule.forFeature([LandingPage]),
+    forwardRef(() => SchoolModule),
+  ],
   controllers: [LandingPageController],
   providers: [LandingPageService, LandingPageModelAction],
+  exports: [LandingPageModelAction],
 })
 export class LandingPageModule {}
