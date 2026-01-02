@@ -249,6 +249,8 @@ export const INSTALLATION_UPDATED = 'school installation updated successfully';
 export const INSTALLATION_ALREADY_COMPLETED =
   'school installation already completed';
 export const SCHOOL_NOT_FOUND = 'School not found';
+export const SETUP_STATUS_RETRIEVED_SUCCESSFULLY =
+  'Setup status retrieved successfully';
 
 // Classes
 export const CLASS_OR_TEACHER_OR_SESSION_NOT_FOUND =
@@ -566,3 +568,16 @@ export const REGISTRATION_NUMBER_REQUIRED =
   'Child registration number is required';
 export const CHILD_REGISTRATION_NUMBER_NOT_FOUNS =
   'Registration number does not exist';
+
+// Landing page messages
+export const SCHOOL_ALREADY_HAS_A_LANDING_PAGE =
+  'School already has a landing page';
+export const LANDING_PAGE_CREATED_SUCCESSFULLY =
+  'Landing page created successfully';
+export const LANDING_PAGE_NOT_FOUND = 'Landing page not found';
+export const LANDING_PAGE_UPDATED_SUCCESSFULLY =
+  'Landing page updated successfully';
+export const LANDING_PAGE_DELETED_SUCCESSFULLY =
+  'Landing page deleted successfully';
+export const LANDING_PAGE_FETCHED_SUCCESSFULLY =
+  'Landing page fetched successfully';

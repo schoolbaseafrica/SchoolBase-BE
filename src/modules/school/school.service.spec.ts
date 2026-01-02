@@ -13,6 +13,12 @@ import * as fs from 'fs/promises';
 import { ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { LandingPage } from '../landing-page/entities/landing-page.entity';
+import { LandingPageModelAction } from '../landing-page/model-actions/landing-page.action';
+import { SetupPhase } from '../shared/enums';
+import { Role, SuperAdmin } from '../superadmin/entities/superadmin.entity';
+import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
+
 import { CreateInstallationDto } from './dto/create-installation.dto';
 import { School } from './entities/school.entity';
 import { SchoolModelAction } from './model-actions/school.action';
@@ -21,12 +27,21 @@ import { SchoolService } from './school.service';
 describe('SchoolService', () => {
   let service: SchoolService;
   let schoolModelAction: jest.Mocked<SchoolModelAction>;
+  let landingPageModelAction: jest.Mocked<LandingPageModelAction>;
+  let superadminModelAction: jest.Mocked<SuperadminModelAction>;
 
   beforeEach(async () => {
     const mockSchoolModelAction = {
       list: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+    };
+    const mockLandingPageModelAction = {
+      get: jest.fn(),
+    };
+
+    const mockSuperadminModelAction = {
+      get: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -36,12 +51,26 @@ describe('SchoolService', () => {
           provide: SchoolModelAction,
           useValue: mockSchoolModelAction,
         },
+        {
+          provide: LandingPageModelAction,
+          useValue: mockLandingPageModelAction,
+        },
+        {
+          provide: SuperadminModelAction,
+          useValue: mockSuperadminModelAction,
+        },
       ],
     }).compile();
 
     service = module.get<SchoolService>(SchoolService);
     schoolModelAction =
       module.get<jest.Mocked<SchoolModelAction>>(SchoolModelAction);
+    landingPageModelAction = module.get<jest.Mocked<LandingPageModelAction>>(
+      LandingPageModelAction,
+    );
+    superadminModelAction = module.get<jest.Mocked<SuperadminModelAction>>(
+      SuperadminModelAction,
+    );
 
     // Reset mocks
     jest.clearAllMocks();
@@ -337,6 +366,183 @@ describe('SchoolService', () => {
       await expect(service.getSchoolDetails()).rejects.toThrow(
         ConflictException,
       );
+    });
+  });
+
+  describe('getSetupStatus', () => {
+    it('should return SCHOOL_INFO as current step when no phases are completed', async () => {
+      schoolModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+
+      const result = await service.getSetupStatus();
+
+      expect(result).toEqual({
+        message: 'Setup status retrieved successfully',
+        is_complete: false,
+        current_step: SetupPhase.SCHOOL_INFO,
+        phases: {
+          school_info: {
+            completed: false,
+          },
+          landing_page: {
+            completed: false,
+          },
+          superadmin: {
+            completed: false,
+          },
+        },
+      });
+
+      expect(schoolModelAction.list).toHaveBeenCalledWith({
+        filterRecordOptions: { installation_completed: true },
+      });
+      expect(landingPageModelAction.get).not.toHaveBeenCalled();
+      expect(superadminModelAction.get).toHaveBeenCalledWith({
+        identifierOptions: { role: Role.SUPERADMIN },
+      });
+    });
+
+    it('should return LANDING_PAGE as current step when school info is complete but landing page is not', async () => {
+      const mockSchool = {
+        id: 'school-123',
+        name: 'Test School',
+        installation_completed: true,
+      };
+
+      schoolModelAction.list.mockResolvedValue({
+        payload: [mockSchool as School],
+        paginationMeta: {},
+      });
+      landingPageModelAction.get.mockResolvedValue(null);
+      superadminModelAction.get.mockResolvedValue(null);
+
+      const result = await service.getSetupStatus();
+
+      expect(result).toEqual({
+        message: 'Setup status retrieved successfully',
+        is_complete: false,
+        current_step: SetupPhase.LANDING_PAGE,
+        phases: {
+          school_info: {
+            completed: true,
+          },
+          landing_page: {
+            completed: false,
+          },
+          superadmin: {
+            completed: false,
+          },
+        },
+      });
+
+      expect(landingPageModelAction.get).toHaveBeenCalledWith({
+        identifierOptions: { school_id: 'school-123' },
+      });
+      expect(superadminModelAction.get).toHaveBeenCalledWith({
+        identifierOptions: { role: Role.SUPERADMIN },
+      });
+    });
+
+    it('should return SUPERADMIN as current step when school info and landing page are complete but superadmin is not', async () => {
+      const mockSchool = {
+        id: 'school-123',
+        name: 'Test School',
+        installation_completed: true,
+      };
+
+      const mockLandingPage = {
+        id: 'landing-page-123',
+        school_id: 'school-123',
+      };
+
+      schoolModelAction.list.mockResolvedValue({
+        payload: [mockSchool as School],
+        paginationMeta: {},
+      });
+      landingPageModelAction.get.mockResolvedValue(
+        mockLandingPage as LandingPage,
+      );
+      superadminModelAction.get.mockResolvedValue(null);
+
+      const result = await service.getSetupStatus();
+
+      expect(result).toEqual({
+        message: 'Setup status retrieved successfully',
+        is_complete: false,
+        current_step: SetupPhase.SUPERADMIN,
+        phases: {
+          school_info: {
+            completed: true,
+          },
+          landing_page: {
+            completed: true,
+          },
+          superadmin: {
+            completed: false,
+          },
+        },
+      });
+    });
+
+    it('should return is_complete true and current_step null when all phases are completed', async () => {
+      const mockSchool = {
+        id: 'school-123',
+        name: 'Test School',
+        installation_completed: true,
+      };
+
+      const mockLandingPage = {
+        id: 'landing-page-123',
+        school_id: 'school-123',
+      };
+
+      const mockSuperadmin = {
+        id: 'superadmin-123',
+        role: Role.SUPERADMIN,
+      };
+
+      schoolModelAction.list.mockResolvedValue({
+        payload: [mockSchool as School],
+        paginationMeta: {},
+      });
+      landingPageModelAction.get.mockResolvedValue(
+        mockLandingPage as LandingPage,
+      );
+      superadminModelAction.get.mockResolvedValue(mockSuperadmin as SuperAdmin);
+
+      const result = await service.getSetupStatus();
+
+      expect(result).toEqual({
+        message: 'Setup status retrieved successfully',
+        is_complete: true,
+        current_step: null,
+        phases: {
+          school_info: {
+            completed: true,
+          },
+          landing_page: {
+            completed: true,
+          },
+          superadmin: {
+            completed: true,
+          },
+        },
+      });
+    });
+
+    it('should not check landing page when school info is not completed', async () => {
+      schoolModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+      superadminModelAction.get.mockResolvedValue(null);
+
+      await service.getSetupStatus();
+
+      expect(landingPageModelAction.get).not.toHaveBeenCalled();
+      expect(superadminModelAction.get).toHaveBeenCalled();
     });
   });
 });

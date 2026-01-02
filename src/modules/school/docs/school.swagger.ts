@@ -30,5 +30,30 @@ export const SchoolSwagger = {
         },
       },
     },
+    getSetupStatus: {
+      operation: {
+        summary: 'Get setup status',
+        description: 'Returns the current setup phase and completion status',
+      },
+      responses: {
+        ok: {
+          schema: {
+            example: {
+              status_code: 200,
+              message: sysMsg.SETUP_STATUS_RETRIEVED_SUCCESSFULLY,
+              data: {
+                is_complete: true,
+                current_step: 'school_info',
+                phases: {
+                  school_info: { completed: true },
+                  landing_page: { completed: true },
+                  superadmin: { completed: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
   },
 };
