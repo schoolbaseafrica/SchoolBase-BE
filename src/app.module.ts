@@ -21,6 +21,7 @@ import { EmailModule } from './modules/email/email.module';
 import { FeesModule } from './modules/fees/fees.module';
 import { GradeModule } from './modules/grade/grade.module';
 import { InviteModule } from './modules/invites/invites.module';
+import { LandingPageModule } from './modules/landing-page/landing-page.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { ParentModule } from './modules/parent/parent.module';
 import { PaymentModule } from './modules/payment/payment.module';
@@ -56,11 +57,23 @@ import { UserModule } from './modules/user/user.module';
 
         return {
           type: 'postgres',
-          host: config.get<string>('database.host') || config.get<string>('DB_HOST'),
-          port: config.get<number>('database.port') || config.get<number>('DB_PORT'),
-          username: config.get<string>('database.user') || config.get<string>('DB_USER'),
-          password: String(config.get<string>('database.pass') || config.get<string>('DB_PASS') || 'postgres'),
-          database: config.get<string>('database.name') || config.get<string>('DB_NAME'),
+          host:
+            config.get<string>('database.host') ||
+            config.get<string>('DB_HOST'),
+          port:
+            config.get<number>('database.port') ||
+            config.get<number>('DB_PORT'),
+          username:
+            config.get<string>('database.user') ||
+            config.get<string>('DB_USER'),
+          password: String(
+            config.get<string>('database.pass') ||
+              config.get<string>('DB_PASS') ||
+              'postgres',
+          ),
+          database:
+            config.get<string>('database.name') ||
+            config.get<string>('DB_NAME'),
 
           // Auto-load entities from TypeOrmModule.forFeature() in all modules
           autoLoadEntities: true,
@@ -115,6 +128,7 @@ import { UserModule } from './modules/user/user.module';
     PaymentModule,
     ResultModule,
     NotificationModule,
+    LandingPageModule,
   ],
   controllers: [AppController],
   providers: [

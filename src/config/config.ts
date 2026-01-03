@@ -47,6 +47,10 @@ export default () => ({
     key: process.env.PAYSTACK_KEY,
   },
 
+  upload: {
+    key: process.env.UPLOAD_KEY,
+  },
+
   minio: {
     endPoint: process.env.MINIO_ENDPOINT,
     port: parseInt(process.env.MINIO_PORT, 10) || 9000,

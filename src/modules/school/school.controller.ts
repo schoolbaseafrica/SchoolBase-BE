@@ -12,7 +12,10 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags } from '@nestjs/swagger';
 
 import { installationApi } from './decorators/installation-api.decorator';
-import { DocsGetSchoolDetails } from './docs/school.decorator';
+import {
+  DocsGetSchoolDetails,
+  DocsGetSetupStatus,
+} from './docs/school.decorator';
 import { CreateInstallationDto } from './dto/create-installation.dto';
 import { SchoolService } from './school.service';
 
@@ -42,6 +45,12 @@ export class SchoolController {
   @DocsGetSchoolDetails()
   getSchoolDetails() {
     return this.schoolService.getSchoolDetails();
+  }
+
+  @Get('setup-status')
+  @DocsGetSetupStatus()
+  async getSetupStatus() {
+    return this.schoolService.getSetupStatus();
   }
 
   @Get(':id')

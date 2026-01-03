@@ -16,3 +16,9 @@ export const DocsGetSchoolDetails = () => {
     ApiNotFoundResponse(responses.notFound),
   );
 };
+
+export const DocsGetSetupStatus = () => {
+  const { operation, responses } = SchoolSwagger.endpoints.getSetupStatus;
+
+  return applyDecorators(ApiOperation(operation), ApiOkResponse(responses.ok));
+};
