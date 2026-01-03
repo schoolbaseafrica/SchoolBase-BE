@@ -44,6 +44,7 @@ export const SchoolSwagger = {
               data: {
                 is_complete: true,
                 current_step: 'school_info',
+                school_id: 'uuid-123',
                 phases: {
                   school_info: { completed: true },
                   landing_page: { completed: true },
