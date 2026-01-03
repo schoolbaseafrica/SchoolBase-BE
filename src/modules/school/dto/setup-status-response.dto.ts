@@ -23,6 +23,9 @@ export class SetupStatusResponseDto {
   @ApiProperty({ enum: SetupPhase, nullable: true, required: false })
   current_step: SetupPhase | null;
 
+  @ApiProperty({ nullable: true, required: false })
+  school_id: string | null;
+
   @ApiProperty()
   phases: {
     school_info: PhaseStatusDto;

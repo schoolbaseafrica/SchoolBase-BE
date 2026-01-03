@@ -382,6 +382,7 @@ describe('SchoolService', () => {
         message: 'Setup status retrieved successfully',
         is_complete: false,
         current_step: SetupPhase.SCHOOL_INFO,
+        school_id: null,
         phases: {
           school_info: {
             completed: false,
@@ -424,6 +425,7 @@ describe('SchoolService', () => {
         message: 'Setup status retrieved successfully',
         is_complete: false,
         current_step: SetupPhase.LANDING_PAGE,
+        school_id: 'school-123',
         phases: {
           school_info: {
             completed: true,
@@ -472,6 +474,7 @@ describe('SchoolService', () => {
         message: 'Setup status retrieved successfully',
         is_complete: false,
         current_step: SetupPhase.SUPERADMIN,
+        school_id: 'school-123',
         phases: {
           school_info: {
             completed: true,
@@ -518,6 +521,7 @@ describe('SchoolService', () => {
         message: 'Setup status retrieved successfully',
         is_complete: true,
         current_step: null,
+        school_id: 'school-123',
         phases: {
           school_info: {
             completed: true,
