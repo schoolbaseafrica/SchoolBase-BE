@@ -6,6 +6,7 @@ import {
   ApiConsumes,
   ApiBody,
   ApiResponse,
+  ApiHeader,
 } from '@nestjs/swagger';
 
 import { UploadPictureResponseDto } from '../dto';
@@ -15,7 +16,16 @@ import { UploadPictureResponseDto } from '../dto';
  */
 export const ApiUploadTags = () => applyDecorators(ApiTags('Upload'));
 
-export const ApiUploadBearerAuth = () => applyDecorators(ApiBearerAuth());
+export const ApiUploadBearerAuth = () =>
+  applyDecorators(
+    ApiBearerAuth(),
+    ApiHeader({
+      name: 'x-upload-key',
+      description:
+        'API key for upload access (alternative to JWT Bearer token)',
+      required: false,
+    }),
+  );
 
 /**
  * Swagger decorators for Upload Picture endpoint
@@ -25,7 +35,7 @@ export const ApiUploadPicture = () =>
     ApiOperation({
       summary: 'Upload a picture to MinIO',
       description:
-        'Uploads an image file (JPEG, PNG, WebP) to MinIO and returns the URL. Maximum file size is 5MB. Only authenticated users can access this endpoint.',
+        'Uploads an image file (JPEG, PNG, WebP) to MinIO and returns the URL. Maximum file size is 5MB. Authentication: Use either JWT Bearer token OR x-upload-key header.',
     }),
     ApiConsumes('multipart/form-data'),
     ApiBody({
