@@ -185,7 +185,7 @@ describe('TeacherService', () => {
     it('should generate strong password when all criteria met', () => {
       // Mock generateStrongPassword to return a strong password
       (passwordUtil.generateStrongPassword as jest.Mock).mockReturnValue(
-        'StrongPass123',
+        'StrongPass123*',
       );
 
       const result = service.generatePassword();
