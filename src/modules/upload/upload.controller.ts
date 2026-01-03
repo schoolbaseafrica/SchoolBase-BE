@@ -10,7 +10,7 @@ import { Request } from 'express';
 
 import { IMulterFile } from '../../common/types/multer.types';
 import * as sysMsg from '../../constants/system.messages';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { UploadGuard } from '../shared/guards/upload.guard';
 
 import {
   UploadControllerDocs,
@@ -28,7 +28,7 @@ interface IRequestWithUser extends Request {
 }
 
 @Controller('upload')
-@UseGuards(JwtAuthGuard)
+@UseGuards(UploadGuard)
 @UploadControllerDocs()
 export class UploadController {
   constructor(private readonly uploadService: UploadService) {}

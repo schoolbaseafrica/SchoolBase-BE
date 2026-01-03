@@ -24,6 +24,7 @@ interface IUploadedFile {
 export interface ISetupStatusResponse {
   is_complete: boolean;
   current_step: SetupPhase | null;
+  school_id: string | null;
   phases: {
     school_info: {
       completed: boolean;
@@ -214,6 +215,7 @@ export class SchoolService {
     const status = {
       is_complete: isComplete,
       current_step: currentStep,
+      school_id: school ? school.id : null,
       phases: {
         school_info: {
           completed: schoolInfoCompleted,
