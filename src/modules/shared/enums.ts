@@ -24,3 +24,10 @@ export enum FeeNotificationType {
   ACTIVATED = 'activated',
   DEACTIVATED = 'deactivated',
 }
+
+// school setup status
+export enum SetupPhase {
+  SCHOOL_INFO = 'school_info',
+  LANDING_PAGE = 'landing_page',
+  SUPERADMIN = 'superadmin',
+}

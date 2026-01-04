@@ -40,4 +40,4 @@ lerna-debug.log*
 .env.demo
 .env.setup.backup.*
 logs/
-# package-lock.json
+package-lock.json

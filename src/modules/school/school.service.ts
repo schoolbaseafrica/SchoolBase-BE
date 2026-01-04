@@ -6,6 +6,10 @@ import { Injectable, ConflictException } from '@nestjs/common';
 import * as sharp from 'sharp';
 
 import * as sysMsg from '../../constants/system.messages';
+import { LandingPageModelAction } from '../landing-page/model-actions/landing-page.action';
+import { SetupPhase } from '../shared/enums';
+import { Role } from '../superadmin/entities/superadmin.entity';
+import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
 
 import { CreateInstallationDto } from './dto/create-installation.dto';
 import { SchoolModelAction } from './model-actions/school.action';
@@ -17,11 +21,35 @@ interface IUploadedFile {
   size: number;
 }
 
+export interface ISetupStatusResponse {
+  is_complete: boolean;
+  current_step: SetupPhase | null;
+  school_id: string | null;
+  phases: {
+    school_info: {
+      completed: boolean;
+      school_id?: string;
+    };
+    landing_page: {
+      completed: boolean;
+      landing_page_id?: string;
+    };
+    superadmin: {
+      completed: boolean;
+      superadmin_id?: string;
+    };
+  };
+}
+
 @Injectable()
 export class SchoolService {
   private readonly uploadDir = path.join(process.cwd(), 'uploads', 'logos');
 
-  constructor(private readonly schoolModelAction: SchoolModelAction) {}
+  constructor(
+    private readonly schoolModelAction: SchoolModelAction,
+    private readonly landingPageModelAction: LandingPageModelAction,
+    private readonly superadminModelAction: SuperadminModelAction,
+  ) {}
 
   async processInstallation(
     createInstallationDto: CreateInstallationDto,
@@ -146,6 +174,67 @@ export class SchoolService {
       secondary_color: school.secondary_color,
       accent_color: school.accent_color,
       installation_completed: school.installation_completed,
+    };
+  }
+
+  // SCHOOL SETUP STATUS
+  async getSetupStatus() {
+    // Check school info setup status
+    const { payload: schools } = await this.schoolModelAction.list({
+      filterRecordOptions: { installation_completed: true },
+    });
+    const school = schools && schools.length > 0 ? schools[0] : null;
+    const schoolInfoCompleted = !!school;
+
+    // Check landing page setup status
+    const landingPage = school
+      ? await this.landingPageModelAction.get({
+          identifierOptions: { school_id: school.id },
+        })
+      : null;
+    const landingPageCompleted = !!landingPage;
+
+    // Check superadmin setup status
+    const superadmin = await this.superadminModelAction.get({
+      identifierOptions: { role: Role.SUPERADMIN },
+    });
+    const superadminCompleted = !!superadmin;
+
+    // Determine current step
+    let currentStep: SetupPhase | null = null;
+    if (!schoolInfoCompleted) {
+      currentStep = SetupPhase.SCHOOL_INFO;
+    } else if (!landingPageCompleted) {
+      currentStep = SetupPhase.LANDING_PAGE;
+    } else if (!superadminCompleted) {
+      currentStep = SetupPhase.SUPERADMIN;
+    }
+
+    const isComplete =
+      schoolInfoCompleted && landingPageCompleted && superadminCompleted;
+    const status = {
+      is_complete: isComplete,
+      current_step: currentStep,
+      school_id: school ? school.id : null,
+      phases: {
+        school_info: {
+          completed: schoolInfoCompleted,
+          // school_id: school?.id,
+        },
+        landing_page: {
+          completed: landingPageCompleted,
+          // landing_page_id: landingPage?.id,
+        },
+        superadmin: {
+          completed: superadminCompleted,
+          // superadmin_id: superadmin?.id,
+        },
+      },
+    };
+
+    return {
+      message: sysMsg.SETUP_STATUS_RETRIEVED_SUCCESSFULLY,
+      ...status,
     };
   }
 
