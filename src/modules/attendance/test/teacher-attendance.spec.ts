@@ -1054,6 +1054,18 @@ describe('TeachersAttendanceService', () => {
   });
 
   describe('createAutoManualCheckin', () => {
+    let mockDate: Date;
+
+    beforeEach(() => {
+      mockDate = new Date('2026-01-13T12:00:00Z');
+      jest.useFakeTimers();
+      jest.setSystemTime(mockDate);
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
     it('should successfully create auto manual checkin with PRESENT status', async () => {
       const today = new Date();
       const checkInTime = new Date(today);
