@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsString,
   IsNotEmpty,
@@ -202,6 +202,7 @@ export class TestimonialItemDto {
     example: 'https://example.com/avatar-1.jpg',
   })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUrl()
   avatar?: string;
 }
@@ -306,6 +307,7 @@ export class SocialLinksDto {
     example: 'https://facebook.com/brightfuture',
   })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUrl()
   facebook?: string;
 
@@ -314,6 +316,7 @@ export class SocialLinksDto {
     example: 'https://instagram.com/brightfuture',
   })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUrl()
   instagram?: string;
 
@@ -322,6 +325,7 @@ export class SocialLinksDto {
     example: 'https://linkedin.com/school/brightfuture',
   })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUrl()
   linkedin?: string;
 
@@ -330,6 +334,7 @@ export class SocialLinksDto {
     example: 'https://twitter.com/brightfuture',
   })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUrl()
   twitter?: string;
 
@@ -338,6 +343,7 @@ export class SocialLinksDto {
     example: 'https://brightfuture.edu',
   })
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUrl()
   website?: string;
 }

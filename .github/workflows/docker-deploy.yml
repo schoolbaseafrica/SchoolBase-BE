@@ -20,16 +20,25 @@ jobs:
             git pull origin main
             cd ..
             
-            # Check if Docker services are running
-            if ! docker-compose ps | grep -q "backend-stpaul.*Up\|backend-demo.*Up"; then
-              echo "Starting Docker services for the first time..."
-              docker-compose up --build -d backend-stpaul backend-demo
-            else
-              echo "Updating existing Docker services..."
-              # Zero-downtime deployment: build new images first
-              docker-compose build backend-stpaul backend-demo
-              # Rolling update: update one service at a time
-              docker-compose up -d --no-deps backend-stpaul
-              sleep 10
-              docker-compose up -d --no-deps backend-demo
-            fi
+            # Zero-downtime deployment: build new images first
+            echo "Building new images..."
+            docker-compose build backend-stpaul backend-demo
+            
+            # Rolling update: update one service at a time
+            echo "Updating backend-stpaul..."
+            docker-compose up -d --no-deps backend-stpaul
+            
+            # Wait for service to be healthy
+            sleep 15
+            
+            echo "Updating backend-demo..."
+            docker-compose up -d --no-deps backend-demo
+            
+            # Wait for service to be healthy
+            sleep 15
+            
+            # Clean up old images
+            docker image prune -f
+            
+            echo "Verifying deployment..."
+            docker-compose ps backend-stpaul backend-demo

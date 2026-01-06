@@ -60,12 +60,13 @@ export class TeacherService {
     const hasUpper = /[A-Z]/.test(password);
     const hasLower = /[a-z]/.test(password);
     const hasNumber = /[0-9]/.test(password);
-    const strengthCount = [hasUpper, hasLower, hasNumber].filter(
+    const hasSpecial = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    const strengthCount = [hasUpper, hasLower, hasNumber, hasSpecial].filter(
       Boolean,
     ).length;
 
     let strength: 'weak' | 'medium' | 'strong' = 'weak';
-    if (strengthCount === 3 && password.length >= 12) {
+    if (strengthCount === 4 && password.length >= 12) {
       strength = 'strong';
     } else if (strengthCount >= 2) {
       strength = 'medium';
