@@ -3,16 +3,10 @@ name: Docker Deploy Backend
 on:
   push:
     branches: [main]
-    types: [closed]
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true || github.event_name == 'push'
     
     steps:
       - name: Deploy backend service
