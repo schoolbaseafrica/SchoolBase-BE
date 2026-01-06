@@ -432,6 +432,7 @@ export class CreateLandingPageDto {
     description: 'Hero section data',
     type: HeroDataDto,
   })
+  @IsNotEmpty()
   @ValidateNested()
   @Type(() => HeroDataDto)
   hero: HeroDataDto;
@@ -518,6 +519,7 @@ export class CreateLandingPageDto {
     description: 'Call-to-action section data',
     type: CTADataDto,
   })
+  @IsNotEmpty()
   @ValidateNested()
   @Type(() => CTADataDto)
   cta: CTADataDto;
@@ -526,6 +528,7 @@ export class CreateLandingPageDto {
     description: 'Contact section data',
     type: ContactDataDto,
   })
+  @IsNotEmpty()
   @ValidateNested()
   @Type(() => ContactDataDto)
   contact: ContactDataDto;
@@ -534,17 +537,19 @@ export class CreateLandingPageDto {
     description: 'Footer section data',
     type: FooterDataDto,
   })
+  @IsNotEmpty()
   @ValidateNested()
   @Type(() => FooterDataDto)
   footer: FooterDataDto;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Brand color palette',
     type: BrandPaletteDto,
   })
+  @IsOptional()
   @ValidateNested()
   @Type(() => BrandPaletteDto)
-  palette: BrandPaletteDto;
+  palette?: BrandPaletteDto;
 }
 
 export class LandingPageResponseDto extends CreateLandingPageDto {
