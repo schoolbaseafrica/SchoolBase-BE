@@ -199,7 +199,7 @@ export class LandingPage extends BaseEntity {
   @Column({
     type: 'jsonb',
     name: 'palette',
-    nullable: false,
+    nullable: true,
   })
-  palette: IBrandPalette;
+  palette?: IBrandPalette;
 }
