@@ -100,6 +100,12 @@ export class SyncSchema1765800836139 implements MigrationInterface {
       `CREATE TABLE "schools" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "name" character varying(150) NOT NULL, "address" character varying(255), "logo_url" character varying, "email" character varying, "phone" character varying(20), "primary_color" character varying, "secondary_color" character varying, "accent_color" character varying, "installation_completed" boolean NOT NULL DEFAULT false, "database_url" text, CONSTRAINT "UQ_74a5374cf6d1c970dd47f888bf6" UNIQUE ("email"), CONSTRAINT "PK_95b932e47ac129dd8e23a0db548" PRIMARY KEY ("id")); COMMENT ON COLUMN "schools"."database_url" IS 'Dedicated DB connection'`,
     );
     await queryRunner.query(
+      `CREATE TABLE "landing_pages" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "school_id" uuid NOT NULL, "hero" jsonb NOT NULL, "programs" jsonb NOT NULL DEFAULT '[]'::jsonb, "features" jsonb DEFAULT '[]'::jsonb, "facilities" jsonb DEFAULT '[]'::jsonb, "about" text, "why_us" text, "gallery" jsonb NOT NULL DEFAULT '[]'::jsonb, "testimonials" jsonb DEFAULT '[]'::jsonb, "faqs" jsonb DEFAULT '[]'::jsonb, "cta" jsonb NOT NULL, "contact" jsonb NOT NULL, "footer" jsonb NOT NULL, "palette" jsonb, CONSTRAINT "UQ_landing_pages_school_id" UNIQUE ("school_id"), CONSTRAINT "PK_landing_pages" PRIMARY KEY ("id"))`,
+    );
+    await queryRunner.query(
+      `CREATE INDEX "IDX_landing_pages_school_id" ON "landing_pages" ("school_id")`,
+    );
+    await queryRunner.query(
       `CREATE TABLE "result_subject_lines" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "result_id" uuid NOT NULL, "subject_id" uuid NOT NULL, "ca_score" numeric(5,2), "exam_score" numeric(5,2), "total_score" numeric(5,2), "grade_letter" character varying(2), "remark" text, CONSTRAINT "PK_e61cbdf14035df7bc1da89aefe8" PRIMARY KEY ("id"))`,
     );
     await queryRunner.query(
@@ -448,6 +454,9 @@ export class SyncSchema1765800836139 implements MigrationInterface {
     );
     await queryRunner.query(
       `ALTER TABLE "invites" ADD CONSTRAINT "FK_7f2f179b9f5940e0f8f41847cfa" FOREIGN KEY ("school_id") REFERENCES "schools"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "landing_pages" ADD CONSTRAINT "FK_landing_pages_school" FOREIGN KEY ("school_id") REFERENCES "schools"("id") ON DELETE CASCADE ON UPDATE NO ACTION`,
     );
     await queryRunner.query(
       `ALTER TABLE "grade_submissions" ADD CONSTRAINT "FK_37cbaeea015876dfed7c75a58b7" FOREIGN KEY ("teacher_id") REFERENCES "teachers"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`,
