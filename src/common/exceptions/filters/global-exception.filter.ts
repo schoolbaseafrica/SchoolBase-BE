@@ -148,6 +148,26 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         GlobalExceptionFilter.name,
       );
     }
+    // Handle email errors
+    else if (
+      exception instanceof Error &&
+      (exception.message.includes('Mail command failed') ||
+        exception.message.includes('Authentication Required') ||
+        exception.message.includes('SMTP') ||
+        exception.message.includes('ENOTFOUND') ||
+        exception.message.includes('ECONNREFUSED'))
+    ) {
+      status = HttpStatus.INTERNAL_SERVER_ERROR;
+      message = 'Email service failure';
+      error = 'EMAIL_SERVICE_ERROR';
+      stack = exception.stack;
+
+      this.logger.error(
+        `Email Service Error: ${exception.message} - Path: ${request.method} ${request.url}`,
+        stack,
+        GlobalExceptionFilter.name,
+      );
+    }
     // Handle unknown errors
     else {
       status = HttpStatus.INTERNAL_SERVER_ERROR;
