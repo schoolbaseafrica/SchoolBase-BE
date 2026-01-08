@@ -140,10 +140,18 @@ export class SuperadminService {
 
     if (createdSuperadmin.password) delete createdSuperadmin.password;
 
-    await this.sendWelcomeEmail(
-      createdSuperadmin.first_name,
-      createdSuperadmin.email,
-    );
+    try {
+      await this.sendWelcomeEmail(
+        createdSuperadmin.first_name,
+        createdSuperadmin.email,
+      );
+    } catch (error) {
+      this.logger.error('Failed to send welcome email to superadmin', {
+        email: createdSuperadmin.email,
+        error: error.message,
+        stack: error.stack,
+      });
+    }
 
     this.logger.info(sysMsg.SUPERADMIN_ACCOUNT_CREATED);
 
