@@ -337,7 +337,7 @@ export class TermService {
     });
 
     if (activeTerms.length === 0) {
-      throw new NotFoundException(sysMsg.NO_ACTIVE_TERM);
+      throw new NotFoundException(sysMsg.NO_ACTIVE_TERM_FOUND);
     }
 
     return activeTerms[0];

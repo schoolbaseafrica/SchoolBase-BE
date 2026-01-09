@@ -85,9 +85,7 @@ export class StudentDailyAttendanceController {
     @Param('classId', ParseUUIDPipe) classId: string,
     @Query('date') date?: string,
   ) {
-    // Default to today if no date provided
-    const targetDate = date || new Date().toISOString().split('T')[0];
-    return this.attendanceService.getClassDailyAttendance(classId, targetDate);
+    return this.attendanceService.getClassDailyAttendance(classId, date);
   }
 
   // --- GET: CLASS TERM ATTENDANCE SUMMARY (TEACHER/ADMIN) ---

@@ -551,7 +551,7 @@ describe('TermService', () => {
 
       await expect(service.getActiveTerm()).rejects.toThrow(NotFoundException);
       await expect(service.getActiveTerm()).rejects.toThrow(
-        sysMsg.NO_ACTIVE_TERM,
+        sysMsg.NO_ACTIVE_TERM_FOUND,
       );
 
       expect(termModelAction.list).toHaveBeenCalledWith({
