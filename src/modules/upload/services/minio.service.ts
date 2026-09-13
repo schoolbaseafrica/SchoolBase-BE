@@ -20,6 +20,7 @@ export class MinioService implements OnModuleInit {
   private readonly logger: Logger;
   private minioClient: minio.Client;
   private readonly bucketName: string;
+  private readonly publicUrl?: string;
 
   constructor(
     private readonly configService: ConfigService,
@@ -27,6 +28,9 @@ export class MinioService implements OnModuleInit {
   ) {
     this.logger = baseLogger.child({ context: MinioService.name });
     this.bucketName = this.configService.get<string>('minio.bucket');
+    this.publicUrl = this.configService
+      .get<string>('minio.publicUrl')
+      ?.replace(/\/+$/, '');
 
     // Initialize MinIO client
     this.minioClient = new minio.Client({
@@ -94,9 +98,8 @@ export class MinioService implements OnModuleInit {
 
       this.logger.info(`Image uploaded successfully to Minio: ${objectName}`);
 
-      // Construct URL manually since Minio.putObject doesn't return it
-      // Note: This assumes the bucket handles public read access.
-      // If private, you'd need presignedGetObject() here.
+      // MINIO_ENDPOINT is the private service address. Browser-visible URLs
+      // must use the separately configured public base URL.
       const protocol = this.configService.get('minio.useSSL')
         ? 'https'
         : 'http';
@@ -106,7 +109,9 @@ export class MinioService implements OnModuleInit {
       // Handle standard ports to avoid ugliness (e.g. :80 or :443)
       const portString = port === 80 || port === 443 ? '' : `:${port}`;
 
-      const url = `${protocol}://${endPoint}${portString}/${this.bucketName}/${objectName}`;
+      const internalFallback = `${protocol}://${endPoint}${portString}`;
+      const publicBaseUrl = this.publicUrl || internalFallback;
+      const url = `${publicBaseUrl}/${this.bucketName}/${objectName}`;
 
       return {
         url: url,

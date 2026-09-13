@@ -58,6 +58,18 @@ export default () => ({
     accessKey: process.env.MINIO_ACCESS_KEY,
     secretKey: process.env.MINIO_SECRET_KEY,
     bucket: process.env.MINIO_BUCKET_NAME,
+    publicUrl: process.env.MINIO_PUBLIC_URL,
+  },
+
+  cors: {
+    origins: (process.env.CORS_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  },
+
+  databaseSetup: {
+    enabled: process.env.DATABASE_SETUP_ENABLED === 'true',
   },
 
   frontend: {
