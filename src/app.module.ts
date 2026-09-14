@@ -5,14 +5,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { HealthController } from './health.controller';
 import { GlobalExceptionFilter } from './common/exceptions/filters/global-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggerModule } from './common/logger.module';
 import configuration from './config/config';
+import { HealthController } from './health.controller';
 import { LoggingInterceptor } from './middleware/logging.interceptor';
 import { AcademicSessionModule } from './modules/academic-session/academic-session.module';
 import { TermModule } from './modules/academic-term/term.module';
+import { ActivityLogModule } from './modules/activity-log/activity-log.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ClassModule } from './modules/class/class.module';
@@ -111,6 +112,7 @@ import { UserModule } from './modules/user/user.module';
     ClassModule,
     InviteModule,
     AcademicSessionModule,
+    ActivityLogModule,
     AttendanceModule,
     SubjectModule,
     UploadModule,

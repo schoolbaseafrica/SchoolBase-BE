@@ -10,10 +10,15 @@ import {
   ParseUUIDPipe,
   Patch,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 
+import { SkipWrap } from '../../common/decorators/skip-wrap.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { UserRole } from '../shared/enums';
 
 import {
   ApiCreateUser,
@@ -21,6 +26,7 @@ import {
   ApiUpdateUser,
 } from './docs/user.swagger';
 import { CreateUserDto } from './dto/create-user.dto';
+import { ListAdminsQueryDto } from './dto/list-admins-query.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
 import { UserService } from './user.service';
@@ -45,6 +51,14 @@ export class UserController {
     @Body() updateUserDto: UpdateUserDto,
   ) {
     return this.userService.updateUser(updateUserDto, { id: user.id });
+  }
+
+  @Get('admins')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @SkipWrap()
+  findAdmins(@Query() query: ListAdminsQueryDto) {
+    return this.userService.findAdmins(query);
   }
 
   @Get(':id')

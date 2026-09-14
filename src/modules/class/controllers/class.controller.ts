@@ -83,7 +83,11 @@ export class ClassController {
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
   @DocsGetGroupedClasses()
   async getGroupedClasses(@Query() query: ListGroupedClassesDto) {
-    return this.classService.getGroupedClasses(query.page, query.limit);
+    return this.classService.getGroupedClasses(
+      query.page,
+      query.limit,
+      query.includeArchived,
+    );
   }
 
   // --- GET: TOTAL NUMBER OF CLASSES ---

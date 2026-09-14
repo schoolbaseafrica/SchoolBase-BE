@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsNotEmpty,
   IsString,
   IsOptional,
@@ -154,6 +155,34 @@ export class ListGroupedClassesDto {
   @IsOptional()
   @IsString()
   teacherId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Include soft-deleted classes',
+    type: Boolean,
+    default: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  includeArchived?: boolean = false;
+
+  @ApiPropertyOptional({
+    description: 'Include classes from every academic session',
+    type: Boolean,
+    default: false,
+  })
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  })
+  @IsBoolean()
+  includeAllSessions?: boolean = false;
 }
 
 export class GetTotalClassesQueryDto {

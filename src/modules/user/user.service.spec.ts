@@ -15,6 +15,7 @@ describe('UserService', () => {
 
   const mockDataSource = {
     transaction: jest.fn(),
+    query: jest.fn(),
   };
 
   const mockUserModelAction = {
@@ -79,6 +80,46 @@ describe('UserService', () => {
       });
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('findAdmins', () => {
+    it('returns active admin users using the frontend response contract', async () => {
+      const admins = [
+        {
+          id: 'admin-id',
+          first_name: 'Ada',
+          last_name: 'Admin',
+          is_active: true,
+        },
+      ];
+      mockDataSource.query
+        .mockResolvedValueOnce([{ total: 1 }])
+        .mockResolvedValueOnce(admins);
+
+      const result = await service.findAdmins({
+        page: 1,
+        limit: 100,
+        is_active: true,
+      });
+
+      expect(result).toEqual({
+        data: admins,
+        total: 1,
+        page: 1,
+        limit: 100,
+        total_pages: 1,
+      });
+      expect(mockDataSource.query).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining(`'ADMIN' = ANY("role")`),
+        [true],
+      );
+      expect(mockDataSource.query).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('AS "date_of_birth"'),
+        [true, 100, 0],
+      );
     });
   });
 

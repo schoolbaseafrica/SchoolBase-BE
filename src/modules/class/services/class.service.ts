@@ -279,11 +279,11 @@ export class ClassService {
   /**
    * Fetches all classes grouped by name and academic session, including arm.
    */
-  async getGroupedClasses(page = 1, limit = 20) {
+  async getGroupedClasses(page = 1, limit = 20, includeArchived = false) {
     // Use generic list method from AbstractModelAction
     const { payload: classesRaw, paginationMeta } =
       await this.classModelAction.list({
-        filterRecordOptions: { is_deleted: false },
+        filterRecordOptions: includeArchived ? {} : { is_deleted: false },
         relations: { academicSession: true },
         order: { name: 'ASC', arm: 'ASC' },
         paginationPayload: { page, limit },
