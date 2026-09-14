@@ -93,6 +93,8 @@ export class InviteService {
             expires_at: expiresAt,
             role: inviteUserDto.role,
             full_name: inviteUserDto.full_name,
+            accepted: false,
+            status: InviteStatus.PENDING,
           },
           transactionOptions: {
             useTransaction: true,
@@ -216,7 +218,7 @@ export class InviteService {
 
     await this.inviteModelAction.update({
       identifierOptions: { id: invite.id },
-      updatePayload: { accepted: true },
+      updatePayload: { accepted: true, status: InviteStatus.USED },
       transactionOptions: { useTransaction: false },
     });
 
@@ -257,6 +259,9 @@ export class InviteService {
     // --- Status filter ---
     if (status) {
       qb.andWhere('invite.status = :status', { status });
+      if (status === InviteStatus.PENDING) {
+        qb.andWhere('invite.accepted = false');
+      }
     }
 
     // --- Role filter ---
