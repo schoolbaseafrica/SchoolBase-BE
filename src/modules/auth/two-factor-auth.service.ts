@@ -1,9 +1,11 @@
 import { Injectable, NotFoundException, HttpStatus } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import * as qrCode from 'qrcode';
 import * as speakeasy from 'speakeasy';
 import { Repository } from 'typeorm';
 
+import { resolveTenantName } from '../../config/tenant-identity';
 import {
   USER_NOT_FOUND,
   MFA_SETUP_SUCCESS,
@@ -32,6 +34,7 @@ export class TwoFactorAuthService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(User2fa)
     private readonly user2faRepository: Repository<User2fa>,
+    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -46,9 +49,10 @@ export class TwoFactorAuthService {
     }
 
     // Generate a secret for the user
+    const schoolName = resolveTenantName(this.configService);
     const secret = speakeasy.generateSecret({
-      name: `OpenSchoolPortal (${user.email})`,
-      issuer: 'Open School Portal',
+      name: `${schoolName} (${user.email})`,
+      issuer: schoolName,
       length: 32,
     });
 

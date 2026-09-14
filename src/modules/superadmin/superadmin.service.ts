@@ -15,6 +15,10 @@ import { Logger } from 'winston';
 import { EmailTemplateID } from 'src/constants/email-constants';
 
 import config from '../../config/config';
+import {
+  resolveTenantLogo,
+  resolveTenantName,
+} from '../../config/tenant-identity';
 import * as sysMsg from '../../constants/system.messages';
 import { EmailService } from '../email/email.service';
 
@@ -62,14 +66,16 @@ export class SuperadminService {
   }
 
   private async sendWelcomeEmail(userName: string, email: string) {
+    const schoolName = resolveTenantName(this.configService);
+
     await this.emailService.sendMail({
       to: [{ email: email, name: userName }],
-      subject: 'Welcome to Open School Portal',
+      subject: `Welcome to ${schoolName}`,
       templateNameID: EmailTemplateID.SUPERADMIN_WELCOME,
       templateData: {
         first_name: userName,
-        school_name: 'Open School Portal',
-        logo_url: 'https://staging.schoolbase.africa/assets/logo.svg',
+        school_name: schoolName,
+        logo_url: resolveTenantLogo(this.configService),
         role: Role.SUPERADMIN,
         invite_link: `
           ${this.configService.get<string>('frontend.superadmin_login_url')}

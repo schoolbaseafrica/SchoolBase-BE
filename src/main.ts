@@ -5,11 +5,13 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 
 import { AppModule } from './app.module';
+import { resolveTenantName } from './config/tenant-identity';
 import { LoggingInterceptor } from './middleware/logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
+  const schoolName = resolveTenantName(configService);
 
   const corsOrigins = configService.get<string[]>('cors.origins', []);
   app.enableCors({
@@ -36,8 +38,8 @@ async function bootstrap() {
 
   // Swagger setup
   const config = new DocumentBuilder()
-    .setTitle('Open School Portal API')
-    .setDescription('API documentation for Open School Portal')
+    .setTitle(`${schoolName} API`)
+    .setDescription(`API documentation for ${schoolName}`)
     .setVersion('1.0')
     .addTag('Waitlist')
     .addBearerAuth({
