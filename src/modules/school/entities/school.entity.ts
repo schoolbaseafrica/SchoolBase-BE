@@ -59,6 +59,12 @@ export class School extends BaseEntity {
   @Column({ default: false })
   installation_completed: boolean;
 
+  @Column({ type: 'boolean', default: false })
+  use_marketing_site: boolean;
+
+  @Column({ type: 'jsonb', nullable: true })
+  marketing_site_config?: Record<string, unknown> | null;
+
   @Column({ comment: 'Dedicated DB connection', type: 'text', nullable: true })
   @IsOptional()
   @IsString()

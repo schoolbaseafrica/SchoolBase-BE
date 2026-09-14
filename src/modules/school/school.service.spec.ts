@@ -20,6 +20,7 @@ import { Role, SuperAdmin } from '../superadmin/entities/superadmin.entity';
 import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
 
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import { WebsiteLayout } from './dto/update-website-layout.dto';
 import { School } from './entities/school.entity';
 import { SchoolModelAction } from './model-actions/school.action';
 import { SchoolService } from './school.service';
@@ -351,7 +352,12 @@ describe('SchoolService', () => {
 
       const result = await service.getSchoolDetails();
 
-      expect(result).toEqual(mockSchool);
+      expect(result).toEqual({
+        ...mockSchool,
+        website_layout: WebsiteLayout.ONE_PAGE,
+        use_marketing_site: false,
+        marketing_site_config: null,
+      });
       expect(schoolModelAction.list).toHaveBeenCalledWith({
         filterRecordOptions: { installation_completed: true },
       });
@@ -366,6 +372,40 @@ describe('SchoolService', () => {
       await expect(service.getSchoolDetails()).rejects.toThrow(
         ConflictException,
       );
+    });
+  });
+
+  describe('updateWebsiteLayout', () => {
+    it('enables the multi-page website without replacing its saved content', async () => {
+      const school = {
+        id: 'uuid-123',
+        installation_completed: true,
+        use_marketing_site: false,
+        marketing_site_config: { hiddenPages: [] },
+      } as unknown as School;
+      schoolModelAction.list.mockResolvedValue({
+        payload: [school],
+        paginationMeta: {},
+      });
+      schoolModelAction.update.mockResolvedValue({
+        ...school,
+        use_marketing_site: true,
+      });
+
+      await expect(
+        service.updateWebsiteLayout({
+          website_layout: WebsiteLayout.MULTI_PAGE,
+        }),
+      ).resolves.toEqual({
+        id: 'uuid-123',
+        website_layout: WebsiteLayout.MULTI_PAGE,
+        use_marketing_site: true,
+      });
+      expect(schoolModelAction.update).toHaveBeenCalledWith({
+        identifierOptions: { id: 'uuid-123' },
+        updatePayload: { use_marketing_site: true },
+        transactionOptions: { useTransaction: false },
+      });
     });
   });
 

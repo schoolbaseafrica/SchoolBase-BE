@@ -12,6 +12,10 @@ import { Role } from '../superadmin/entities/superadmin.entity';
 import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
 
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import {
+  UpdateWebsiteLayoutDto,
+  WebsiteLayout,
+} from './dto/update-website-layout.dto';
 import { SchoolModelAction } from './model-actions/school.action';
 
 interface IUploadedFile {
@@ -174,6 +178,36 @@ export class SchoolService {
       secondary_color: school.secondary_color,
       accent_color: school.accent_color,
       installation_completed: school.installation_completed,
+      website_layout: school.use_marketing_site
+        ? WebsiteLayout.MULTI_PAGE
+        : WebsiteLayout.ONE_PAGE,
+      use_marketing_site: school.use_marketing_site ?? false,
+      marketing_site_config: school.marketing_site_config ?? null,
+    };
+  }
+
+  async updateWebsiteLayout(dto: UpdateWebsiteLayoutDto) {
+    const { payload } = await this.schoolModelAction.list({
+      filterRecordOptions: { installation_completed: true },
+    });
+
+    if (!payload || payload.length === 0) {
+      throw new ConflictException(sysMsg.SCHOOL_NOT_FOUND);
+    }
+
+    const useMarketingSite = dto.website_layout === WebsiteLayout.MULTI_PAGE;
+    const school = await this.schoolModelAction.update({
+      identifierOptions: { id: payload[0].id },
+      updatePayload: { use_marketing_site: useMarketingSite },
+      transactionOptions: { useTransaction: false },
+    });
+
+    return {
+      id: school.id,
+      website_layout: useMarketingSite
+        ? WebsiteLayout.MULTI_PAGE
+        : WebsiteLayout.ONE_PAGE,
+      use_marketing_site: useMarketingSite,
     };
   }
 

@@ -7,9 +7,16 @@ import {
   Body,
   UseInterceptors,
   UploadedFile,
+  Patch,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { UserRole } from '../shared/enums';
 
 import { installationApi } from './decorators/installation-api.decorator';
 import {
@@ -17,6 +24,7 @@ import {
   DocsGetSetupStatus,
 } from './docs/school.decorator';
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import { UpdateWebsiteLayoutDto } from './dto/update-website-layout.dto';
 import { SchoolService } from './school.service';
 
 interface IUploadedFile {
@@ -45,6 +53,14 @@ export class SchoolController {
   @DocsGetSchoolDetails()
   getSchoolDetails() {
     return this.schoolService.getSchoolDetails();
+  }
+
+  @Patch('website-layout')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN)
+  updateWebsiteLayout(@Body() dto: UpdateWebsiteLayoutDto) {
+    return this.schoolService.updateWebsiteLayout(dto);
   }
 
   @Get('setup-status')
