@@ -12,6 +12,7 @@ import { Role } from '../superadmin/entities/superadmin.entity';
 import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
 
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import { UpdateMarketingSiteDto } from './dto/update-marketing-site.dto';
 import {
   UpdateWebsiteLayoutDto,
   WebsiteLayout,
@@ -208,6 +209,29 @@ export class SchoolService {
         ? WebsiteLayout.MULTI_PAGE
         : WebsiteLayout.ONE_PAGE,
       use_marketing_site: useMarketingSite,
+    };
+  }
+
+  async updateMarketingSite(dto: UpdateMarketingSiteDto) {
+    const { payload } = await this.schoolModelAction.list({
+      filterRecordOptions: { installation_completed: true },
+    });
+
+    if (!payload || payload.length === 0) {
+      throw new ConflictException(sysMsg.SCHOOL_NOT_FOUND);
+    }
+
+    const school = await this.schoolModelAction.update({
+      identifierOptions: { id: payload[0].id },
+      updatePayload: {
+        marketing_site_config: dto.marketing_site_config,
+      },
+      transactionOptions: { useTransaction: false },
+    });
+
+    return {
+      id: school.id,
+      marketing_site_config: school.marketing_site_config ?? {},
     };
   }
 

@@ -409,6 +409,55 @@ describe('SchoolService', () => {
     });
   });
 
+  describe('updateMarketingSite', () => {
+    it('updates multi-page content without changing the selected layout', async () => {
+      const school = {
+        id: 'uuid-123',
+        installation_completed: true,
+        use_marketing_site: true,
+        marketing_site_config: { hiddenPages: [] },
+      } as unknown as School;
+      const marketingSiteConfig = {
+        hiddenPages: ['news'],
+        home: { heroImageUrl: 'https://files.example/school-hero.jpg' },
+      };
+      schoolModelAction.list.mockResolvedValue({
+        payload: [school],
+        paginationMeta: {},
+      });
+      schoolModelAction.update.mockResolvedValue({
+        ...school,
+        marketing_site_config: marketingSiteConfig,
+      });
+
+      await expect(
+        service.updateMarketingSite({
+          marketing_site_config: marketingSiteConfig,
+        }),
+      ).resolves.toEqual({
+        id: 'uuid-123',
+        marketing_site_config: marketingSiteConfig,
+      });
+      expect(schoolModelAction.update).toHaveBeenCalledWith({
+        identifierOptions: { id: 'uuid-123' },
+        updatePayload: { marketing_site_config: marketingSiteConfig },
+        transactionOptions: { useTransaction: false },
+      });
+    });
+
+    it('rejects an update when the school has not been installed', async () => {
+      schoolModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+
+      await expect(
+        service.updateMarketingSite({ marketing_site_config: {} }),
+      ).rejects.toThrow(ConflictException);
+      expect(schoolModelAction.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getSetupStatus', () => {
     it('should return SCHOOL_INFO as current step when no phases are completed', async () => {
       schoolModelAction.list.mockResolvedValue({

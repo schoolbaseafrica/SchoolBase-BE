@@ -24,6 +24,7 @@ import {
   DocsGetSetupStatus,
 } from './docs/school.decorator';
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import { UpdateMarketingSiteDto } from './dto/update-marketing-site.dto';
 import { UpdateWebsiteLayoutDto } from './dto/update-website-layout.dto';
 import { SchoolService } from './school.service';
 
@@ -61,6 +62,14 @@ export class SchoolController {
   @Roles(UserRole.ADMIN)
   updateWebsiteLayout(@Body() dto: UpdateWebsiteLayoutDto) {
     return this.schoolService.updateWebsiteLayout(dto);
+  }
+
+  @Patch('marketing-site')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN)
+  updateMarketingSite(@Body() dto: UpdateMarketingSiteDto) {
+    return this.schoolService.updateMarketingSite(dto);
   }
 
   @Get('setup-status')
