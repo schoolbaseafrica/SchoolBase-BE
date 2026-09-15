@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { ApiSuccessResponseDto } from '../../common/dto/response.dto';
 import { UserNotFoundException } from '../../common/exceptions/domain.exceptions';
 import * as sysMsg from '../../constants/system.messages';
+import { Student } from '../student/entities/student.entity';
 
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListAdminsQueryDto } from './dto/list-admins-query.dto';
@@ -63,6 +64,24 @@ export class UserService {
     return this.userModelAction.get({
       identifierOptions: { email },
     });
+  }
+
+  async findByLoginIdentifier(identifier: string) {
+    const value = identifier.trim();
+    if (value.includes('@')) {
+      return this.findByEmail(value.toLowerCase());
+    }
+
+    return this.dataSource
+      .getRepository(User)
+      .createQueryBuilder('user')
+      .innerJoin(Student, 'student', 'student.user_id = user.id')
+      .where('UPPER(student.registration_number) = UPPER(:identifier)', {
+        identifier: value,
+      })
+      .andWhere('student.is_deleted = false')
+      .andWhere('user.deleted_at IS NULL')
+      .getOne();
   }
 
   async findOne(id: string) {

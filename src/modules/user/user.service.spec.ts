@@ -13,9 +13,19 @@ describe('UserService', () => {
   let service: UserService;
   let userModelAction: jest.Mocked<UserModelAction>;
 
+  const queryBuilder = {
+    innerJoin: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getOne: jest.fn(),
+  };
+
   const mockDataSource = {
     transaction: jest.fn(),
     query: jest.fn(),
+    getRepository: jest.fn().mockReturnValue({
+      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+    }),
   };
 
   const mockUserModelAction = {
@@ -80,6 +90,40 @@ describe('UserService', () => {
       });
 
       expect(result).toBeNull();
+    });
+  });
+
+  describe('findByLoginIdentifier', () => {
+    it('uses the existing email lookup for email identifiers', async () => {
+      const user = { id: 'user-id', email: 'student@example.com' } as User;
+      userModelAction.get.mockResolvedValue(user);
+
+      const result = await service.findByLoginIdentifier(
+        ' Student@Example.com ',
+      );
+
+      expect(userModelAction.get).toHaveBeenCalledWith({
+        identifierOptions: { email: 'student@example.com' },
+      });
+      expect(mockDataSource.getRepository).not.toHaveBeenCalled();
+      expect(result).toBe(user);
+    });
+
+    it('finds the student user by registration number without case sensitivity', async () => {
+      const user = { id: 'student-user-id' } as User;
+      queryBuilder.getOne.mockResolvedValue(user);
+
+      const result = await service.findByLoginIdentifier(' sb/2026/0001 ');
+
+      expect(mockDataSource.getRepository).toHaveBeenCalledWith(User);
+      expect(queryBuilder.where).toHaveBeenCalledWith(
+        'UPPER(student.registration_number) = UPPER(:identifier)',
+        { identifier: 'sb/2026/0001' },
+      );
+      expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+        'student.is_deleted = false',
+      );
+      expect(result).toBe(user);
     });
   });
 

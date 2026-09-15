@@ -370,6 +370,7 @@ export class GradeSubmissionService {
             id: submission.class.id,
             name: submission.class.name,
             arm: submission.class.arm,
+            stream: submission.class.stream,
           }
         : null,
       subject: submission.subject
