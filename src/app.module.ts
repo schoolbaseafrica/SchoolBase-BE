@@ -16,6 +16,7 @@ import { TermModule } from './modules/academic-term/term.module';
 import { ActivityLogModule } from './modules/activity-log/activity-log.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CbtModule } from './modules/cbt/cbt.module';
 import { ClassModule } from './modules/class/class.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DatabaseModule } from './modules/database-setup/database.module';
@@ -110,6 +111,7 @@ import { UserModule } from './modules/user/user.module';
     TeachersModule,
     ParentModule,
     ClassModule,
+    CbtModule,
     InviteModule,
     AcademicSessionModule,
     ActivityLogModule,

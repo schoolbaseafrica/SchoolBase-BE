@@ -1,0 +1,181 @@
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+
+import { Roles } from '../auth/decorators/roles.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { UserRole } from '../shared/enums';
+
+import { CbtService } from './cbt.service';
+import {
+  CreateCbtExamDto,
+  CreateCbtQuestionDto,
+  ListCbtExamsDto,
+  RecordCbtConnectionEventDto,
+  SaveCbtAnswerDto,
+  UpdateCbtExamDto,
+  UpdateCbtQuestionDto,
+} from './dto';
+import { CbtAttemptEventType } from './entities';
+
+interface ICbtRequestUser {
+  userId: string;
+  student_id?: string;
+}
+
+interface ICbtRequest extends Request {
+  user: ICbtRequestUser;
+}
+
+@ApiTags('CBT')
+@ApiBearerAuth()
+@Controller('cbt')
+@UseGuards(JwtAuthGuard, RolesGuard)
+export class CbtController {
+  constructor(private readonly cbtService: CbtService) {}
+
+  @Post('exams')
+  @Roles(UserRole.ADMIN)
+  createExam(@Body() dto: CreateCbtExamDto, @Req() request: ICbtRequest) {
+    return this.cbtService.createExam(dto, request.user.userId);
+  }
+
+  @Get('exams')
+  @Roles(UserRole.ADMIN)
+  listExams(@Query() query: ListCbtExamsDto) {
+    return this.cbtService.listExams(query.status);
+  }
+
+  @Get('exams/:examId')
+  @Roles(UserRole.ADMIN)
+  getExam(@Param('examId', ParseUUIDPipe) examId: string) {
+    return this.cbtService.getExamForManagement(examId);
+  }
+
+  @Get('exams/:examId/attempts')
+  @Roles(UserRole.ADMIN)
+  getExamAttempts(@Param('examId', ParseUUIDPipe) examId: string) {
+    return this.cbtService.getExamAttempts(examId);
+  }
+
+  @Patch('exams/:examId')
+  @Roles(UserRole.ADMIN)
+  updateExam(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: UpdateCbtExamDto,
+  ) {
+    return this.cbtService.updateExam(examId, dto);
+  }
+
+  @Post('exams/:examId/questions')
+  @Roles(UserRole.ADMIN)
+  addQuestion(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: CreateCbtQuestionDto,
+  ) {
+    return this.cbtService.addQuestion(examId, dto);
+  }
+
+  @Patch('questions/:questionId')
+  @Roles(UserRole.ADMIN)
+  updateQuestion(
+    @Param('questionId', ParseUUIDPipe) questionId: string,
+    @Body() dto: UpdateCbtQuestionDto,
+  ) {
+    return this.cbtService.updateQuestion(questionId, dto);
+  }
+
+  @Post('exams/:examId/publish')
+  @Roles(UserRole.ADMIN)
+  publishExam(@Param('examId', ParseUUIDPipe) examId: string) {
+    return this.cbtService.publishExam(examId);
+  }
+
+  @Get('student/exams')
+  @Roles(UserRole.STUDENT)
+  listStudentExams(@Req() request: ICbtRequest) {
+    return this.cbtService.listStudentExams(this.studentId(request));
+  }
+
+  @Post('student/exams/:examId/attempts')
+  @Roles(UserRole.STUDENT)
+  startAttempt(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.startOrResumeAttempt(
+      examId,
+      this.studentId(request),
+    );
+  }
+
+  @Get('student/attempts/:attemptId')
+  @Roles(UserRole.STUDENT)
+  getAttempt(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.getAttempt(attemptId, this.studentId(request));
+  }
+
+  @Patch('student/attempts/:attemptId/answers/:questionId')
+  @Roles(UserRole.STUDENT)
+  saveAnswer(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Param('questionId', ParseUUIDPipe) questionId: string,
+    @Body() dto: SaveCbtAnswerDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.saveAnswer(
+      attemptId,
+      questionId,
+      this.studentId(request),
+      dto,
+    );
+  }
+
+  @Post('student/attempts/:attemptId/connection-events')
+  @Roles(UserRole.STUDENT)
+  recordConnectionEvent(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Body() dto: RecordCbtConnectionEventDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.recordConnectionEvent(
+      attemptId,
+      this.studentId(request),
+      dto.eventType as
+        | CbtAttemptEventType.CONNECTION_LOST
+        | CbtAttemptEventType.CONNECTION_RESTORED,
+      dto.metadata,
+    );
+  }
+
+  @Post('student/attempts/:attemptId/submit')
+  @Roles(UserRole.STUDENT)
+  submitAttempt(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.submitAttempt(attemptId, this.studentId(request));
+  }
+
+  private studentId(request: ICbtRequest) {
+    if (!request.user.student_id) {
+      throw new BadRequestException('Student profile not found');
+    }
+    return request.user.student_id;
+  }
+}
