@@ -185,13 +185,23 @@ export class CbtService {
         attempt.metadata->>'resultPublishedAt' AS "resultPublishedAt",
         student.id AS "studentId",
         student.registration_number AS "registrationNumber",
-        TRIM(CONCAT(COALESCE(app_user.first_name, ''), ' ', COALESCE(app_user.last_name, ''))) AS "studentName",
-        COALESCE(answer_counts.answers, 0)::int AS "answeredQuestions"
+        COALESCE(
+          NULLIF(TRIM(CONCAT(COALESCE(app_user.first_name, ''), ' ', COALESCE(app_user.last_name, ''))), ''),
+          applicant.full_name,
+          'Unknown candidate'
+        ) AS "studentName",
+        applicant.email AS "applicantEmail",
+        COALESCE(answer_counts.answers, 0)::int AS "answeredQuestions",
+        COALESCE(totals.question_count, 0)::int AS "questionCount",
+        COALESCE(event_counts.connection_lost, 0)::int AS "connectionLostCount",
+        COALESCE(event_counts.visibility_hidden, 0)::int AS "visibilityHiddenCount",
+        event_counts.last_event_at AS "lastEventAt"
       FROM cbt_attempts attempt
       LEFT JOIN students student ON student.id = attempt.student_id
       LEFT JOIN users app_user ON app_user.id = student.user_id
+      LEFT JOIN cbt_applicants applicant ON applicant.id = attempt.applicant_id
       LEFT JOIN (
-        SELECT exam_id, SUM(marks)::numeric AS total_marks
+        SELECT exam_id, SUM(marks)::numeric AS total_marks, COUNT(*)::int AS question_count
         FROM cbt_questions
         WHERE is_archived = false
         GROUP BY exam_id
@@ -201,6 +211,14 @@ export class CbtService {
         FROM cbt_answers
         GROUP BY attempt_id
       ) answer_counts ON answer_counts.attempt_id = attempt.id
+      LEFT JOIN (
+        SELECT attempt_id,
+          COUNT(*) FILTER (WHERE event_type = 'connection_lost')::int AS connection_lost,
+          COUNT(*) FILTER (WHERE event_type = 'visibility_hidden')::int AS visibility_hidden,
+          MAX(created_at) AS last_event_at
+        FROM cbt_attempt_events
+        GROUP BY attempt_id
+      ) event_counts ON event_counts.attempt_id = attempt.id
       WHERE attempt.exam_id = $1
       ORDER BY attempt.started_at DESC`,
       [examId],
@@ -218,6 +236,10 @@ export class CbtService {
       registrationNumber: string | null;
       studentName: string;
       answeredQuestions: number;
+      questionCount: number;
+      connectionLostCount: number;
+      visibilityHiddenCount: number;
+      lastEventAt: Date | null;
     }>;
     const submitted = attempts.filter(
       (attempt) => attempt.status === CbtAttemptStatus.SUBMITTED,
@@ -239,6 +261,11 @@ export class CbtService {
         ).length,
         published: submitted.filter((attempt) => attempt.resultPublishedAt)
           .length,
+        flagged: attempts.filter(
+          (attempt) =>
+            attempt.connectionLostCount > 0 ||
+            attempt.visibilityHiddenCount > 0,
+        ).length,
         averagePercent: percentages.length
           ? Math.round(
               (percentages.reduce((sum, value) => sum + value, 0) /
@@ -451,6 +478,7 @@ export class CbtService {
         applicant.admitted_at AS "admittedAt",
         applicant.student_id AS "studentId",
         intake.name AS "intakeName",
+        MAX(attempt.started_at) AS "latestAttemptAt",
         MAX(academic_session.name) AS "sessionName",
         CASE WHEN $2::uuid IS NULL THEN NULL ELSE MAX(term.name::text) END AS "termName",
         COUNT(attempt.id)::int AS "attemptCount",
@@ -470,6 +498,11 @@ export class CbtService {
           AND NULLIF(attempt.metadata->>'totalMarks', '')::numeric > 0
           AND (attempt.score::numeric / NULLIF(attempt.metadata->>'totalMarks', '')::numeric) * 100 >= exam.pass_mark_percent
         ) AS "hasPassed",
+        BOOL_OR(
+          attempt.status = 'submitted'
+          AND COALESCE((attempt.metadata->>'manualGradingRequired')::boolean, false)
+        ) AS "hasPendingMarking",
+        BOOL_OR(exam.pass_mark_percent IS NOT NULL) AS "passMarkConfigured",
         (ARRAY_AGG(exam.name ORDER BY attempt.started_at DESC)
           FILTER (WHERE attempt.id IS NOT NULL))[1] AS "latestExamName"
       FROM cbt_applicants applicant

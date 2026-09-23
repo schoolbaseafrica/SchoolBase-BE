@@ -140,7 +140,33 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
   ): Promise<number> {
     const query = this.feeRepository
       .createQueryBuilder('fee')
-      .select('COALESCE(SUM(fee.amount), 0)', 'total')
+      .select(
+        `COALESCE(SUM(
+          fee.amount * (
+            SELECT COUNT(DISTINCT assigned.student_id)
+            FROM (
+              SELECT cs.student_id
+              FROM fee_classes fc
+              INNER JOIN class_students cs
+                ON cs.class_id = fc.class_id
+                AND cs.is_active = true
+                AND cs.session_id = fee.session_id
+              INNER JOIN students student
+                ON student.id = cs.student_id
+                AND student.is_deleted = false
+              WHERE fc.fee_id = fee.id
+              UNION
+              SELECT direct.student_id
+              FROM fee_assignments direct
+              INNER JOIN students student
+                ON student.id = direct.student_id
+                AND student.is_deleted = false
+              WHERE direct.fee_id = fee.id
+            ) assigned
+          )
+        ), 0)`,
+        'total',
+      )
       .where('fee.status = :status', { status: FeeStatus.ACTIVE });
 
     if (termId) {

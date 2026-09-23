@@ -550,7 +550,9 @@ export class StudentService {
       `SELECT student_id AS "studentId", MIN(enrollment_date) AS "enrollmentDate"
        FROM class_students cs
        INNER JOIN students student ON student.id = cs.student_id
-       WHERE cs.session_id = $1 AND student.is_deleted = false
+       WHERE cs.session_id = $1
+         AND cs.is_active = true
+         AND student.is_deleted = false
        GROUP BY student_id`,
       [session.id],
     )) as Array<{ studentId: string; enrollmentDate: string }>;
