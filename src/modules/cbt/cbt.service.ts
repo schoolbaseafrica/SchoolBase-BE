@@ -93,6 +93,16 @@ export class CbtService {
 
   async createExam(dto: CreateCbtExamDto, userId: string) {
     this.assertDateRange(dto.availableFrom, dto.availableTo);
+    if (!dto.sessionId) {
+      throw new BadRequestException(
+        'Select an academic session before creating an examination',
+      );
+    }
+    const period = await this.resolveCbtPeriod({
+      sessionId: dto.sessionId,
+      termId: dto.termId,
+      scope: dto.termId ? 'term' : 'session',
+    });
     const classes = await this.resolveClasses(dto.classIds);
     let intakeId = dto.intakeId ?? null;
     if (dto.examType === CbtExamType.ENTRANCE && !intakeId) {
@@ -110,6 +120,8 @@ export class CbtService {
     }
     const exam = this.examRepository.create({
       ...dto,
+      sessionId: period.sessionId,
+      termId: period.termId,
       intakeId,
       availableFrom: dto.availableFrom ? new Date(dto.availableFrom) : null,
       availableTo: dto.availableTo ? new Date(dto.availableTo) : null,
@@ -129,7 +141,7 @@ export class CbtService {
       .where('exam.session_id = :sessionId', { sessionId: period.sessionId })
       .orderBy('exam.created_at', 'DESC');
     if (period.termId) {
-      builder.andWhere('(exam.term_id = :termId OR exam.term_id IS NULL)', {
+      builder.andWhere('exam.term_id = :termId', {
         termId: period.termId,
       });
     }
@@ -439,6 +451,8 @@ export class CbtService {
         applicant.admitted_at AS "admittedAt",
         applicant.student_id AS "studentId",
         intake.name AS "intakeName",
+        MAX(academic_session.name) AS "sessionName",
+        CASE WHEN $2::uuid IS NULL THEN NULL ELSE MAX(term.name::text) END AS "termName",
         COUNT(attempt.id)::int AS "attemptCount",
         COUNT(attempt.id) FILTER (WHERE attempt.status = 'submitted')::int AS "completedAttemptCount",
         MAX(
@@ -463,7 +477,9 @@ export class CbtService {
       JOIN cbt_attempts attempt ON attempt.applicant_id = applicant.id
       JOIN cbt_exams exam ON exam.id = attempt.exam_id
         AND exam.session_id = $1
-        AND ($2::uuid IS NULL OR exam.term_id = $2 OR exam.term_id IS NULL)
+        AND ($2::uuid IS NULL OR exam.term_id = $2)
+      JOIN academic_sessions academic_session ON academic_session.id = exam.session_id
+      LEFT JOIN terms term ON term.id = exam.term_id
       GROUP BY applicant.id, intake.name
       ORDER BY applicant.created_at DESC
     `,
@@ -483,37 +499,44 @@ export class CbtService {
       relations: { intake: true, attempts: { exam: true } },
     });
     if (!applicant) throw new NotFoundException('Applicant not found');
+    const scopedAttempts = applicant.attempts.filter(
+      (attempt) =>
+        attempt.exam.sessionId === period.sessionId &&
+        (!period.termId || attempt.exam.termId === period.termId),
+    );
+    if (!scopedAttempts.length) {
+      throw new NotFoundException(
+        'Applicant has no examination record in the selected academic period',
+      );
+    }
     return {
       ...applicant,
-      attempts: applicant.attempts
-        .filter(
-          (attempt) =>
-            attempt.exam.sessionId === period.sessionId &&
-            (!period.termId ||
-              attempt.exam.termId === period.termId ||
-              attempt.exam.termId === null),
-        )
-        .map((attempt) => {
-          const totalMarks = Number(
-            (attempt.metadata as { totalMarks?: number } | null)?.totalMarks ??
-              0,
-          );
-          const score = attempt.score === null ? null : Number(attempt.score);
-          const percentage =
-            score !== null && totalMarks > 0
-              ? Math.round((score / totalMarks) * 10_000) / 100
-              : null;
-          return {
-            ...attempt,
-            score,
-            totalMarks,
-            percentage,
-            manualGradingRequired: Boolean(
-              (attempt.metadata as { manualGradingRequired?: boolean } | null)
-                ?.manualGradingRequired,
-            ),
-          };
-        }),
+      sessionName: period.sessionName,
+      termName: period.termName,
+      period: {
+        sessionName: period.sessionName,
+        termName: period.termName,
+      },
+      attempts: scopedAttempts.map((attempt) => {
+        const totalMarks = Number(
+          (attempt.metadata as { totalMarks?: number } | null)?.totalMarks ?? 0,
+        );
+        const score = attempt.score === null ? null : Number(attempt.score);
+        const percentage =
+          score !== null && totalMarks > 0
+            ? Math.round((score / totalMarks) * 10_000) / 100
+            : null;
+        return {
+          ...attempt,
+          score,
+          totalMarks,
+          percentage,
+          manualGradingRequired: Boolean(
+            (attempt.metadata as { manualGradingRequired?: boolean } | null)
+              ?.manualGradingRequired,
+          ),
+        };
+      }),
     };
   }
 
@@ -524,6 +547,16 @@ export class CbtService {
       relations: { attempts: { exam: true } },
     });
     if (!applicant) throw new NotFoundException('Applicant not found');
+    const hasScopedAttempt = applicant.attempts.some(
+      (attempt) =>
+        attempt.exam.sessionId === period.sessionId &&
+        (!period.termId || attempt.exam.termId === period.termId),
+    );
+    if (!hasScopedAttempt) {
+      throw new NotFoundException(
+        'Applicant has no examination record in the selected academic period',
+      );
+    }
     if (applicant.studentId) {
       return { applicant, outcome: 'student_profile_exists' };
     }
@@ -539,9 +572,7 @@ export class CbtService {
       return (
         attempt.exam.examType === CbtExamType.ENTRANCE &&
         attempt.exam.sessionId === period.sessionId &&
-        (!period.termId ||
-          attempt.exam.termId === period.termId ||
-          attempt.exam.termId === null) &&
+        (!period.termId || attempt.exam.termId === period.termId) &&
         attempt.exam.passMarkPercent !== null &&
         percentage >= attempt.exam.passMarkPercent
       );
@@ -577,26 +608,38 @@ export class CbtService {
   private async resolveCbtPeriod(query: ListCbtApplicantsDto) {
     const sessionRows = (await this.dataSource.query(
       query.sessionId
-        ? `SELECT id FROM academic_sessions WHERE id = $1 AND deleted_at IS NULL LIMIT 1`
-        : `SELECT id FROM academic_sessions WHERE status = 'Active' AND deleted_at IS NULL ORDER BY start_date DESC LIMIT 1`,
+        ? `SELECT id, name FROM academic_sessions WHERE id = $1 AND deleted_at IS NULL LIMIT 1`
+        : `SELECT id, name FROM academic_sessions WHERE status = 'Active' AND deleted_at IS NULL ORDER BY start_date DESC LIMIT 1`,
       query.sessionId ? [query.sessionId] : [],
-    )) as Array<{ id: string }>;
+    )) as Array<{ id: string; name: string }>;
     const sessionId = sessionRows[0]?.id;
     if (!sessionId) throw new NotFoundException('Academic session not found');
-    if (query.scope === 'session') return { sessionId, termId: null };
+    if (query.scope === 'session') {
+      return {
+        sessionId,
+        termId: null,
+        sessionName: sessionRows[0].name,
+        termName: null,
+      };
+    }
 
     const termRows = (await this.dataSource.query(
       query.termId
-        ? `SELECT id FROM terms WHERE id = $1 AND session_id = $2 AND deleted_at IS NULL LIMIT 1`
-        : `SELECT id FROM terms WHERE session_id = $1 AND is_current = true AND deleted_at IS NULL LIMIT 1`,
+        ? `SELECT id, name FROM terms WHERE id = $1 AND session_id = $2 AND deleted_at IS NULL LIMIT 1`
+        : `SELECT id, name FROM terms WHERE session_id = $1 AND is_current = true AND deleted_at IS NULL LIMIT 1`,
       query.termId ? [query.termId, sessionId] : [sessionId],
-    )) as Array<{ id: string }>;
+    )) as Array<{ id: string; name: string }>;
     if (query.termId && !termRows[0]) {
       throw new BadRequestException(
         'The selected term does not belong to the session',
       );
     }
-    return { sessionId, termId: termRows[0]?.id ?? null };
+    return {
+      sessionId,
+      termId: termRows[0]?.id ?? null,
+      sessionName: sessionRows[0].name,
+      termName: termRows[0]?.name ?? null,
+    };
   }
 
   async listPublicExams() {
@@ -1036,9 +1079,7 @@ export class CbtService {
         { now },
       )
       .andWhere(
-        period.termId
-          ? '(exam.term_id = :termId OR exam.term_id IS NULL)'
-          : '1 = 1',
+        period.termId ? 'exam.term_id = :termId' : '1 = 1',
         period.termId ? { termId: period.termId } : {},
       )
       .andWhere('(exam.available_to IS NULL OR exam.available_to >= :now)', {
