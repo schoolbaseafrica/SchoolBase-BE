@@ -18,14 +18,19 @@ import { Student } from '../student/entities/student.entity';
 import { validateCbtQuestionDefinition } from './cbt-question-validation';
 import { answerIsCorrect } from './cbt-scoring';
 import {
+  CreateCbtBankQuestionDto,
   CreateCbtExamDto,
   CreateCbtQuestionDto,
+  CreateCbtSectionDto,
   GradeCbtAnswerDto,
+  ImportCbtBankQuestionDto,
   ListCbtApplicantsDto,
   ListCbtExamsDto,
+  ListCbtQuestionBankDto,
   SaveCbtAnswerDto,
   UpdateCbtExamDto,
   UpdateCbtQuestionDto,
+  UpdateCbtSectionDto,
 } from './dto';
 import {
   CbtAnswer,
@@ -146,7 +151,8 @@ export class CbtService {
       .addSelect('questions.correctAnswer')
       .addSelect('questions.explanation')
       .where('exam.id = :examId', { examId })
-      .orderBy('questions.sortOrder', 'ASC')
+      .orderBy('sections.sortOrder', 'ASC')
+      .addOrderBy('questions.sortOrder', 'ASC')
       .getOne();
     if (!exam) throw new NotFoundException('Examination not found');
     return exam;
@@ -637,7 +643,7 @@ export class CbtService {
     return this.dataSource.transaction(async (manager) => {
       const exam = await manager.getRepository(CbtExam).findOne({
         where: { id: examId },
-        relations: { questions: true },
+        relations: { questions: true, sections: true },
       });
       if (!exam || exam.examType !== CbtExamType.ENTRANCE) {
         throw new NotFoundException('External examination not found');
@@ -850,6 +856,133 @@ export class CbtService {
     return this.questionRepository.save(question);
   }
 
+  async createSection(examId: string, dto: CreateCbtSectionDto) {
+    await this.getDraftExam(examId);
+    return this.sectionRepository.save(
+      this.sectionRepository.create({
+        examId,
+        title: dto.title.trim(),
+        instructions: dto.instructions?.trim() || null,
+        sortOrder: dto.sortOrder ?? 0,
+        questionLimit: dto.questionLimit ?? null,
+      }),
+    );
+  }
+
+  async updateSection(sectionId: string, dto: UpdateCbtSectionDto) {
+    const section = await this.sectionRepository.findOne({
+      where: { id: sectionId },
+    });
+    if (!section) throw new NotFoundException('Examination section not found');
+    await this.getDraftExam(section.examId);
+    if (dto.title !== undefined) section.title = dto.title.trim();
+    if (dto.instructions !== undefined) {
+      section.instructions = dto.instructions.trim() || null;
+    }
+    if (dto.sortOrder !== undefined) section.sortOrder = dto.sortOrder;
+    if (dto.questionLimit !== undefined) {
+      section.questionLimit = dto.questionLimit;
+    }
+    return this.sectionRepository.save(section);
+  }
+
+  async deleteSection(sectionId: string) {
+    const section = await this.sectionRepository.findOne({
+      where: { id: sectionId },
+    });
+    if (!section) throw new NotFoundException('Examination section not found');
+    await this.getDraftExam(section.examId);
+    await this.sectionRepository.remove(section);
+    return { id: sectionId };
+  }
+
+  async listQuestionBank(query: ListCbtQuestionBankDto) {
+    const builder = this.questionRepository
+      .createQueryBuilder('question')
+      .addSelect('question.correctAnswer')
+      .addSelect('question.explanation')
+      .where('question.exam_id IS NULL')
+      .andWhere('question.is_archived = false')
+      .orderBy('question.created_at', 'DESC');
+    if (query.search) {
+      builder.andWhere(
+        '(question.body ILIKE :search OR question.topic ILIKE :search)',
+        { search: `%${query.search.trim()}%` },
+      );
+    }
+    if (query.type) {
+      builder.andWhere('question.type = :type', { type: query.type });
+    }
+    if (query.difficulty) {
+      builder.andWhere('question.difficulty = :difficulty', {
+        difficulty: query.difficulty,
+      });
+    }
+    if (query.topic) {
+      builder.andWhere('question.topic ILIKE :topic', {
+        topic: query.topic.trim(),
+      });
+    }
+    return builder.take(250).getMany();
+  }
+
+  async createBankQuestion(dto: CreateCbtBankQuestionDto) {
+    this.assertQuestion(dto as CreateCbtQuestionDto);
+    return this.questionRepository.save(
+      this.questionRepository.create({
+        ...dto,
+        examId: null,
+        sectionId: null,
+        sortOrder: 0,
+        options: dto.options ?? null,
+        correctAnswer: dto.correctAnswer ?? null,
+        topic: dto.topic?.trim() || null,
+        explanation: dto.explanation?.trim() || null,
+        marks: String(dto.marks),
+      }),
+    );
+  }
+
+  async saveQuestionToBank(questionId: string) {
+    const source = await this.getQuestionWithAnswerKey(questionId);
+    if (!source.examId) {
+      throw new ConflictException('Question is already in the question bank');
+    }
+    await this.getDraftExam(source.examId);
+    return this.questionRepository.save(
+      this.cloneQuestion(source, {
+        examId: null,
+        sectionId: null,
+        sortOrder: 0,
+      }),
+    );
+  }
+
+  async importBankQuestion(
+    examId: string,
+    questionId: string,
+    dto: ImportCbtBankQuestionDto,
+  ) {
+    await this.getDraftExam(examId);
+    await this.assertSectionBelongsToExam(dto.sectionId, examId);
+    const source = await this.getQuestionWithAnswerKey(questionId);
+    if (source.examId) {
+      throw new BadRequestException(
+        'Question does not belong to the question bank',
+      );
+    }
+    const sortOrder =
+      dto.sortOrder ??
+      (await this.questionRepository.count({ where: { examId } }));
+    return this.questionRepository.save(
+      this.cloneQuestion(source, {
+        examId,
+        sectionId: dto.sectionId ?? null,
+        sortOrder,
+      }),
+    );
+  }
+
   async publishExam(examId: string) {
     const exam = await this.getExamForManagement(examId);
     if (!exam.questions.length) {
@@ -962,7 +1095,7 @@ export class CbtService {
       const eventRepo = manager.getRepository(CbtAttemptEvent);
       const exam = await examRepo.findOne({
         where: { id: examId },
-        relations: { classes: true, questions: true },
+        relations: { classes: true, questions: true, sections: true },
       });
       if (!exam) throw new NotFoundException('Examination not found');
       const student = await manager.getRepository(Student).findOne({
@@ -1036,7 +1169,7 @@ export class CbtService {
     const attempt = await this.getOwnedAttempt(attemptId, studentId);
     const exam = await this.examRepository.findOne({
       where: { id: attempt.examId },
-      relations: { questions: true },
+      relations: { questions: true, sections: true },
     });
     if (!exam) throw new NotFoundException('Examination not found');
     const answers = await this.answerRepository.find({ where: { attemptId } });
@@ -1313,7 +1446,7 @@ export class CbtService {
       throw new ForbiddenException('Candidate access token required');
     const attempt = await this.attemptRepository.findOne({
       where: { id: attemptId },
-      relations: { exam: { questions: true } },
+      relations: { exam: { questions: true, sections: true } },
     });
     if (!attempt?.applicantId) throw new NotFoundException('Attempt not found');
     const invite = await this.entranceInviteRepository.findOne({
@@ -1410,6 +1543,15 @@ export class CbtService {
         instructions: exam.instructions,
         timeLimitMinutes: exam.timeLimitMinutes,
         shuffleOptions: exam.shuffleOptions,
+        sections: (exam.sections ?? [])
+          .slice()
+          .sort((a, b) => a.sortOrder - b.sortOrder)
+          .map((section) => ({
+            id: section.id,
+            title: section.title,
+            instructions: section.instructions,
+            sortOrder: section.sortOrder,
+          })),
       },
       questions: questions.map((question) => {
         const optionOrder = metadata?.optionOrder?.[question.id] ?? [];
@@ -1485,6 +1627,39 @@ export class CbtService {
 
   private attemptMetadata(attempt: CbtAttempt): ICbtAttemptMetadata {
     return { ...((attempt.metadata ?? {}) as ICbtAttemptMetadata) };
+  }
+
+  private async getQuestionWithAnswerKey(questionId: string) {
+    const question = await this.questionRepository
+      .createQueryBuilder('question')
+      .addSelect('question.correctAnswer')
+      .addSelect('question.explanation')
+      .where('question.id = :questionId', { questionId })
+      .getOne();
+    if (!question) throw new NotFoundException('Question not found');
+    return question;
+  }
+
+  private cloneQuestion(
+    source: CbtQuestion,
+    destination: {
+      examId: string | null;
+      sectionId: string | null;
+      sortOrder: number;
+    },
+  ) {
+    return this.questionRepository.create({
+      ...destination,
+      type: source.type,
+      body: source.body,
+      options: source.options,
+      correctAnswer: source.correctAnswer,
+      marks: source.marks,
+      topic: source.topic,
+      difficulty: source.difficulty,
+      explanation: source.explanation,
+      isArchived: false,
+    });
   }
 
   private async resolveClasses(classIds?: string[]) {

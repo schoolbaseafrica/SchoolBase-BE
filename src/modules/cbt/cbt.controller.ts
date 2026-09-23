@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -20,15 +21,20 @@ import { UserRole } from '../shared/enums';
 
 import { CbtService } from './cbt.service';
 import {
+  CreateCbtBankQuestionDto,
   CreateCbtExamDto,
   CreateCbtQuestionDto,
+  CreateCbtSectionDto,
   GradeCbtAnswerDto,
+  ImportCbtBankQuestionDto,
   ListCbtExamsDto,
   ListCbtApplicantsDto,
+  ListCbtQuestionBankDto,
   RecordCbtConnectionEventDto,
   SaveCbtAnswerDto,
   UpdateCbtExamDto,
   UpdateCbtQuestionDto,
+  UpdateCbtSectionDto,
 } from './dto';
 import { CbtAttemptEventType } from './entities';
 
@@ -96,6 +102,24 @@ export class CbtController {
     return this.cbtService.getExamAttempts(examId);
   }
 
+  @Get('question-bank')
+  @Roles(UserRole.ADMIN)
+  listQuestionBank(@Query() query: ListCbtQuestionBankDto) {
+    return this.cbtService.listQuestionBank(query);
+  }
+
+  @Post('question-bank')
+  @Roles(UserRole.ADMIN)
+  createBankQuestion(@Body() dto: CreateCbtBankQuestionDto) {
+    return this.cbtService.createBankQuestion(dto);
+  }
+
+  @Post('questions/:questionId/save-to-bank')
+  @Roles(UserRole.ADMIN)
+  saveQuestionToBank(@Param('questionId', ParseUUIDPipe) questionId: string) {
+    return this.cbtService.saveQuestionToBank(questionId);
+  }
+
   @Get('attempts/:attemptId/review')
   @Roles(UserRole.ADMIN)
   getAttemptReview(@Param('attemptId', ParseUUIDPipe) attemptId: string) {
@@ -143,6 +167,40 @@ export class CbtController {
     @Body() dto: CreateCbtQuestionDto,
   ) {
     return this.cbtService.addQuestion(examId, dto);
+  }
+
+  @Post('exams/:examId/questions/import/:questionId')
+  @Roles(UserRole.ADMIN)
+  importBankQuestion(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Param('questionId', ParseUUIDPipe) questionId: string,
+    @Body() dto: ImportCbtBankQuestionDto,
+  ) {
+    return this.cbtService.importBankQuestion(examId, questionId, dto);
+  }
+
+  @Post('exams/:examId/sections')
+  @Roles(UserRole.ADMIN)
+  createSection(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: CreateCbtSectionDto,
+  ) {
+    return this.cbtService.createSection(examId, dto);
+  }
+
+  @Patch('sections/:sectionId')
+  @Roles(UserRole.ADMIN)
+  updateSection(
+    @Param('sectionId', ParseUUIDPipe) sectionId: string,
+    @Body() dto: UpdateCbtSectionDto,
+  ) {
+    return this.cbtService.updateSection(sectionId, dto);
+  }
+
+  @Delete('sections/:sectionId')
+  @Roles(UserRole.ADMIN)
+  deleteSection(@Param('sectionId', ParseUUIDPipe) sectionId: string) {
+    return this.cbtService.deleteSection(sectionId);
   }
 
   @Patch('questions/:questionId')

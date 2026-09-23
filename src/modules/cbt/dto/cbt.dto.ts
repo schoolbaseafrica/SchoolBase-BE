@@ -1,4 +1,4 @@
-import { PartialType } from '@nestjs/mapped-types';
+import { OmitType, PartialType } from '@nestjs/mapped-types';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -233,6 +233,66 @@ export class CreateCbtQuestionDto {
 }
 
 export class UpdateCbtQuestionDto extends PartialType(CreateCbtQuestionDto) {}
+
+export class CreateCbtSectionDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  title: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20_000)
+  instructions?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sortOrder?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  questionLimit?: number;
+}
+
+export class UpdateCbtSectionDto extends PartialType(CreateCbtSectionDto) {}
+
+export class CreateCbtBankQuestionDto extends OmitType(CreateCbtQuestionDto, [
+  'sectionId',
+  'sortOrder',
+] as const) {}
+
+export class ImportCbtBankQuestionDto {
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sortOrder?: number;
+}
+
+export class ListCbtQuestionBankDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  search?: string;
+
+  @IsOptional()
+  @IsEnum(CbtQuestionType)
+  type?: CbtQuestionType;
+
+  @IsOptional()
+  @IsEnum(CbtQuestionDifficulty)
+  difficulty?: CbtQuestionDifficulty;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  topic?: string;
+}
 
 export class GradeCbtAnswerDto {
   @IsNumber({ maxDecimalPlaces: 2 })
