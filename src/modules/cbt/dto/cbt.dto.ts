@@ -242,6 +242,32 @@ export class ListCbtExamsDto {
   @IsOptional()
   @IsEnum(CbtExamType)
   examType?: CbtExamType;
+
+  @IsOptional()
+  @IsUUID()
+  sessionId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  termId?: string;
+
+  @IsOptional()
+  @IsIn(['term', 'session'])
+  scope?: 'term' | 'session';
+}
+
+export class ListCbtApplicantsDto {
+  @IsOptional()
+  @IsUUID()
+  sessionId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  termId?: string;
+
+  @IsOptional()
+  @IsIn(['term', 'session'])
+  scope?: 'term' | 'session';
 }
 
 export class StartPublicCbtAttemptDto {

@@ -158,17 +158,31 @@ export class StudentService {
     data: StudentResponseDto[];
     meta: Partial<PaginationMeta>;
   }> {
-    const { page = 1, limit = 10, search, unassigned } = listStudentsDto;
+    const {
+      page = 1,
+      limit = 10,
+      search,
+      unassigned,
+      class_id,
+    } = listStudentsDto;
+    const activeSession = listStudentsDto.session_id
+      ? { id: listStudentsDto.session_id }
+      : await this.academicSessionModelAction.get({
+          identifierOptions: { status: SessionStatus.ACTIVE },
+        });
+    const sessionId = activeSession?.id;
 
     // Use query builder if we have search or unassigned filter (complex filtering)
     // Otherwise use model action for simple filtering
     const { payload: students, paginationMeta } =
-      search || unassigned !== undefined
+      sessionId || search || unassigned !== undefined || class_id
         ? await this.searchStudentsWithModelAction(
             search || '',
             page,
             limit,
             unassigned,
+            sessionId,
+            class_id,
           )
         : await this.studentModelAction.list({
             filterRecordOptions: {
@@ -186,6 +200,8 @@ export class StudentService {
     this.logger.info(`Fetched ${data.length} students`, {
       searchTerm: search,
       unassigned,
+      sessionId,
+      classId: class_id,
       page,
       limit,
       total: paginationMeta.total,
@@ -351,6 +367,8 @@ export class StudentService {
     page: number = 1,
     limit: number = 10,
     unassigned?: boolean,
+    sessionId?: string,
+    classId?: string,
   ): Promise<{
     payload: Student[];
     paginationMeta: Partial<PaginationMeta>;
@@ -364,6 +382,20 @@ export class StudentService {
       .orderBy('student.createdAt', 'DESC')
       .where('student.is_deleted IS NOT TRUE');
 
+    if (sessionId) {
+      queryBuilder.leftJoin(
+        'class_students',
+        'period_enrollment',
+        'period_enrollment.student_id = student.id AND period_enrollment.session_id = :sessionId AND period_enrollment.is_active = true',
+        { sessionId },
+      );
+    }
+    if (classId) {
+      queryBuilder.andWhere('period_enrollment.class_id = :classId', {
+        classId,
+      });
+    }
+
     // Add search condition
     if (search && search.trim()) {
       queryBuilder.andWhere(
@@ -374,9 +406,17 @@ export class StudentService {
 
     // Add unassigned filter
     if (unassigned === true) {
-      queryBuilder.andWhere('student.current_class_id IS NULL');
+      queryBuilder.andWhere(
+        sessionId
+          ? 'period_enrollment.student_id IS NULL'
+          : 'student.current_class_id IS NULL',
+      );
     } else if (unassigned === false) {
-      queryBuilder.andWhere('student.current_class_id IS NOT NULL');
+      queryBuilder.andWhere(
+        sessionId
+          ? 'period_enrollment.student_id IS NOT NULL'
+          : 'student.current_class_id IS NOT NULL',
+      );
     }
 
     const total = await queryBuilder.getCount();

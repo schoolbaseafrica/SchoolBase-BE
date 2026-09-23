@@ -314,6 +314,7 @@ export class GradeSubmissionService {
       class_id,
       subject_id,
       term_id,
+      academic_session_id,
       status,
       teacher_id,
     } = listDto;
@@ -322,6 +323,8 @@ export class GradeSubmissionService {
     if (class_id) filterOptions.class_id = class_id;
     if (subject_id) filterOptions.subject_id = subject_id;
     if (term_id) filterOptions.term_id = term_id;
+    if (academic_session_id)
+      filterOptions.academic_session_id = academic_session_id;
     if (status) filterOptions.status = status;
     if (teacher_id) filterOptions.teacher_id = teacher_id;
 

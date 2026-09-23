@@ -23,6 +23,7 @@ import {
   CreateCbtExamDto,
   CreateCbtQuestionDto,
   ListCbtExamsDto,
+  ListCbtApplicantsDto,
   RecordCbtConnectionEventDto,
   SaveCbtAnswerDto,
   UpdateCbtExamDto,
@@ -55,25 +56,31 @@ export class CbtController {
   @Get('exams')
   @Roles(UserRole.ADMIN)
   listExams(@Query() query: ListCbtExamsDto) {
-    return this.cbtService.listExams(query.status, query.examType);
+    return this.cbtService.listExams(query);
   }
 
   @Get('applicants')
   @Roles(UserRole.ADMIN)
-  listApplicants() {
-    return this.cbtService.listApplicants();
+  listApplicants(@Query() query: ListCbtApplicantsDto) {
+    return this.cbtService.listApplicants(query);
   }
 
   @Get('applicants/:applicantId')
   @Roles(UserRole.ADMIN)
-  getApplicant(@Param('applicantId', ParseUUIDPipe) applicantId: string) {
-    return this.cbtService.getApplicant(applicantId);
+  getApplicant(
+    @Param('applicantId', ParseUUIDPipe) applicantId: string,
+    @Query() query: ListCbtApplicantsDto,
+  ) {
+    return this.cbtService.getApplicant(applicantId, query);
   }
 
   @Post('applicants/:applicantId/admit')
   @Roles(UserRole.ADMIN)
-  admitApplicant(@Param('applicantId', ParseUUIDPipe) applicantId: string) {
-    return this.cbtService.admitApplicant(applicantId);
+  admitApplicant(
+    @Param('applicantId', ParseUUIDPipe) applicantId: string,
+    @Query() query: ListCbtApplicantsDto,
+  ) {
+    return this.cbtService.admitApplicant(applicantId, query);
   }
 
   @Get('exams/:examId')
@@ -123,8 +130,11 @@ export class CbtController {
 
   @Get('student/exams')
   @Roles(UserRole.STUDENT)
-  listStudentExams(@Req() request: ICbtRequest) {
-    return this.cbtService.listStudentExams(this.studentId(request));
+  listStudentExams(
+    @Req() request: ICbtRequest,
+    @Query() query: ListCbtApplicantsDto,
+  ) {
+    return this.cbtService.listStudentExams(this.studentId(request), query);
   }
 
   @Post('student/exams/:examId/attempts')

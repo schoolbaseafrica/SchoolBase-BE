@@ -20,6 +20,8 @@ import { answerIsCorrect } from './cbt-scoring';
 import {
   CreateCbtExamDto,
   CreateCbtQuestionDto,
+  ListCbtApplicantsDto,
+  ListCbtExamsDto,
   SaveCbtAnswerDto,
   UpdateCbtExamDto,
   UpdateCbtQuestionDto,
@@ -97,15 +99,27 @@ export class CbtService {
     return this.examRepository.save(exam);
   }
 
-  async listExams(status?: CbtExamStatus, examType?: CbtExamType) {
-    return this.examRepository.find({
-      where: {
-        ...(status ? { status } : {}),
-        ...(examType ? { examType } : {}),
-      },
-      relations: { classes: true, questions: true, sections: true },
-      order: { createdAt: 'DESC' },
-    });
+  async listExams(query: ListCbtExamsDto) {
+    const period = await this.resolveCbtPeriod(query);
+    const builder = this.examRepository
+      .createQueryBuilder('exam')
+      .leftJoinAndSelect('exam.classes', 'classes')
+      .leftJoinAndSelect('exam.questions', 'questions')
+      .leftJoinAndSelect('exam.sections', 'sections')
+      .where('exam.session_id = :sessionId', { sessionId: period.sessionId })
+      .orderBy('exam.created_at', 'DESC');
+    if (period.termId) {
+      builder.andWhere('(exam.term_id = :termId OR exam.term_id IS NULL)', {
+        termId: period.termId,
+      });
+    }
+    if (query.status)
+      builder.andWhere('exam.status = :status', { status: query.status });
+    if (query.examType)
+      builder.andWhere('exam.exam_type = :examType', {
+        examType: query.examType,
+      });
+    return builder.getMany();
   }
 
   async getExamForManagement(examId: string) {
@@ -210,8 +224,10 @@ export class CbtService {
     };
   }
 
-  async listApplicants() {
-    const rows = (await this.dataSource.query(`
+  async listApplicants(query: ListCbtApplicantsDto) {
+    const period = await this.resolveCbtPeriod(query);
+    const rows = (await this.dataSource.query(
+      `
       SELECT applicant.id,
         applicant.full_name AS "fullName",
         applicant.email,
@@ -241,11 +257,15 @@ export class CbtService {
           FILTER (WHERE attempt.id IS NOT NULL))[1] AS "latestExamName"
       FROM cbt_applicants applicant
       JOIN cbt_intakes intake ON intake.id = applicant.intake_id
-      LEFT JOIN cbt_attempts attempt ON attempt.applicant_id = applicant.id
-      LEFT JOIN cbt_exams exam ON exam.id = attempt.exam_id
+      JOIN cbt_attempts attempt ON attempt.applicant_id = applicant.id
+      JOIN cbt_exams exam ON exam.id = attempt.exam_id
+        AND exam.session_id = $1
+        AND ($2::uuid IS NULL OR exam.term_id = $2 OR exam.term_id IS NULL)
       GROUP BY applicant.id, intake.name
       ORDER BY applicant.created_at DESC
-    `)) as Array<Record<string, unknown>>;
+    `,
+      [period.sessionId, period.termId],
+    )) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       ...row,
       bestPercentage:
@@ -253,7 +273,8 @@ export class CbtService {
     }));
   }
 
-  async getApplicant(applicantId: string) {
+  async getApplicant(applicantId: string, query: ListCbtApplicantsDto) {
+    const period = await this.resolveCbtPeriod(query);
     const applicant = await this.applicantRepository.findOne({
       where: { id: applicantId },
       relations: { intake: true, attempts: { exam: true } },
@@ -261,30 +282,40 @@ export class CbtService {
     if (!applicant) throw new NotFoundException('Applicant not found');
     return {
       ...applicant,
-      attempts: applicant.attempts.map((attempt) => {
-        const totalMarks = Number(
-          (attempt.metadata as { totalMarks?: number } | null)?.totalMarks ?? 0,
-        );
-        const score = attempt.score === null ? null : Number(attempt.score);
-        const percentage =
-          score !== null && totalMarks > 0
-            ? Math.round((score / totalMarks) * 10_000) / 100
-            : null;
-        return {
-          ...attempt,
-          score,
-          totalMarks,
-          percentage,
-          manualGradingRequired: Boolean(
-            (attempt.metadata as { manualGradingRequired?: boolean } | null)
-              ?.manualGradingRequired,
-          ),
-        };
-      }),
+      attempts: applicant.attempts
+        .filter(
+          (attempt) =>
+            attempt.exam.sessionId === period.sessionId &&
+            (!period.termId ||
+              attempt.exam.termId === period.termId ||
+              attempt.exam.termId === null),
+        )
+        .map((attempt) => {
+          const totalMarks = Number(
+            (attempt.metadata as { totalMarks?: number } | null)?.totalMarks ??
+              0,
+          );
+          const score = attempt.score === null ? null : Number(attempt.score);
+          const percentage =
+            score !== null && totalMarks > 0
+              ? Math.round((score / totalMarks) * 10_000) / 100
+              : null;
+          return {
+            ...attempt,
+            score,
+            totalMarks,
+            percentage,
+            manualGradingRequired: Boolean(
+              (attempt.metadata as { manualGradingRequired?: boolean } | null)
+                ?.manualGradingRequired,
+            ),
+          };
+        }),
     };
   }
 
-  async admitApplicant(applicantId: string) {
+  async admitApplicant(applicantId: string, query: ListCbtApplicantsDto) {
+    const period = await this.resolveCbtPeriod(query);
     const applicant = await this.applicantRepository.findOne({
       where: { id: applicantId },
       relations: { attempts: { exam: true } },
@@ -304,6 +335,10 @@ export class CbtService {
       const percentage = total ? (Number(attempt.score ?? 0) / total) * 100 : 0;
       return (
         attempt.exam.examType === CbtExamType.ENTRANCE &&
+        attempt.exam.sessionId === period.sessionId &&
+        (!period.termId ||
+          attempt.exam.termId === period.termId ||
+          attempt.exam.termId === null) &&
         attempt.exam.passMarkPercent !== null &&
         percentage >= attempt.exam.passMarkPercent
       );
@@ -334,6 +369,31 @@ export class CbtService {
     applicant.admittedAt = new Date();
     await this.applicantRepository.save(applicant);
     return { applicant, outcome: 'student_invite_sent' };
+  }
+
+  private async resolveCbtPeriod(query: ListCbtApplicantsDto) {
+    const sessionRows = (await this.dataSource.query(
+      query.sessionId
+        ? `SELECT id FROM academic_sessions WHERE id = $1 AND deleted_at IS NULL LIMIT 1`
+        : `SELECT id FROM academic_sessions WHERE status = 'Active' AND deleted_at IS NULL ORDER BY start_date DESC LIMIT 1`,
+      query.sessionId ? [query.sessionId] : [],
+    )) as Array<{ id: string }>;
+    const sessionId = sessionRows[0]?.id;
+    if (!sessionId) throw new NotFoundException('Academic session not found');
+    if (query.scope === 'session') return { sessionId, termId: null };
+
+    const termRows = (await this.dataSource.query(
+      query.termId
+        ? `SELECT id FROM terms WHERE id = $1 AND session_id = $2 AND deleted_at IS NULL LIMIT 1`
+        : `SELECT id FROM terms WHERE session_id = $1 AND is_current = true AND deleted_at IS NULL LIMIT 1`,
+      query.termId ? [query.termId, sessionId] : [sessionId],
+    )) as Array<{ id: string }>;
+    if (query.termId && !termRows[0]) {
+      throw new BadRequestException(
+        'The selected term does not belong to the session',
+      );
+    }
+    return { sessionId, termId: termRows[0]?.id ?? null };
   }
 
   async listPublicExams() {
@@ -617,8 +677,15 @@ export class CbtService {
     return this.examRepository.save(exam);
   }
 
-  async listStudentExams(studentId: string) {
-    const student = await this.getStudent(studentId);
+  async listStudentExams(studentId: string, query: ListCbtApplicantsDto) {
+    await this.getStudent(studentId);
+    const period = await this.resolveCbtPeriod(query);
+    const enrollment = (await this.dataSource.query(
+      `SELECT class_id AS "classId" FROM class_students
+       WHERE student_id = $1 AND session_id = $2 AND is_active = true
+       ORDER BY enrollment_date DESC LIMIT 1`,
+      [studentId, period.sessionId],
+    )) as Array<{ classId: string }>;
     const now = new Date();
     const exams = await this.examRepository
       .createQueryBuilder('exam')
@@ -630,16 +697,23 @@ export class CbtService {
         (qb) => qb.andWhere('question.is_archived = false'),
       )
       .where('exam.status = :status', { status: CbtExamStatus.PUBLISHED })
+      .andWhere('exam.session_id = :sessionId', { sessionId: period.sessionId })
       .andWhere(
         '(exam.available_from IS NULL OR exam.available_from <= :now)',
         { now },
+      )
+      .andWhere(
+        period.termId
+          ? '(exam.term_id = :termId OR exam.term_id IS NULL)'
+          : '1 = 1',
+        period.termId ? { termId: period.termId } : {},
       )
       .andWhere('(exam.available_to IS NULL OR exam.available_to >= :now)', {
         now,
       })
       .andWhere(
         '(NOT EXISTS (SELECT 1 FROM cbt_exam_classes access WHERE access.exam_id = exam.id) OR class.id = :classId)',
-        { classId: student.current_class_id },
+        { classId: enrollment[0]?.classId ?? null },
       )
       .orderBy('exam.available_from', 'ASC', 'NULLS FIRST')
       .getMany();

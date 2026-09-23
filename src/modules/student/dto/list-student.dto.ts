@@ -5,10 +5,23 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   Min,
 } from 'class-validator';
 
 export class ListStudentsDto {
+  @ApiPropertyOptional({
+    description: 'Academic session used for enrollment filtering',
+  })
+  @IsOptional()
+  @IsUUID()
+  session_id?: string;
+
+  @ApiPropertyOptional({ description: 'Class used for enrollment filtering' })
+  @IsOptional()
+  @IsUUID()
+  class_id?: string;
+
   @ApiProperty({
     description: 'Page number',
     example: 1,
