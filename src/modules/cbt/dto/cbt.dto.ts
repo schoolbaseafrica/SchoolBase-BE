@@ -234,6 +234,17 @@ export class CreateCbtQuestionDto {
 
 export class UpdateCbtQuestionDto extends PartialType(CreateCbtQuestionDto) {}
 
+export class GradeCbtAnswerDto {
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  marksAwarded: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  comment?: string;
+}
+
 export class ListCbtExamsDto {
   @IsOptional()
   @IsEnum(CbtExamStatus)

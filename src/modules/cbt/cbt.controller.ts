@@ -22,6 +22,7 @@ import { CbtService } from './cbt.service';
 import {
   CreateCbtExamDto,
   CreateCbtQuestionDto,
+  GradeCbtAnswerDto,
   ListCbtExamsDto,
   ListCbtApplicantsDto,
   RecordCbtConnectionEventDto,
@@ -93,6 +94,37 @@ export class CbtController {
   @Roles(UserRole.ADMIN)
   getExamAttempts(@Param('examId', ParseUUIDPipe) examId: string) {
     return this.cbtService.getExamAttempts(examId);
+  }
+
+  @Get('attempts/:attemptId/review')
+  @Roles(UserRole.ADMIN)
+  getAttemptReview(@Param('attemptId', ParseUUIDPipe) attemptId: string) {
+    return this.cbtService.getAttemptReview(attemptId);
+  }
+
+  @Patch('attempts/:attemptId/answers/:questionId/grade')
+  @Roles(UserRole.ADMIN)
+  gradeAttemptAnswer(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Param('questionId', ParseUUIDPipe) questionId: string,
+    @Body() dto: GradeCbtAnswerDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.gradeAttemptAnswer(
+      attemptId,
+      questionId,
+      dto,
+      request.user.userId,
+    );
+  }
+
+  @Post('attempts/:attemptId/publish-result')
+  @Roles(UserRole.ADMIN)
+  publishAttemptResult(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.publishAttemptResult(attemptId, request.user.userId);
   }
 
   @Patch('exams/:examId')

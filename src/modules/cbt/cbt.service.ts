@@ -20,6 +20,7 @@ import { answerIsCorrect } from './cbt-scoring';
 import {
   CreateCbtExamDto,
   CreateCbtQuestionDto,
+  GradeCbtAnswerDto,
   ListCbtApplicantsDto,
   ListCbtExamsDto,
   SaveCbtAnswerDto,
@@ -41,6 +42,20 @@ import {
   CbtIntake,
   CbtQuestion,
 } from './entities';
+
+interface ICbtAttemptMetadata extends Record<string, unknown> {
+  totalMarks?: number;
+  manualGradingRequired?: boolean;
+  gradingCompletedAt?: string;
+  resultPublishedAt?: string;
+  resultPublishedBy?: string;
+  gradedAnswers?: Record<
+    string,
+    { graderId: string; gradedAt: string; comment: string | null }
+  >;
+  questionOrder?: string[];
+  optionOrder?: Record<string, string[]>;
+}
 
 @Injectable()
 export class CbtService {
@@ -149,6 +164,7 @@ export class CbtService {
         attempt.score,
         COALESCE((attempt.metadata->>'totalMarks')::numeric, totals.total_marks, 0) AS "totalMarks",
         COALESCE((attempt.metadata->>'manualGradingRequired')::boolean, false) AS "manualGradingRequired",
+        attempt.metadata->>'resultPublishedAt' AS "resultPublishedAt",
         student.id AS "studentId",
         student.registration_number AS "registrationNumber",
         TRIM(CONCAT(COALESCE(app_user.first_name, ''), ' ', COALESCE(app_user.last_name, ''))) AS "studentName",
@@ -179,6 +195,7 @@ export class CbtService {
       score: string | null;
       totalMarks: string;
       manualGradingRequired: boolean;
+      resultPublishedAt: string | null;
       studentId: string | null;
       registrationNumber: string | null;
       studentName: string;
@@ -199,6 +216,11 @@ export class CbtService {
         started: attempts.length,
         inProgress: attempts.length - submitted.length,
         submitted: submitted.length,
+        pendingMarking: submitted.filter(
+          (attempt) => attempt.manualGradingRequired,
+        ).length,
+        published: submitted.filter((attempt) => attempt.resultPublishedAt)
+          .length,
         averagePercent: percentages.length
           ? Math.round(
               (percentages.reduce((sum, value) => sum + value, 0) /
@@ -222,6 +244,181 @@ export class CbtService {
             : null,
       })),
     };
+  }
+
+  async getAttemptReview(attemptId: string) {
+    const attempt = await this.attemptRepository
+      .createQueryBuilder('attempt')
+      .leftJoinAndSelect('attempt.exam', 'exam')
+      .leftJoinAndSelect('attempt.applicant', 'applicant')
+      .leftJoinAndSelect('attempt.answers', 'answer')
+      .leftJoinAndSelect('answer.question', 'question')
+      .addSelect('question.correctAnswer')
+      .addSelect('question.explanation')
+      .leftJoinAndSelect('attempt.events', 'event')
+      .where('attempt.id = :attemptId', { attemptId })
+      .orderBy('question.sortOrder', 'ASC')
+      .addOrderBy('event.createdAt', 'ASC')
+      .getOne();
+    if (!attempt) throw new NotFoundException('Attempt not found');
+    const student = attempt.studentId
+      ? (
+          (await this.dataSource.query(
+            `SELECT student.registration_number AS "registrationNumber",
+             TRIM(CONCAT(COALESCE(app_user.first_name, ''), ' ', COALESCE(app_user.last_name, ''))) AS "name"
+           FROM students student
+           JOIN users app_user ON app_user.id = student.user_id
+           WHERE student.id = $1 LIMIT 1`,
+            [attempt.studentId],
+          )) as Array<{ registrationNumber: string; name: string }>
+        )[0]
+      : null;
+    const metadata = this.attemptMetadata(attempt);
+    const totalMarks = Number(
+      metadata.totalMarks ??
+        attempt.answers.reduce(
+          (sum, answer) => sum + Number(answer.question.marks),
+          0,
+        ),
+    );
+    const score = Number(attempt.score ?? 0);
+    return {
+      id: attempt.id,
+      status: attempt.status,
+      startedAt: attempt.startedAt,
+      submittedAt: attempt.submittedAt,
+      candidate: attempt.applicant
+        ? {
+            name: attempt.applicant.fullName,
+            email: attempt.applicant.email,
+            type: 'applicant',
+          }
+        : {
+            name: student?.name || 'Unknown student',
+            registrationNumber: student?.registrationNumber ?? null,
+            type: 'student',
+          },
+      exam: {
+        id: attempt.exam.id,
+        name: attempt.exam.name,
+        passMarkPercent: attempt.exam.passMarkPercent,
+      },
+      score,
+      totalMarks,
+      percentage: totalMarks
+        ? Math.round((score / totalMarks) * 10_000) / 100
+        : 0,
+      manualGradingRequired: Boolean(metadata.manualGradingRequired),
+      gradingCompletedAt: metadata.gradingCompletedAt ?? null,
+      resultPublishedAt: metadata.resultPublishedAt ?? null,
+      answers: attempt.answers.map((answer) => ({
+        id: answer.id,
+        questionId: answer.questionId,
+        response: answer.answerData,
+        isCorrect: answer.isCorrect,
+        marksAwarded:
+          answer.marksAwarded === null ? null : Number(answer.marksAwarded),
+        question: {
+          body: answer.question.body,
+          type: answer.question.type,
+          marks: Number(answer.question.marks),
+          options: answer.question.options,
+          correctAnswer: answer.question.correctAnswer,
+          explanation: answer.question.explanation,
+        },
+        grading: metadata.gradedAnswers?.[answer.questionId] ?? null,
+      })),
+      events: attempt.events.map((event) => ({
+        id: event.id,
+        eventType: event.eventType,
+        createdAt: event.createdAt,
+        metadata: event.metadata,
+      })),
+    };
+  }
+
+  async gradeAttemptAnswer(
+    attemptId: string,
+    questionId: string,
+    dto: GradeCbtAnswerDto,
+    graderId: string,
+  ) {
+    await this.dataSource.transaction(async (manager) => {
+      const attemptRepo = manager.getRepository(CbtAttempt);
+      const answerRepo = manager.getRepository(CbtAnswer);
+      const attempt = await attemptRepo
+        .createQueryBuilder('attempt')
+        .setLock('pessimistic_write')
+        .where('attempt.id = :attemptId', { attemptId })
+        .getOne();
+      if (!attempt) throw new NotFoundException('Attempt not found');
+      if (attempt.status !== CbtAttemptStatus.SUBMITTED) {
+        throw new ConflictException('Only submitted attempts can be marked');
+      }
+      const answer = await answerRepo.findOne({
+        where: { attemptId, questionId },
+        relations: { question: true },
+      });
+      if (!answer) throw new NotFoundException('Answer not found');
+      const maximum = Number(answer.question.marks);
+      if (dto.marksAwarded > maximum) {
+        throw new BadRequestException(`Marks awarded cannot exceed ${maximum}`);
+      }
+      answer.marksAwarded = String(dto.marksAwarded);
+      answer.isCorrect = dto.marksAwarded === maximum;
+      await answerRepo.save(answer);
+
+      const metadata = this.attemptMetadata(attempt);
+      metadata.gradedAnswers = {
+        ...(metadata.gradedAnswers ?? {}),
+        [questionId]: {
+          graderId,
+          gradedAt: new Date().toISOString(),
+          comment: dto.comment?.trim() || null,
+        },
+      };
+      delete metadata.resultPublishedAt;
+      delete metadata.resultPublishedBy;
+      const pending = await answerRepo
+        .createQueryBuilder('answer')
+        .innerJoin('answer.question', 'question')
+        .where('answer.attempt_id = :attemptId', { attemptId })
+        .andWhere('answer.answer_data IS NOT NULL')
+        .andWhere('answer.marks_awarded IS NULL')
+        .getCount();
+      metadata.manualGradingRequired = pending > 0;
+      if (!pending) metadata.gradingCompletedAt = new Date().toISOString();
+      const scoreRow = (await manager.query(
+        `SELECT COALESCE(SUM(marks_awarded), 0)::numeric AS score
+         FROM cbt_answers WHERE attempt_id = $1`,
+        [attemptId],
+      )) as Array<{ score: string }>;
+      attempt.score = String(scoreRow[0]?.score ?? 0);
+      attempt.metadata = metadata;
+      await attemptRepo.save(attempt);
+    });
+    return this.getAttemptReview(attemptId);
+  }
+
+  async publishAttemptResult(attemptId: string, publisherId: string) {
+    const attempt = await this.attemptRepository.findOne({
+      where: { id: attemptId },
+    });
+    if (!attempt) throw new NotFoundException('Attempt not found');
+    if (attempt.status !== CbtAttemptStatus.SUBMITTED) {
+      throw new ConflictException('Only submitted attempts have results');
+    }
+    const metadata = this.attemptMetadata(attempt);
+    if (metadata.manualGradingRequired) {
+      throw new ConflictException(
+        'Complete manual marking before publishing this result',
+      );
+    }
+    metadata.resultPublishedAt ??= new Date().toISOString();
+    metadata.resultPublishedBy ??= publisherId;
+    attempt.metadata = metadata;
+    await this.attemptRepository.save(attempt);
+    return this.getAttemptReview(attemptId);
   }
 
   async listApplicants(query: ListCbtApplicantsDto) {
@@ -538,11 +735,14 @@ export class CbtService {
       accessToken,
     );
     const answers = await this.answerRepository.find({ where: { attemptId } });
+    const metadata = this.attemptMetadata(attempt);
     const reveal =
       attempt.status === CbtAttemptStatus.SUBMITTED &&
-      exam.showResultImmediately;
+      !metadata.manualGradingRequired &&
+      Boolean(exam.showResultImmediately || metadata.resultPublishedAt);
     return {
       ...this.buildAttemptPayload(attempt, exam),
+      result: reveal ? this.resultPayload(attempt, exam) : null,
       answers: answers.map((answer) =>
         this.studentAnswerPayload(answer, reveal),
       ),
@@ -727,6 +927,25 @@ export class CbtService {
       attempts: attempts
         .filter((attempt) => attempt.examId === exam.id)
         .map((attempt) => ({
+          ...(() => {
+            const metadata = this.attemptMetadata(attempt);
+            const totalMarks = Number(metadata.totalMarks ?? 0);
+            const resultVisible =
+              attempt.status === CbtAttemptStatus.SUBMITTED &&
+              !metadata.manualGradingRequired &&
+              Boolean(exam.showResultImmediately || metadata.resultPublishedAt);
+            const score = Number(attempt.score ?? 0);
+            return {
+              resultPublishedAt: metadata.resultPublishedAt ?? null,
+              resultVisible,
+              score: resultVisible ? score : null,
+              totalMarks: resultVisible ? totalMarks : null,
+              percentage:
+                resultVisible && totalMarks
+                  ? Math.round((score / totalMarks) * 10_000) / 100
+                  : null,
+            };
+          })(),
           id: attempt.id,
           status: attempt.status,
           startedAt: attempt.startedAt,
@@ -821,11 +1040,14 @@ export class CbtService {
     });
     if (!exam) throw new NotFoundException('Examination not found');
     const answers = await this.answerRepository.find({ where: { attemptId } });
+    const metadata = this.attemptMetadata(attempt);
     const revealGrading =
       attempt.status === CbtAttemptStatus.SUBMITTED &&
-      exam.showResultImmediately;
+      !metadata.manualGradingRequired &&
+      Boolean(exam.showResultImmediately || metadata.resultPublishedAt);
     return {
       ...this.buildAttemptPayload(attempt, exam),
+      result: revealGrading ? this.resultPayload(attempt, exam) : null,
       answers: answers.map((answer) =>
         this.studentAnswerPayload(answer, revealGrading),
       ),
@@ -1240,6 +1462,29 @@ export class CbtService {
           ? null
           : percentage >= exam.passMarkPercent,
     };
+  }
+
+  private resultPayload(attempt: CbtAttempt, exam: CbtExam) {
+    const metadata = this.attemptMetadata(attempt);
+    const totalMarks = Number(metadata.totalMarks ?? 0);
+    const score = Number(attempt.score ?? 0);
+    const percentage = totalMarks
+      ? Math.round((score / totalMarks) * 10_000) / 100
+      : 0;
+    return {
+      score,
+      totalMarks,
+      percentage,
+      passed:
+        exam.passMarkPercent === null
+          ? null
+          : percentage >= exam.passMarkPercent,
+      publishedAt: metadata.resultPublishedAt ?? null,
+    };
+  }
+
+  private attemptMetadata(attempt: CbtAttempt): ICbtAttemptMetadata {
+    return { ...((attempt.metadata ?? {}) as ICbtAttemptMetadata) };
   }
 
   private async resolveClasses(classIds?: string[]) {
