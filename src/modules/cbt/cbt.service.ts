@@ -171,7 +171,7 @@ export class CbtService {
   }
 
   async getExamAttempts(examId: string) {
-    await this.getExamForManagement(examId);
+    const exam = await this.getExamForManagement(examId);
     const attempts = (await this.dataSource.query(
       `SELECT
         attempt.id,
@@ -195,7 +195,8 @@ export class CbtService {
         COALESCE(totals.question_count, 0)::int AS "questionCount",
         COALESCE(event_counts.connection_lost, 0)::int AS "connectionLostCount",
         COALESCE(event_counts.visibility_hidden, 0)::int AS "visibilityHiddenCount",
-        event_counts.last_event_at AS "lastEventAt"
+        event_counts.last_event_at AS "lastEventAt",
+        event_counts.last_event_type AS "lastEventType"
       FROM cbt_attempts attempt
       LEFT JOIN students student ON student.id = attempt.student_id
       LEFT JOIN users app_user ON app_user.id = student.user_id
@@ -216,6 +217,7 @@ export class CbtService {
           COUNT(*) FILTER (WHERE event_type = 'connection_lost')::int AS connection_lost,
           COUNT(*) FILTER (WHERE event_type = 'visibility_hidden')::int AS visibility_hidden,
           MAX(created_at) AS last_event_at
+          ,(ARRAY_AGG(event_type ORDER BY created_at DESC))[1] AS last_event_type
         FROM cbt_attempt_events
         GROUP BY attempt_id
       ) event_counts ON event_counts.attempt_id = attempt.id
@@ -240,7 +242,20 @@ export class CbtService {
       connectionLostCount: number;
       visibilityHiddenCount: number;
       lastEventAt: Date | null;
+      lastEventType: CbtAttemptEventType | null;
     }>;
+    const expectedRow = (await this.dataSource.query(
+      `SELECT COUNT(DISTINCT cs.student_id)::int AS count
+       FROM cbt_exam_classes exam_class
+       JOIN class_students cs ON cs.class_id = exam_class.class_id AND cs.is_active = true
+       JOIN students student ON student.id = cs.student_id AND student.is_deleted = false
+       WHERE exam_class.exam_id = $1`,
+      [examId],
+    )) as Array<{ count: number }>;
+    const expectedCandidates =
+      exam.examType === CbtExamType.IN_SCHOOL
+        ? Number(expectedRow[0]?.count ?? 0)
+        : attempts.length;
     const submitted = attempts.filter(
       (attempt) => attempt.status === CbtAttemptStatus.SUBMITTED,
     );
@@ -251,9 +266,45 @@ export class CbtService {
         return total ? (Number(attempt.score ?? 0) / total) * 100 : null;
       })
       .filter((value): value is number => value !== null);
+    const sortedPercentages = [...percentages].sort((a, b) => a - b);
+    const medianPercent = sortedPercentages.length
+      ? sortedPercentages.length % 2
+        ? sortedPercentages[Math.floor(sortedPercentages.length / 2)]
+        : (sortedPercentages[sortedPercentages.length / 2 - 1] +
+            sortedPercentages[sortedPercentages.length / 2]) /
+          2
+      : null;
+    const scoreDistribution = [
+      { label: '0-39', minimum: 0, maximum: 40 },
+      { label: '40-49', minimum: 40, maximum: 50 },
+      { label: '50-59', minimum: 50, maximum: 60 },
+      { label: '60-69', minimum: 60, maximum: 70 },
+      { label: '70-100', minimum: 70, maximum: 101 },
+    ].map(({ label, minimum, maximum }) => ({
+      label,
+      count: percentages.filter((value) => value >= minimum && value < maximum)
+        .length,
+    }));
+    const questionAnalytics = (await this.dataSource.query(
+      `SELECT question.id, question.body, question.topic, question.difficulty,
+        section.title AS "sectionTitle",
+        COUNT(DISTINCT attempt.id)::int AS "attemptCount",
+        COUNT(answer.id)::int AS "answeredCount",
+        COUNT(answer.id) FILTER (WHERE answer.is_correct = true)::int AS "correctCount"
+       FROM cbt_questions question
+       LEFT JOIN cbt_exam_sections section ON section.id = question.section_id
+       LEFT JOIN cbt_attempts attempt ON attempt.exam_id = question.exam_id
+       LEFT JOIN cbt_answers answer ON answer.attempt_id = attempt.id AND answer.question_id = question.id
+       WHERE question.exam_id = $1 AND question.is_archived = false
+       GROUP BY question.id, section.title
+       ORDER BY question.sort_order ASC`,
+      [examId],
+    )) as Array<Record<string, unknown>>;
     return {
       summary: {
         started: attempts.length,
+        expectedCandidates,
+        notStarted: Math.max(expectedCandidates - attempts.length, 0),
         inProgress: attempts.length - submitted.length,
         submitted: submitted.length,
         pendingMarking: submitted.filter(
@@ -273,6 +324,23 @@ export class CbtService {
                 100,
             ) / 100
           : null,
+        medianPercent,
+        highestPercent: sortedPercentages.length
+          ? sortedPercentages[sortedPercentages.length - 1]
+          : null,
+        lowestPercent: sortedPercentages[0] ?? null,
+        passRate:
+          percentages.length && exam.passMarkPercent !== null
+            ? Math.round(
+                (percentages.filter((value) => value >= exam.passMarkPercent!)
+                  .length /
+                  percentages.length) *
+                  10000,
+              ) / 100
+            : null,
+        completionRate: attempts.length
+          ? Math.round((submitted.length / attempts.length) * 10000) / 100
+          : 0,
       },
       attempts: attempts.map((attempt) => ({
         ...attempt,
@@ -287,6 +355,25 @@ export class CbtService {
                   10_000,
               ) / 100
             : null,
+        deadlineAt: new Date(
+          new Date(attempt.startedAt).getTime() +
+            exam.timeLimitMinutes * 60_000,
+        ).toISOString(),
+        connectionState:
+          attempt.lastEventType === CbtAttemptEventType.CONNECTION_LOST
+            ? 'offline'
+            : 'online',
+      })),
+      scoreDistribution,
+      questionAnalytics: questionAnalytics.map((item) => ({
+        ...item,
+        skippedCount: Number(item.attemptCount) - Number(item.answeredCount),
+        incorrectCount: Number(item.answeredCount) - Number(item.correctCount),
+        correctRate: Number(item.answeredCount)
+          ? Math.round(
+              (Number(item.correctCount) / Number(item.answeredCount)) * 10000,
+            ) / 100
+          : null,
       })),
     };
   }
@@ -380,6 +467,20 @@ export class CbtService {
         metadata: event.metadata,
       })),
     };
+  }
+
+  async acknowledgeAttemptEvent(eventId: string, userId: string) {
+    const event = await this.eventRepository.findOne({
+      where: { id: eventId },
+    });
+    if (!event) throw new NotFoundException('Attempt event not found');
+    event.metadata = {
+      ...(event.metadata ?? {}),
+      acknowledgedAt: new Date().toISOString(),
+      acknowledgedBy: userId,
+    };
+    await this.eventRepository.save(event);
+    return event;
   }
 
   async gradeAttemptAnswer(

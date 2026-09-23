@@ -126,6 +126,18 @@ export class CbtController {
     return this.cbtService.getAttemptReview(attemptId);
   }
 
+  @Patch('attempt-events/:eventId/acknowledge')
+  @Roles(UserRole.ADMIN)
+  acknowledgeAttemptEvent(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.acknowledgeAttemptEvent(
+      eventId,
+      request.user.userId,
+    );
+  }
+
   @Patch('attempts/:attemptId/answers/:questionId/grade')
   @Roles(UserRole.ADMIN)
   gradeAttemptAnswer(
