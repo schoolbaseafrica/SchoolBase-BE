@@ -6,6 +6,7 @@ import {
   IsArray,
   IsBoolean,
   IsDateString,
+  IsEmail,
   IsEnum,
   IsInt,
   IsIn,
@@ -24,6 +25,7 @@ import {
 import {
   CbtExamStatus,
   CbtExamType,
+  CbtProctoringMode,
   CbtQuestionDifficulty,
   CbtQuestionType,
 } from '../entities';
@@ -54,6 +56,14 @@ export class CreateCbtExamDto {
   @IsOptional()
   @IsEnum(CbtExamType)
   examType?: CbtExamType;
+
+  @IsOptional()
+  @IsEnum(CbtProctoringMode)
+  proctoringMode?: CbtProctoringMode;
+
+  @IsOptional()
+  @IsUUID()
+  intakeId?: string;
 
   @IsOptional()
   @IsUUID()
@@ -122,6 +132,10 @@ export class UpdateCbtExamDto {
   @IsString()
   @MaxLength(20_000)
   instructions?: string;
+
+  @IsOptional()
+  @IsEnum(CbtProctoringMode)
+  proctoringMode?: CbtProctoringMode;
 
   @IsOptional()
   @IsInt()
@@ -224,6 +238,44 @@ export class ListCbtExamsDto {
   @IsOptional()
   @IsEnum(CbtExamStatus)
   status?: CbtExamStatus;
+
+  @IsOptional()
+  @IsEnum(CbtExamType)
+  examType?: CbtExamType;
+}
+
+export class StartPublicCbtAttemptDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(255)
+  fullName: string;
+
+  @IsEmail()
+  @MaxLength(320)
+  email: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  phone?: string;
+}
+
+export class RecordCbtIntegrityEventDto {
+  @IsIn([
+    'connection_lost',
+    'connection_restored',
+    'visibility_hidden',
+    'visibility_visible',
+  ])
+  eventType:
+    | 'connection_lost'
+    | 'connection_restored'
+    | 'visibility_hidden'
+    | 'visibility_visible';
+
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
 }
 
 export class SaveCbtAnswerDto {

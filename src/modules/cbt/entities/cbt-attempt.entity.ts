@@ -3,6 +3,7 @@ import { Column, Entity, JoinColumn, ManyToOne, OneToMany } from 'typeorm';
 import { BaseEntity } from '../../../entities/base-entity';
 
 import { CbtAnswer } from './cbt-answer.entity';
+import { CbtApplicant } from './cbt-applicant.entity';
 import { CbtAttemptEvent } from './cbt-attempt-event.entity';
 import { CbtExam } from './cbt-exam.entity';
 import { CbtAttemptStatus } from './cbt.enums';
@@ -21,6 +22,13 @@ export class CbtAttempt extends BaseEntity {
 
   @Column({ name: 'applicant_id', type: 'uuid', nullable: true })
   applicantId: string | null;
+
+  @ManyToOne(() => CbtApplicant, (applicant) => applicant.attempts, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'applicant_id' })
+  applicant: CbtApplicant | null;
 
   @Column({ name: 'started_at', type: 'timestamptz' })
   startedAt: Date;

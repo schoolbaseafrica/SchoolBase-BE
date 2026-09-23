@@ -1,9 +1,10 @@
 import { Injectable, ForbiddenException, Inject } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { ArrayContains } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { ParentModelAction } from '../../parent/model-actions/parent-actions';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
@@ -32,6 +33,8 @@ export class ResolverService {
     private readonly teacherModelAction: TeacherModelAction,
     private readonly studentModelAction: StudentModelAction,
     private readonly parentModelAction: ParentModelAction,
+    private readonly academicSessionService: AcademicSessionService,
+    private readonly dataSource: DataSource,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
   ) {
     this.logger = baseLogger.child({ context: ResolverService.name });
@@ -110,31 +113,26 @@ export class ResolverService {
   }
 
   private async getAdminMetadata(): Promise<DashboardMetadataAdmin> {
-    const { payload: students } = await this.userModelAction.list({
-      filterRecordOptions: {
-        role: ArrayContains([UserRole.STUDENT]),
-        is_active: true,
-      },
-    });
-
-    const { payload: teachers } = await this.userModelAction.list({
-      filterRecordOptions: {
-        role: ArrayContains([UserRole.TEACHER]),
-        is_active: true,
-      },
-    });
-
-    const { payload: parents } = await this.userModelAction.list({
-      filterRecordOptions: {
-        role: ArrayContains([UserRole.PARENT]),
-        is_active: true,
-      },
-    });
+    const activeSession = await this.academicSessionService.activeSessions();
+    const [counts] = (await this.dataSource.query(
+      `SELECT
+        COUNT(DISTINCT cs.student_id)::int AS students,
+        COUNT(DISTINCT teacher.id)::int AS teachers,
+        COUNT(DISTINCT parent.id)::int AS parents
+      FROM class class_record
+      LEFT JOIN class_students cs ON cs.class_id = class_record.id AND cs.is_active = true
+      LEFT JOIN students student ON student.id = cs.student_id AND student.is_deleted = false
+      LEFT JOIN class_teachers ct ON ct.class_id = class_record.id AND ct.is_active = true
+      LEFT JOIN teachers teacher ON teacher.id = ct.teacher_id AND teacher.is_active = true
+      LEFT JOIN parents parent ON parent.id = student.parent_id AND parent.is_active = true AND parent.deleted_at IS NULL
+      WHERE class_record.academic_session_id = $1`,
+      [activeSession.data.id],
+    )) as Array<{ students: number; teachers: number; parents: number }>;
 
     return {
-      total_students: students.length,
-      total_teachers: teachers.length,
-      total_parents: parents.length,
+      total_students: counts?.students ?? 0,
+      total_teachers: counts?.teachers ?? 0,
+      total_parents: counts?.parents ?? 0,
     };
   }
 

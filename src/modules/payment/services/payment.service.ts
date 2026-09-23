@@ -1,7 +1,9 @@
 import { PaginationMeta } from '@hng-sdk/orm'; // Import PaginationMeta
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { SelectQueryBuilder } from 'typeorm';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
+import { TermService } from '../../academic-term/term.service';
 import { FetchPaymentsDto, PaymentSortBy } from '../dto/get-all-payments.dto'; // CORRECT IMPORT
 import { RecordPaymentDto } from '../dto/payment.dto';
 import { Payment } from '../entities/payment.entity';
@@ -21,6 +23,10 @@ export class PaymentService {
   constructor(
     private readonly paymentModelAction: PaymentModelAction,
     private readonly paymentValidationService: PaymentValidationService,
+    @Optional()
+    private readonly academicSessionService: AcademicSessionService | undefined,
+    @Optional()
+    private readonly termService: TermService | undefined,
   ) {}
 
   async recordPayment(
@@ -67,7 +73,21 @@ export class PaymentService {
   async fetchAllPayments(
     dto: FetchPaymentsDto,
   ): Promise<{ payments: Payment[]; total: number }> {
-    const result = await this.searchPaymentsWithQueryBuilder(dto);
+    const scopedDto = { ...dto };
+    if (
+      !scopedDto.session_id &&
+      !scopedDto.term_id &&
+      this.academicSessionService &&
+      this.termService
+    ) {
+      const [session, term] = await Promise.all([
+        this.academicSessionService.activeSessions(),
+        this.termService.getActiveTerm(),
+      ]);
+      scopedDto.session_id = session.data.id;
+      scopedDto.term_id = term.id;
+    }
+    const result = await this.searchPaymentsWithQueryBuilder(scopedDto);
 
     return { payments: result.payload, total: result.paginationMeta.total };
   }

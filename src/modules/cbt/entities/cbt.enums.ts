@@ -41,6 +41,8 @@ export enum CbtAttemptEventType {
   ANSWER_SAVED = 'answer_saved',
   CONNECTION_LOST = 'connection_lost',
   CONNECTION_RESTORED = 'connection_restored',
+  VISIBILITY_HIDDEN = 'visibility_hidden',
+  VISIBILITY_VISIBLE = 'visibility_visible',
   SUBMITTED = 'submitted',
   AUTO_SUBMITTED = 'auto_submitted',
 }

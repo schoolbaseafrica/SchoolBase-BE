@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+
 import {
   BadRequestException,
   ConflictException,
@@ -9,6 +11,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 
 import { Class } from '../class/entities/class.entity';
+import { InviteRole } from '../invites/dto/invite-user.dto';
+import { InviteService } from '../invites/invites.service';
 import { Student } from '../student/entities/student.entity';
 
 import { validateCbtQuestionDefinition } from './cbt-question-validation';
@@ -22,6 +26,7 @@ import {
 } from './dto';
 import {
   CbtAnswer,
+  CbtApplicant,
   CbtAttempt,
   CbtAttemptEvent,
   CbtAttemptEventType,
@@ -30,6 +35,8 @@ import {
   CbtExamSection,
   CbtExamStatus,
   CbtExamType,
+  CbtEntranceInvite,
+  CbtIntake,
   CbtQuestion,
 } from './entities';
 
@@ -48,18 +55,40 @@ export class CbtService {
     private readonly eventRepository: Repository<CbtAttemptEvent>,
     @InjectRepository(CbtExamSection)
     private readonly sectionRepository: Repository<CbtExamSection>,
+    @InjectRepository(CbtApplicant)
+    private readonly applicantRepository: Repository<CbtApplicant>,
+    @InjectRepository(CbtEntranceInvite)
+    private readonly entranceInviteRepository: Repository<CbtEntranceInvite>,
+    @InjectRepository(CbtIntake)
+    private readonly intakeRepository: Repository<CbtIntake>,
     @InjectRepository(Class)
     private readonly classRepository: Repository<Class>,
     @InjectRepository(Student)
     private readonly studentRepository: Repository<Student>,
+    private readonly inviteService: InviteService,
     private readonly dataSource: DataSource,
   ) {}
 
   async createExam(dto: CreateCbtExamDto, userId: string) {
     this.assertDateRange(dto.availableFrom, dto.availableTo);
     const classes = await this.resolveClasses(dto.classIds);
+    let intakeId = dto.intakeId ?? null;
+    if (dto.examType === CbtExamType.ENTRANCE && !intakeId) {
+      const intake = await this.intakeRepository.save(
+        this.intakeRepository.create({
+          name: dto.name,
+          applicationOpenFrom: dto.availableFrom
+            ? new Date(dto.availableFrom)
+            : null,
+          applicationOpenTo: dto.availableTo ? new Date(dto.availableTo) : null,
+          archivedAt: null,
+        }),
+      );
+      intakeId = intake.id;
+    }
     const exam = this.examRepository.create({
       ...dto,
+      intakeId,
       availableFrom: dto.availableFrom ? new Date(dto.availableFrom) : null,
       availableTo: dto.availableTo ? new Date(dto.availableTo) : null,
       createdBy: userId,
@@ -68,9 +97,12 @@ export class CbtService {
     return this.examRepository.save(exam);
   }
 
-  async listExams(status?: CbtExamStatus) {
+  async listExams(status?: CbtExamStatus, examType?: CbtExamType) {
     return this.examRepository.find({
-      where: status ? { status } : {},
+      where: {
+        ...(status ? { status } : {}),
+        ...(examType ? { examType } : {}),
+      },
       relations: { classes: true, questions: true, sections: true },
       order: { createdAt: 'DESC' },
     });
@@ -176,6 +208,293 @@ export class CbtService {
             : null,
       })),
     };
+  }
+
+  async listApplicants() {
+    const rows = (await this.dataSource.query(`
+      SELECT applicant.id,
+        applicant.full_name AS "fullName",
+        applicant.email,
+        applicant.phone,
+        applicant.created_at AS "createdAt",
+        applicant.admitted_at AS "admittedAt",
+        applicant.student_id AS "studentId",
+        intake.name AS "intakeName",
+        COUNT(attempt.id)::int AS "attemptCount",
+        MAX(attempt.score)::numeric AS "bestScore"
+      FROM cbt_applicants applicant
+      JOIN cbt_intakes intake ON intake.id = applicant.intake_id
+      LEFT JOIN cbt_attempts attempt ON attempt.applicant_id = applicant.id
+      GROUP BY applicant.id, intake.name
+      ORDER BY applicant.created_at DESC
+    `)) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      ...row,
+      bestScore: row.bestScore === null ? null : Number(row.bestScore),
+    }));
+  }
+
+  async getApplicant(applicantId: string) {
+    const applicant = await this.applicantRepository.findOne({
+      where: { id: applicantId },
+      relations: { intake: true, attempts: { exam: true } },
+    });
+    if (!applicant) throw new NotFoundException('Applicant not found');
+    return {
+      ...applicant,
+      attempts: applicant.attempts.map((attempt) => {
+        const totalMarks = Number(
+          (attempt.metadata as { totalMarks?: number } | null)?.totalMarks ?? 0,
+        );
+        const score = attempt.score === null ? null : Number(attempt.score);
+        const percentage =
+          score !== null && totalMarks > 0
+            ? Math.round((score / totalMarks) * 10_000) / 100
+            : null;
+        return { ...attempt, score, totalMarks, percentage };
+      }),
+    };
+  }
+
+  async admitApplicant(applicantId: string) {
+    const applicant = await this.applicantRepository.findOne({
+      where: { id: applicantId },
+      relations: { attempts: { exam: true } },
+    });
+    if (!applicant) throw new NotFoundException('Applicant not found');
+    if (applicant.studentId) {
+      return { applicant, outcome: 'student_profile_exists' };
+    }
+    const passedAttempt = applicant.attempts.find((attempt) => {
+      if (attempt.status !== CbtAttemptStatus.SUBMITTED) return false;
+      const metadata = attempt.metadata as {
+        totalMarks?: number;
+        manualGradingRequired?: boolean;
+      } | null;
+      if (metadata?.manualGradingRequired) return false;
+      const total = Number(metadata?.totalMarks ?? 0);
+      const percentage = total ? (Number(attempt.score ?? 0) / total) * 100 : 0;
+      return (
+        attempt.exam.examType === CbtExamType.ENTRANCE &&
+        attempt.exam.passMarkPercent !== null &&
+        percentage >= attempt.exam.passMarkPercent
+      );
+    });
+    if (!passedAttempt) {
+      throw new ConflictException(
+        'This applicant does not yet have a completed passing result',
+      );
+    }
+    const existingStudent = await this.studentRepository
+      .createQueryBuilder('student')
+      .leftJoinAndSelect('student.user', 'user')
+      .where('lower(user.email) = :email', {
+        email: applicant.email.toLowerCase(),
+      })
+      .getOne();
+    if (existingStudent) {
+      applicant.studentId = existingStudent.id;
+      applicant.admittedAt = applicant.admittedAt ?? new Date();
+      await this.applicantRepository.save(applicant);
+      return { applicant, outcome: 'linked_existing_student' };
+    }
+    await this.inviteService.inviteUser({
+      email: applicant.email,
+      full_name: applicant.fullName,
+      role: InviteRole.STUDENT,
+    });
+    applicant.admittedAt = new Date();
+    await this.applicantRepository.save(applicant);
+    return { applicant, outcome: 'student_invite_sent' };
+  }
+
+  async listPublicExams() {
+    const now = new Date();
+    return this.examRepository
+      .createQueryBuilder('exam')
+      .loadRelationCountAndMap(
+        'exam.questionCount',
+        'exam.questions',
+        'question',
+        (query) => query.andWhere('question.is_archived = false'),
+      )
+      .where('exam.exam_type = :type', { type: CbtExamType.ENTRANCE })
+      .andWhere('exam.status = :status', { status: CbtExamStatus.PUBLISHED })
+      .andWhere(
+        '(exam.available_from IS NULL OR exam.available_from <= :now)',
+        {
+          now,
+        },
+      )
+      .andWhere('(exam.available_to IS NULL OR exam.available_to >= :now)', {
+        now,
+      })
+      .orderBy('exam.available_from', 'ASC', 'NULLS FIRST')
+      .getMany();
+  }
+
+  async getPublicExam(examId: string) {
+    const exam = await this.examRepository.findOne({ where: { id: examId } });
+    if (!exam || exam.examType !== CbtExamType.ENTRANCE) {
+      throw new NotFoundException('External examination not found');
+    }
+    this.assertExternalExamAvailable(exam);
+    const questionCount = await this.questionRepository.count({
+      where: { examId, isArchived: false },
+    });
+    return { ...exam, questionCount };
+  }
+
+  async startPublicAttempt(
+    examId: string,
+    candidate: { fullName: string; email: string; phone?: string },
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const exam = await manager.getRepository(CbtExam).findOne({
+        where: { id: examId },
+        relations: { questions: true },
+      });
+      if (!exam || exam.examType !== CbtExamType.ENTRANCE) {
+        throw new NotFoundException('External examination not found');
+      }
+      this.assertExternalExamAvailable(exam);
+      let intakeId = exam.intakeId;
+      if (!intakeId) {
+        const intake = await manager.getRepository(CbtIntake).save(
+          manager.getRepository(CbtIntake).create({
+            name: exam.name,
+            applicationOpenFrom: exam.availableFrom,
+            applicationOpenTo: exam.availableTo,
+            archivedAt: null,
+          }),
+        );
+        intakeId = intake.id;
+        exam.intakeId = intakeId;
+        await manager.getRepository(CbtExam).save(exam);
+      }
+      const email = candidate.email.trim().toLowerCase();
+      let applicant = await manager
+        .getRepository(CbtApplicant)
+        .createQueryBuilder('applicant')
+        .where('applicant.intake_id = :intakeId', { intakeId })
+        .andWhere('lower(applicant.email) = :email', { email })
+        .getOne();
+      if (!applicant) {
+        applicant = await manager.getRepository(CbtApplicant).save(
+          manager.getRepository(CbtApplicant).create({
+            intakeId,
+            fullName: candidate.fullName.trim(),
+            email,
+            phone: candidate.phone?.trim() || null,
+            admittedAt: null,
+            studentId: null,
+          }),
+        );
+      }
+      await this.acquireTransactionLock(
+        manager,
+        'public-attempt',
+        examId,
+        applicant.id,
+      );
+      const attemptRepo = manager.getRepository(CbtAttempt);
+      let attempt = await attemptRepo.findOne({
+        where: {
+          examId,
+          applicantId: applicant.id,
+          status: CbtAttemptStatus.IN_PROGRESS,
+        },
+        order: { startedAt: 'DESC' },
+      });
+      if (!attempt) {
+        const attemptCount = await attemptRepo.count({
+          where: { examId, applicantId: applicant.id },
+        });
+        if (attemptCount >= exam.maxAttempts) {
+          throw new ConflictException('Maximum attempts reached');
+        }
+        attempt = await this.createAttempt(
+          attemptRepo,
+          manager.getRepository(CbtAttemptEvent),
+          exam,
+          { applicantId: applicant.id },
+        );
+      }
+      const accessToken = crypto.randomBytes(32).toString('hex');
+      const tokenDigest = this.tokenDigest(accessToken);
+      const expiresAt = new Date(
+        Math.max(
+          Date.now() + 24 * 60 * 60_000,
+          attempt.startedAt.getTime() + exam.timeLimitMinutes * 60_000,
+        ),
+      );
+      await manager.getRepository(CbtEntranceInvite).save(
+        manager.getRepository(CbtEntranceInvite).create({
+          applicantId: applicant.id,
+          examId,
+          token: tokenDigest,
+          expiresAt,
+        }),
+      );
+      return {
+        accessToken,
+        candidate: { fullName: applicant.fullName, email: applicant.email },
+        attempt: this.buildAttemptPayload(attempt, exam),
+      };
+    });
+  }
+
+  async getPublicAttempt(attemptId: string, accessToken: string) {
+    const { attempt, exam } = await this.getTokenOwnedAttempt(
+      attemptId,
+      accessToken,
+    );
+    const answers = await this.answerRepository.find({ where: { attemptId } });
+    const reveal =
+      attempt.status === CbtAttemptStatus.SUBMITTED &&
+      exam.showResultImmediately;
+    return {
+      ...this.buildAttemptPayload(attempt, exam),
+      answers: answers.map((answer) =>
+        this.studentAnswerPayload(answer, reveal),
+      ),
+    };
+  }
+
+  async savePublicAnswer(
+    attemptId: string,
+    questionId: string,
+    accessToken: string,
+    dto: SaveCbtAnswerDto,
+  ) {
+    const { attempt } = await this.getTokenOwnedAttempt(attemptId, accessToken);
+    return this.saveAnswerForOwner(attemptId, questionId, dto, {
+      applicantId: attempt.applicantId!,
+    });
+  }
+
+  async recordPublicEvent(
+    attemptId: string,
+    accessToken: string,
+    eventType: CbtAttemptEventType,
+    metadata?: Record<string, unknown>,
+  ) {
+    const { attempt } = await this.getTokenOwnedAttempt(attemptId, accessToken);
+    this.assertAttemptOpen(attempt);
+    return this.eventRepository.save(
+      this.eventRepository.create({
+        attemptId,
+        eventType,
+        metadata: metadata ?? null,
+      }),
+    );
+  }
+
+  async submitPublicAttempt(attemptId: string, accessToken: string) {
+    const { attempt } = await this.getTokenOwnedAttempt(attemptId, accessToken);
+    return this.submitOwnedAttempt(attemptId, {
+      applicantId: attempt.applicantId!,
+    });
   }
 
   async updateExam(examId: string, dto: UpdateCbtExamDto) {
@@ -417,6 +736,15 @@ export class CbtService {
     studentId: string,
     dto: SaveCbtAnswerDto,
   ) {
+    return this.saveAnswerForOwner(attemptId, questionId, dto, { studentId });
+  }
+
+  private async saveAnswerForOwner(
+    attemptId: string,
+    questionId: string,
+    dto: SaveCbtAnswerDto,
+    owner: { studentId?: string; applicantId?: string },
+  ) {
     this.assertAnswerPayload(dto.answer);
     return this.dataSource.transaction(async (manager) => {
       await this.acquireTransactionLock(
@@ -429,7 +757,7 @@ export class CbtService {
       const answerRepo = manager.getRepository(CbtAnswer);
       const eventRepo = manager.getRepository(CbtAttemptEvent);
       const attempt = await attemptRepo.findOne({
-        where: { id: attemptId, studentId },
+        where: { id: attemptId, ...owner },
         relations: { exam: true },
       });
       if (!attempt) throw new NotFoundException('Attempt not found');
@@ -499,6 +827,13 @@ export class CbtService {
   }
 
   async submitAttempt(attemptId: string, studentId: string) {
+    return this.submitOwnedAttempt(attemptId, { studentId });
+  }
+
+  private async submitOwnedAttempt(
+    attemptId: string,
+    owner: { studentId?: string; applicantId?: string },
+  ) {
     return this.dataSource.transaction(async (manager) => {
       const attemptRepo = manager.getRepository(CbtAttempt);
       const answerRepo = manager.getRepository(CbtAnswer);
@@ -507,7 +842,12 @@ export class CbtService {
         .createQueryBuilder('attempt')
         .setLock('pessimistic_write')
         .where('attempt.id = :attemptId', { attemptId })
-        .andWhere('attempt.student_id = :studentId', { studentId })
+        .andWhere(
+          owner.studentId
+            ? 'attempt.student_id = :ownerId'
+            : 'attempt.applicant_id = :ownerId',
+          { ownerId: owner.studentId ?? owner.applicantId },
+        )
         .getOne();
       if (!attempt) throw new NotFoundException('Attempt not found');
       const exam = await manager.getRepository(CbtExam).findOne({
@@ -580,6 +920,94 @@ export class CbtService {
       throw new ConflictException('Only draft examinations can be changed');
     }
     return exam;
+  }
+
+  private async createAttempt(
+    attemptRepo: Repository<CbtAttempt>,
+    eventRepo: Repository<CbtAttemptEvent>,
+    exam: CbtExam,
+    owner: { studentId?: string; applicantId?: string },
+  ) {
+    const questionIds = exam.questions
+      .filter((question) => !question.isArchived)
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((question) => question.id);
+    if (!questionIds.length) {
+      throw new BadRequestException('This examination has no questions');
+    }
+    if (exam.shuffleQuestions) this.shuffle(questionIds);
+    const optionOrder = Object.fromEntries(
+      exam.questions
+        .filter((question) => question.options?.length)
+        .map((question) => {
+          const ids = question.options!.map((option) => option.id);
+          if (exam.shuffleOptions) this.shuffle(ids);
+          return [question.id, ids];
+        }),
+    );
+    const attempt = await attemptRepo.save(
+      attemptRepo.create({
+        examId: exam.id,
+        studentId: owner.studentId ?? null,
+        applicantId: owner.applicantId ?? null,
+        startedAt: new Date(),
+        status: CbtAttemptStatus.IN_PROGRESS,
+        metadata: {
+          questionOrder: questionIds,
+          optionOrder,
+          timeLimitMinutes: exam.timeLimitMinutes,
+        },
+      }),
+    );
+    await eventRepo.save(
+      eventRepo.create({
+        attemptId: attempt.id,
+        eventType: CbtAttemptEventType.STARTED,
+      }),
+    );
+    return attempt;
+  }
+
+  private assertExternalExamAvailable(exam: CbtExam) {
+    if (
+      exam.examType !== CbtExamType.ENTRANCE ||
+      exam.status !== CbtExamStatus.PUBLISHED
+    ) {
+      throw new ForbiddenException('External examination is not published');
+    }
+    const now = Date.now();
+    if (exam.availableFrom && now < exam.availableFrom.getTime()) {
+      throw new ForbiddenException('External examination is not available yet');
+    }
+    if (exam.availableTo && now > exam.availableTo.getTime()) {
+      throw new ForbiddenException('External examination is closed');
+    }
+  }
+
+  private async getTokenOwnedAttempt(attemptId: string, accessToken: string) {
+    if (!accessToken)
+      throw new ForbiddenException('Candidate access token required');
+    const attempt = await this.attemptRepository.findOne({
+      where: { id: attemptId },
+      relations: { exam: { questions: true } },
+    });
+    if (!attempt?.applicantId) throw new NotFoundException('Attempt not found');
+    const invite = await this.entranceInviteRepository.findOne({
+      where: {
+        applicantId: attempt.applicantId,
+        examId: attempt.examId,
+        token: this.tokenDigest(accessToken),
+      },
+      order: { createdAt: 'DESC' },
+    });
+    if (!invite || invite.expiresAt.getTime() < Date.now()) {
+      throw new ForbiddenException('Candidate access has expired');
+    }
+    return { attempt, exam: attempt.exam };
+  }
+
+  private tokenDigest(token: string) {
+    return crypto.createHash('sha256').update(token).digest('hex');
   }
 
   private async getStudent(studentId: string) {

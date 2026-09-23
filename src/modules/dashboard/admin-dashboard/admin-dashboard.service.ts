@@ -2,6 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { TimetableModelAction } from '../../timetable/model-actions/timetable.model-action';
 
 import {
@@ -15,6 +16,7 @@ export class AdminDashboardService {
 
   constructor(
     private readonly timetableModelAction: TimetableModelAction,
+    private readonly academicSessionService: AcademicSessionService,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
   ) {
     this.logger = baseLogger.child({ context: AdminDashboardService.name });
@@ -31,8 +33,12 @@ export class AdminDashboardService {
     this.logger.info(`Fetching activities for ${today}`);
 
     // Fetch all timetables with schedules for today
+    const activeSession = await this.academicSessionService.activeSessions();
     const { payload: timetables } = await this.timetableModelAction.list({
-      filterRecordOptions: { is_active: true },
+      filterRecordOptions: {
+        is_active: true,
+        class: { academicSession: { id: activeSession.data.id } },
+      },
       relations: {
         schedules: {
           teacher: { user: true },

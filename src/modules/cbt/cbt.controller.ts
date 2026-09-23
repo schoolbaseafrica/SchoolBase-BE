@@ -55,7 +55,25 @@ export class CbtController {
   @Get('exams')
   @Roles(UserRole.ADMIN)
   listExams(@Query() query: ListCbtExamsDto) {
-    return this.cbtService.listExams(query.status);
+    return this.cbtService.listExams(query.status, query.examType);
+  }
+
+  @Get('applicants')
+  @Roles(UserRole.ADMIN)
+  listApplicants() {
+    return this.cbtService.listApplicants();
+  }
+
+  @Get('applicants/:applicantId')
+  @Roles(UserRole.ADMIN)
+  getApplicant(@Param('applicantId', ParseUUIDPipe) applicantId: string) {
+    return this.cbtService.getApplicant(applicantId);
+  }
+
+  @Post('applicants/:applicantId/admit')
+  @Roles(UserRole.ADMIN)
+  admitApplicant(@Param('applicantId', ParseUUIDPipe) applicantId: string) {
+    return this.cbtService.admitApplicant(applicantId);
   }
 
   @Get('exams/:examId')

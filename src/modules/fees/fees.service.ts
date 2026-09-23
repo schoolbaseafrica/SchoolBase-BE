@@ -4,13 +4,16 @@ import {
   BadRequestException,
   NotFoundException,
   forwardRef,
+  Optional,
 } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, In } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../constants/system.messages';
+import { AcademicSessionService } from '../academic-session/academic-session.service';
 import { TermModelAction } from '../academic-term/model-actions';
+import { TermService } from '../academic-term/term.service';
 import { ClassModelAction } from '../class/model-actions/class.actions';
 import { FeeNotificationService } from '../notification/services/fee-notification.service';
 import { PaymentService } from '../payment/services/payment.service';
@@ -33,6 +36,10 @@ export class FeesService {
   constructor(
     private readonly feesModelAction: FeesModelAction,
     private readonly termModelAction: TermModelAction,
+    @Optional()
+    private readonly academicSessionService: AcademicSessionService | undefined,
+    @Optional()
+    private readonly termService: TermService | undefined,
     private readonly classModelAction: ClassModelAction,
     private readonly feeNotificationService: FeeNotificationService,
     private readonly dataSource: DataSource,
@@ -45,13 +52,21 @@ export class FeesService {
   }
 
   async create(createFeesDto: CreateFeesDto, createdBy: string): Promise<Fees> {
-    // Validate term exists
-    const term = await this.termModelAction.get({
-      identifierOptions: { id: createFeesDto.term_id },
-    });
-
-    if (!term) {
-      throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+    const periodType = createFeesDto.period_type ?? 'TERM';
+    let sessionId = createFeesDto.session_id;
+    if (periodType === 'TERM') {
+      if (!createFeesDto.term_id) {
+        throw new BadRequestException('A term is required for a term fee');
+      }
+      const term = await this.termModelAction.get({
+        identifierOptions: { id: createFeesDto.term_id },
+      });
+      if (!term) throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+      sessionId = term.sessionId;
+    } else if (!sessionId) {
+      throw new BadRequestException(
+        'An academic session is required for a session-wide fee',
+      );
     }
 
     // Validate that classes exist
@@ -74,7 +89,9 @@ export class FeesService {
           component_name: createFeesDto.component_name,
           description: createFeesDto.description,
           amount: createFeesDto.amount,
-          term_id: createFeesDto.term_id,
+          period_type: periodType,
+          term_id: periodType === 'TERM' ? createFeesDto.term_id : null,
+          session_id: sessionId!,
           created_by: createdBy,
           classes,
         },
@@ -110,7 +127,21 @@ export class FeesService {
     limit: number;
     totalPages: number;
   }> {
-    const result = await this.feesModelAction.findAllFees(queryDto);
+    const scopedQuery = { ...queryDto };
+    if (
+      !scopedQuery.session_id &&
+      !scopedQuery.term_id &&
+      this.academicSessionService &&
+      this.termService
+    ) {
+      const [session, term] = await Promise.all([
+        this.academicSessionService.activeSessions(),
+        this.termService.getActiveTerm(),
+      ]);
+      scopedQuery.session_id = session.data.id;
+      scopedQuery.term_id = term.id;
+    }
+    const result = await this.feesModelAction.findAllFees(scopedQuery);
 
     this.logger.info('Fetched fee components', {
       total: result.total,
@@ -132,14 +163,36 @@ export class FeesService {
       throw new NotFoundException(sysMsg.FEE_NOT_FOUND);
     }
 
-    // Validate term if provided
-    if (updateFeesDto.term_id) {
-      const term = await this.termModelAction.get({
-        identifierOptions: { id: updateFeesDto.term_id },
-      });
-
-      if (!term) {
-        throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+    const scopeChanged =
+      updateFeesDto.period_type !== undefined ||
+      updateFeesDto.term_id !== undefined ||
+      updateFeesDto.session_id !== undefined;
+    if (scopeChanged) {
+      const nextPeriodType =
+        updateFeesDto.period_type ??
+        existingFee.period_type ??
+        (existingFee.term_id ? 'TERM' : 'SESSION');
+      if (nextPeriodType === 'TERM') {
+        const termId = updateFeesDto.term_id ?? existingFee.term_id;
+        if (!termId)
+          throw new BadRequestException('A term is required for a term fee');
+        const term = await this.termModelAction.get({
+          identifierOptions: { id: termId },
+        });
+        if (!term) throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+        existingFee.period_type = 'TERM';
+        existingFee.term_id = termId;
+        existingFee.session_id = term.sessionId;
+      } else {
+        const sessionId = updateFeesDto.session_id ?? existingFee.session_id;
+        if (!sessionId) {
+          throw new BadRequestException(
+            'An academic session is required for a session-wide fee',
+          );
+        }
+        existingFee.period_type = 'SESSION';
+        existingFee.session_id = sessionId;
+        existingFee.term_id = null;
       }
     }
 
@@ -169,9 +222,6 @@ export class FeesService {
     }
     if (updateFeesDto.amount !== undefined) {
       existingFee.amount = updateFeesDto.amount;
-    }
-    if (updateFeesDto.term_id !== undefined) {
-      existingFee.term_id = updateFeesDto.term_id;
     }
     if (updateFeesDto.status !== undefined) {
       existingFee.status = updateFeesDto.status;
