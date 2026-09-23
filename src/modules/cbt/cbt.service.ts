@@ -221,16 +221,35 @@ export class CbtService {
         applicant.student_id AS "studentId",
         intake.name AS "intakeName",
         COUNT(attempt.id)::int AS "attemptCount",
-        MAX(attempt.score)::numeric AS "bestScore"
+        COUNT(attempt.id) FILTER (WHERE attempt.status = 'submitted')::int AS "completedAttemptCount",
+        MAX(
+          CASE
+            WHEN attempt.status = 'submitted'
+              AND NULLIF(attempt.metadata->>'totalMarks', '')::numeric > 0
+            THEN ROUND((attempt.score::numeric / NULLIF(attempt.metadata->>'totalMarks', '')::numeric) * 100, 2)
+            ELSE NULL
+          END
+        )::numeric AS "bestPercentage",
+        BOOL_OR(
+          attempt.status = 'submitted'
+          AND COALESCE((attempt.metadata->>'manualGradingRequired')::boolean, false) = false
+          AND exam.pass_mark_percent IS NOT NULL
+          AND NULLIF(attempt.metadata->>'totalMarks', '')::numeric > 0
+          AND (attempt.score::numeric / NULLIF(attempt.metadata->>'totalMarks', '')::numeric) * 100 >= exam.pass_mark_percent
+        ) AS "hasPassed",
+        (ARRAY_AGG(exam.name ORDER BY attempt.started_at DESC)
+          FILTER (WHERE attempt.id IS NOT NULL))[1] AS "latestExamName"
       FROM cbt_applicants applicant
       JOIN cbt_intakes intake ON intake.id = applicant.intake_id
       LEFT JOIN cbt_attempts attempt ON attempt.applicant_id = applicant.id
+      LEFT JOIN cbt_exams exam ON exam.id = attempt.exam_id
       GROUP BY applicant.id, intake.name
       ORDER BY applicant.created_at DESC
     `)) as Array<Record<string, unknown>>;
     return rows.map((row) => ({
       ...row,
-      bestScore: row.bestScore === null ? null : Number(row.bestScore),
+      bestPercentage:
+        row.bestPercentage === null ? null : Number(row.bestPercentage),
     }));
   }
 
@@ -251,7 +270,16 @@ export class CbtService {
           score !== null && totalMarks > 0
             ? Math.round((score / totalMarks) * 10_000) / 100
             : null;
-        return { ...attempt, score, totalMarks, percentage };
+        return {
+          ...attempt,
+          score,
+          totalMarks,
+          percentage,
+          manualGradingRequired: Boolean(
+            (attempt.metadata as { manualGradingRequired?: boolean } | null)
+              ?.manualGradingRequired,
+          ),
+        };
       }),
     };
   }

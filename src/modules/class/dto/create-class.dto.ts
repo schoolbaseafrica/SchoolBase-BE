@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsNumber,
   Min,
+  IsUUID,
 } from 'class-validator';
 
 export class CreateClassDto {
@@ -122,6 +123,11 @@ export class GroupedClassDto {
 }
 
 export class ListGroupedClassesDto {
+  @ApiPropertyOptional({ description: 'Academic session ID to filter by' })
+  @IsOptional()
+  @IsUUID()
+  session_id?: string;
+
   @ApiProperty({
     description: 'Page number',
     example: 1,

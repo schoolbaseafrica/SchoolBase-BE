@@ -11,6 +11,7 @@ import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, Like } from 'typeorm';
 import { Logger } from 'winston';
 
+import { SessionStatus } from 'src/modules/academic-session/entities/academic-session.entity';
 import { AcademicSessionModelAction } from 'src/modules/academic-session/model-actions/academic-session-actions';
 import { ClassStudentModelAction } from 'src/modules/class/model-actions/class-student.action';
 import { ClassModelAction } from 'src/modules/class/model-actions/class.actions';
@@ -29,7 +30,11 @@ import {
   PatchStudentDto,
   StudentProfileResponseDto,
 } from '../dto';
-import { StudentGrowthReportResponseDto } from '../dto/student.growth.dto';
+import {
+  StudentGrowthInterval,
+  StudentGrowthQueryDto,
+  StudentGrowthReportResponseDto,
+} from '../dto/student.growth.dto';
 import { Student } from '../entities';
 import { StudentModelAction } from '../model-actions';
 
@@ -428,112 +433,118 @@ export class StudentService {
   //student growth api
 
   async getStudentGrowthReport(
-    academicYear: string,
+    query: StudentGrowthQueryDto,
   ): Promise<StudentGrowthReportResponseDto> {
-    // --- 1. Find academic session ---
-    const academicSessionResponse = await this.academicSessionModelAction.find({
-      findOptions: { name: academicYear },
-      transactionOptions: { useTransaction: false },
-    });
+    const session = query.session_id
+      ? await this.academicSessionModelAction.get({
+          identifierOptions: { id: query.session_id },
+        })
+      : (
+          await this.academicSessionModelAction.find({
+            findOptions: { status: SessionStatus.ACTIVE },
+            transactionOptions: { useTransaction: false },
+          })
+        ).payload?.[0];
 
-    const academicSession = academicSessionResponse.payload?.[0];
+    if (!session) throw new NotFoundException('Academic session not found');
 
-    if (!academicSession) {
-      this.logger.warn(`Academic session not found: ${academicYear}`);
-      throw new NotFoundException(sysMsg.RESOURCE_NOT_FOUND);
+    const interval = query.interval || StudentGrowthInterval.MONTH;
+    const terms = (await this.dataSource.query(
+      `SELECT id, name, start_date AS "startDate", end_date AS "endDate"
+       FROM terms
+       WHERE session_id = $1 AND deleted_at IS NULL
+       ORDER BY start_date ASC`,
+      [session.id],
+    )) as Array<{
+      id: string;
+      name: string;
+      startDate: string;
+      endDate: string;
+    }>;
+
+    const selectedTerm = query.term_id
+      ? terms.find((term) => term.id === query.term_id)
+      : undefined;
+    if (query.term_id && !selectedTerm) {
+      throw new NotFoundException(
+        'Academic term not found in selected session',
+      );
     }
 
-    // --- 2. Get classes under session ---
-    const classesResponse = await this.classModelAction.find({
-      findOptions: { academicSession: { id: academicSession.id } },
-      transactionOptions: { useTransaction: false },
-    });
+    const scopeStart = new Date(selectedTerm?.startDate || session.startDate);
+    const scopeEnd = new Date(selectedTerm?.endDate || session.endDate);
+    const periods: Array<{ label: string; start: Date; end: Date }> = [];
 
-    const classes = classesResponse.payload || [];
-
-    if (classes.length === 0) {
-      return {
-        message: sysMsg.OPERATION_SUCCESSFUL,
-        status_code: HttpStatus.OK,
-        data: {
-          academic_year: academicYear,
-          report: [],
-        },
-      };
-    }
-
-    // --- 3. Build report for each class ---
-    const report = await Promise.all(
-      classes.map(async (cls) => {
-        const classStudentsResponse = await this.classStudentModelAction.list({
-          filterRecordOptions: {
-            class: { id: cls.id },
-            student: { is_deleted: false },
-          },
-          relations: { student: { user: true } },
+    if (interval === StudentGrowthInterval.TERM) {
+      const scopedTerms = selectedTerm ? [selectedTerm] : terms;
+      for (const term of scopedTerms) {
+        periods.push({
+          label: term.name,
+          start: new Date(term.startDate),
+          end: new Date(term.endDate),
         });
+      }
+    } else {
+      const cursor = new Date(
+        Date.UTC(scopeStart.getUTCFullYear(), scopeStart.getUTCMonth(), 1),
+      );
+      while (cursor <= scopeEnd) {
+        const monthStart = new Date(cursor);
+        const monthEnd = new Date(
+          Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0),
+        );
+        periods.push({
+          label: monthStart.toLocaleDateString('en-US', {
+            month: 'short',
+            year: 'numeric',
+            timeZone: 'UTC',
+          }),
+          start: monthStart < scopeStart ? scopeStart : monthStart,
+          end: monthEnd > scopeEnd ? scopeEnd : monthEnd,
+        });
+        cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+      }
+    }
 
-        const classStudents = classStudentsResponse.payload || [];
-        const students = classStudents.map((cs) => cs.student);
+    const enrollments = (await this.dataSource.query(
+      `SELECT student_id AS "studentId", MIN(enrollment_date) AS "enrollmentDate"
+       FROM class_students cs
+       INNER JOIN students student ON student.id = cs.student_id
+       WHERE cs.session_id = $1 AND student.is_deleted = false
+       GROUP BY student_id`,
+      [session.id],
+    )) as Array<{ studentId: string; enrollmentDate: string }>;
 
-        const boys = students.filter((s) => s.user?.gender === 'Male').length;
-        const girls = students.filter(
-          (s) => s.user?.gender === 'Female',
-        ).length;
+    const toDateOnly = (date: Date) => date.toISOString().slice(0, 10);
+    const report = periods.map((period) => {
+      const startTime = period.start.getTime();
+      const endTime = new Date(
+        toDateOnly(period.end) + 'T23:59:59.999Z',
+      ).getTime();
 
-        return {
-          class_name: cls.name,
-          new_students: students.length,
-          boys,
-          girls,
-        };
-      }),
-    );
-
-    this.logger.info('Generated student growth report', {
-      academicYear,
-      classCount: report.length,
+      return {
+        label: period.label,
+        start_date: toDateOnly(period.start),
+        end_date: toDateOnly(period.end),
+        new_students: enrollments.filter(({ enrollmentDate }) => {
+          const enrolledAt = new Date(enrollmentDate).getTime();
+          return enrolledAt >= startTime && enrolledAt <= endTime;
+        }).length,
+        cumulative_students: enrollments.filter(
+          ({ enrollmentDate }) => new Date(enrollmentDate).getTime() <= endTime,
+        ).length,
+      };
     });
-
-    // --- 4. AGGREGATE class arms like JSS1A, JSS1B into JSS1 ---
-    const aggregatedReport = Object.values(
-      report.reduce(
-        (acc, curr) => {
-          const baseName = curr.class_name.replace(/\s?[A-Z]$/, ''); // removes trailing section letter
-
-          if (!acc[baseName]) {
-            acc[baseName] = {
-              class_name: baseName,
-              new_students: 0,
-              boys: 0,
-              girls: 0,
-            };
-          }
-
-          acc[baseName].new_students += curr.new_students;
-          acc[baseName].boys += curr.boys;
-          acc[baseName].girls += curr.girls;
-
-          return acc;
-        },
-        {} as Record<
-          string,
-          {
-            class_name: string;
-            new_students: number;
-            boys: number;
-            girls: number;
-          }
-        >,
-      ),
-    );
 
     return {
       message: sysMsg.OPERATION_SUCCESSFUL,
       status_code: HttpStatus.OK,
       data: {
-        academic_year: academicYear,
-        report: aggregatedReport,
+        session_id: session.id,
+        academic_year: session.name,
+        term_id: selectedTerm?.id,
+        interval,
+        report,
       },
     };
   }

@@ -46,6 +46,7 @@ import {
   StudentAssignmentResponseDto,
   AssignSingleStudentResponseDto,
   GetStudentsQueryDto,
+  PromoteStudentsDto,
 } from '../dto';
 import { GetTeachersQueryDto } from '../dto/get-teachers-query.dto';
 import { TeacherAssignmentResponseDto } from '../dto/teacher-response.dto';
@@ -87,7 +88,21 @@ export class ClassController {
       query.page,
       query.limit,
       query.includeArchived,
+      query.session_id,
+      query.includeAllSessions,
     );
+  }
+
+  @Post('promotion/preview')
+  @Roles(UserRole.ADMIN)
+  async previewPromotion(@Body() dto: PromoteStudentsDto) {
+    return this.classService.previewPromotion(dto);
+  }
+
+  @Post('promotion/execute')
+  @Roles(UserRole.ADMIN)
+  async executePromotion(@Body() dto: PromoteStudentsDto) {
+    return this.classService.executePromotion(dto);
   }
 
   // --- GET: TOTAL NUMBER OF CLASSES ---

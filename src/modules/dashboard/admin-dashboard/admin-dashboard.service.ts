@@ -22,7 +22,9 @@ export class AdminDashboardService {
     this.logger = baseLogger.child({ context: AdminDashboardService.name });
   }
 
-  async loadTodayActivities(): Promise<AdminDashboardDataDto> {
+  async loadTodayActivities(
+    sessionId?: string,
+  ): Promise<AdminDashboardDataDto> {
     this.logger.info("Loading today's activities for admin dashboard");
 
     // Get today's day of week
@@ -33,11 +35,13 @@ export class AdminDashboardService {
     this.logger.info(`Fetching activities for ${today}`);
 
     // Fetch all timetables with schedules for today
-    const activeSession = await this.academicSessionService.activeSessions();
+    const targetSessionId = sessionId
+      ? sessionId
+      : (await this.academicSessionService.activeSessions()).data.id;
     const { payload: timetables } = await this.timetableModelAction.list({
       filterRecordOptions: {
         is_active: true,
-        class: { academicSession: { id: activeSession.data.id } },
+        class: { academicSession: { id: targetSessionId } },
       },
       relations: {
         schedules: {

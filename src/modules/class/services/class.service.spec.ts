@@ -1069,6 +1069,77 @@ describe('ClassService', () => {
     });
   });
 
+  describe('student promotion', () => {
+    it('previews promotable and already-promoted students accurately', async () => {
+      academicSessionModelAction.get
+        .mockResolvedValueOnce({ id: 'source-session' } as AcademicSession)
+        .mockResolvedValueOnce({ id: 'target-session' } as AcademicSession);
+      classModelAction.get
+        .mockResolvedValueOnce({
+          id: 'source-class',
+          name: 'JSS 1',
+          arm: 'A',
+          is_deleted: false,
+          academicSession: { id: 'source-session' },
+        } as Class)
+        .mockResolvedValueOnce({
+          id: 'target-class',
+          name: 'JSS 2',
+          arm: 'A',
+          is_deleted: false,
+          academicSession: { id: 'target-session' },
+        } as Class);
+      mockClassStudentModelAction.list
+        .mockResolvedValueOnce({
+          payload: [{ student: { id: 'already-promoted' } }],
+        } as never)
+        .mockResolvedValueOnce({
+          payload: [
+            { student: { id: 'new-student' } },
+            { student: { id: 'already-promoted' } },
+          ],
+        } as never);
+
+      const result = await service.previewPromotion({
+        sourceSessionId: 'source-session',
+        targetSessionId: 'target-session',
+        armMappings: [
+          {
+            sourceClassId: 'source-class',
+            targetClassId: 'target-class',
+          },
+        ],
+      });
+
+      expect(result.mappings[0]).toEqual(
+        expect.objectContaining({
+          toPromote: 1,
+          toPromoteStudentIds: ['new-student'],
+          alreadyInTarget: 1,
+          alreadyInTargetStudentIds: ['already-promoted'],
+          errors: [],
+        }),
+      );
+    });
+
+    it('rejects duplicate source mappings', async () => {
+      academicSessionModelAction.get
+        .mockResolvedValueOnce({ id: 'source-session' } as AcademicSession)
+        .mockResolvedValueOnce({ id: 'target-session' } as AcademicSession);
+
+      await expect(
+        service.previewPromotion({
+          sourceSessionId: 'source-session',
+          targetSessionId: 'target-session',
+          armMappings: [
+            { sourceClassId: 'source-class', targetClassId: 'target-a' },
+            { sourceClassId: 'source-class', targetClassId: 'target-b' },
+          ],
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+  });
+
   describe('unassignStudentFromClass', () => {
     const classId = 'class-uuid-1';
     const studentId = 'student-uuid-1';

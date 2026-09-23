@@ -38,6 +38,7 @@ import {
   PatchStudentDto,
   StudentProfileResponseDto,
 } from '../dto';
+import { StudentGrowthQueryDto } from '../dto/student.growth.dto';
 import { StudentService } from '../services';
 
 @ApiTags(StudentSwagger.tags[0])
@@ -70,8 +71,8 @@ export class StudentController {
   @Roles(UserRole.ADMIN)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get('student-growth-report')
-  async getStudentGrowthReport(@Query('academic_year') academicYear: string) {
-    return this.studentService.getStudentGrowthReport(academicYear);
+  async getStudentGrowthReport(@Query() query: StudentGrowthQueryDto) {
+    return this.studentService.getStudentGrowthReport(query);
   }
 
   // --- GET: GET LOGGED-IN STUDENT'S PROFILE ---

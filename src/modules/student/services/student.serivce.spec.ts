@@ -15,6 +15,7 @@ import { FileService } from '../../shared/file/file.service';
 import { User } from '../../user/entities/user.entity';
 import { UserModelAction } from '../../user/model-actions/user-actions';
 import { StudentProfileResponseDto } from '../dto';
+import { StudentGrowthInterval } from '../dto/student.growth.dto';
 import { Student } from '../entities';
 import { StudentModelAction } from '../model-actions';
 
@@ -42,6 +43,7 @@ const mockUserModelAction = {
 
 const mockDataSource = {
   transaction: jest.fn(),
+  query: jest.fn(),
 };
 
 const mockFileService = {
@@ -50,7 +52,7 @@ const mockFileService = {
 
 const mockClassStudentModelAction = { list: jest.fn() };
 const mockClassModelAction = { find: jest.fn() };
-const mockAcademicSessionModelAction = { find: jest.fn() };
+const mockAcademicSessionModelAction = { find: jest.fn(), get: jest.fn() };
 
 describe('StudentService', () => {
   let service: StudentService;
@@ -109,6 +111,39 @@ describe('StudentService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('getStudentGrowthReport', () => {
+    it('groups first enrollments by month within the selected session', async () => {
+      mockAcademicSessionModelAction.get.mockResolvedValue({
+        id: 'session-1',
+        name: '2026/2027',
+        startDate: new Date('2026-09-01'),
+        endDate: new Date('2026-10-31'),
+      });
+      mockDataSource.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        { studentId: 'student-1', enrollmentDate: '2026-09-10T10:00:00Z' },
+        { studentId: 'student-2', enrollmentDate: '2026-10-02T10:00:00Z' },
+      ]);
+
+      const result = await service.getStudentGrowthReport({
+        session_id: 'session-1',
+        interval: StudentGrowthInterval.MONTH,
+      });
+
+      expect(result.data.report).toEqual([
+        expect.objectContaining({
+          label: 'Sep 2026',
+          new_students: 1,
+          cumulative_students: 1,
+        }),
+        expect.objectContaining({
+          label: 'Oct 2026',
+          new_students: 1,
+          cumulative_students: 2,
+        }),
+      ]);
+    });
   });
 
   describe('getMyProfile', () => {

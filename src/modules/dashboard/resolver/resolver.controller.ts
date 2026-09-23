@@ -4,6 +4,7 @@ import {
   UseGuards,
   HttpStatus,
   Request,
+  Query,
 } from '@nestjs/common';
 
 import * as sysMsg from '../../../constants/system.messages';
@@ -28,7 +29,10 @@ export class ResolverController {
 
   @Get('resolve')
   @ApiResolveDashboard()
-  async resolveDashboard(@Request() req): Promise<{
+  async resolveDashboard(
+    @Request() req,
+    @Query('session_id') sessionId?: string,
+  ): Promise<{
     message: string;
     status_code: number;
     data: DashboardResolvedDataDto;
@@ -36,7 +40,11 @@ export class ResolverController {
     const userId: string = req.user?.id || req.user?.userId;
     const tokenRole: UserRole[] = req.user?.roles;
 
-    const data = await this.resolverService.resolveDashboard(userId, tokenRole);
+    const data = await this.resolverService.resolveDashboard(
+      userId,
+      tokenRole,
+      sessionId,
+    );
 
     return {
       message: sysMsg.DASHBOARD_RESOLVED,

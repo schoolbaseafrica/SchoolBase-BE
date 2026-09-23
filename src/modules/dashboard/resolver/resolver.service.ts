@@ -43,6 +43,7 @@ export class ResolverService {
   async resolveDashboard(
     userId: string,
     tokenRole: UserRole[],
+    sessionId?: string,
   ): Promise<DashboardResolvedDataDto> {
     const user = await this.userService.findOne(userId);
 
@@ -77,7 +78,7 @@ export class ResolverService {
       case UserRole.ADMIN:
         dashboard = UserRole.ADMIN;
         modules = DASHBOARD_MODULES[UserRole.ADMIN];
-        metadata = await this.getAdminMetadata();
+        metadata = await this.getAdminMetadata(sessionId);
         break;
 
       case UserRole.TEACHER:
@@ -112,8 +113,12 @@ export class ResolverService {
     };
   }
 
-  private async getAdminMetadata(): Promise<DashboardMetadataAdmin> {
-    const activeSession = await this.academicSessionService.activeSessions();
+  private async getAdminMetadata(
+    sessionId?: string,
+  ): Promise<DashboardMetadataAdmin> {
+    const targetSessionId = sessionId
+      ? sessionId
+      : (await this.academicSessionService.activeSessions()).data.id;
     const [counts] = (await this.dataSource.query(
       `SELECT
         COUNT(DISTINCT cs.student_id)::int AS students,
@@ -126,7 +131,7 @@ export class ResolverService {
       LEFT JOIN teachers teacher ON teacher.id = ct.teacher_id AND teacher.is_active = true
       LEFT JOIN parents parent ON parent.id = student.parent_id AND parent.is_active = true AND parent.deleted_at IS NULL
       WHERE class_record.academic_session_id = $1`,
-      [activeSession.data.id],
+      [targetSessionId],
     )) as Array<{ students: number; teachers: number; parents: number }>;
 
     return {
