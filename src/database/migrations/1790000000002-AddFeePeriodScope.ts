@@ -19,12 +19,35 @@ export class AddFeePeriodScope1790000000002 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "fees" ALTER COLUMN "term_id" DROP NOT NULL`,
     );
-    await queryRunner.query(
-      `ALTER TABLE "fees" ADD CONSTRAINT "FK_fees_session" FOREIGN KEY ("session_id") REFERENCES "academic_sessions"("id") ON DELETE CASCADE`,
-    );
-    await queryRunner.query(
-      `ALTER TABLE "fees" ADD CONSTRAINT "CHK_fees_period_scope" CHECK (("period_type" = 'TERM' AND "term_id" IS NOT NULL) OR ("period_type" = 'SESSION' AND "term_id" IS NULL))`,
-    );
+    await queryRunner.query(`
+      DO $migration$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'FK_fees_session'
+            AND conrelid = '"fees"'::regclass
+        ) THEN
+          ALTER TABLE "fees" ADD CONSTRAINT "FK_fees_session"
+            FOREIGN KEY ("session_id") REFERENCES "academic_sessions"("id") ON DELETE CASCADE;
+        END IF;
+      END
+      $migration$;
+    `);
+    await queryRunner.query(`
+      DO $migration$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'CHK_fees_period_scope'
+            AND conrelid = '"fees"'::regclass
+        ) THEN
+          ALTER TABLE "fees" ADD CONSTRAINT "CHK_fees_period_scope"
+            CHECK (("period_type" = 'TERM' AND "term_id" IS NOT NULL)
+              OR ("period_type" = 'SESSION' AND "term_id" IS NULL));
+        END IF;
+      END
+      $migration$;
+    `);
     await queryRunner.query(
       `CREATE INDEX "IDX_fees_session_period" ON "fees" ("session_id", "period_type", "term_id")`,
     );

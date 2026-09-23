@@ -116,10 +116,23 @@ export class RestoreExternalCbtWorkflow1790000000001 implements MigrationInterfa
     referencedTable: string,
     onDelete: 'CASCADE' | 'SET NULL',
   ) {
-    await queryRunner
-      .query(
-        `ALTER TABLE "${table}" ADD CONSTRAINT "${name}" FOREIGN KEY ("${column}") REFERENCES "${referencedTable}"("id") ON DELETE ${onDelete}`,
-      )
-      .catch(() => undefined);
+    await queryRunner.query(`
+      DO $migration$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = '${name}'
+            AND conrelid = '"${table}"'::regclass
+        ) THEN
+          ALTER TABLE "${table}"
+            ADD CONSTRAINT "${name}"
+            FOREIGN KEY ("${column}")
+            REFERENCES "${referencedTable}"("id")
+            ON DELETE ${onDelete};
+        END IF;
+      END
+      $migration$;
+    `);
   }
 }
