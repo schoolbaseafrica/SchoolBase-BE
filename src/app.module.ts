@@ -41,6 +41,7 @@ import { TeacherSubjectModule } from './modules/teacher-subject/teacher-subject.
 import { TimetableModule } from './modules/timetable/timetable.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UserModule } from './modules/user/user.module';
+import { VirtualClassroomModule } from './modules/virtual-classroom/virtual-classroom.module';
 @Module({
   imports: [
     LoggerModule,
@@ -134,6 +135,7 @@ import { UserModule } from './modules/user/user.module';
     ResultModule,
     NotificationModule,
     LandingPageModule,
+    VirtualClassroomModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
