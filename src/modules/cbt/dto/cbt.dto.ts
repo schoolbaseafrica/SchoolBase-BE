@@ -274,6 +274,57 @@ export class ImportCbtBankQuestionDto {
   sortOrder?: number;
 }
 
+export class CbtBlueprintRuleDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  topic?: string;
+
+  @IsOptional()
+  @IsEnum(CbtQuestionType)
+  type?: CbtQuestionType;
+
+  @IsOptional()
+  @IsEnum(CbtQuestionDifficulty)
+  difficulty?: CbtQuestionDifficulty;
+
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  count: number;
+
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+}
+
+export class PreviewCbtBlueprintDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(30)
+  @ValidateNested({ each: true })
+  @Type(() => CbtBlueprintRuleDto)
+  rules: CbtBlueprintRuleDto[];
+}
+
+export class CbtBlueprintSelectionDto {
+  @IsUUID()
+  questionId: string;
+
+  @IsOptional()
+  @IsUUID()
+  sectionId?: string;
+}
+
+export class ApplyCbtBlueprintDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => CbtBlueprintSelectionDto)
+  selections: CbtBlueprintSelectionDto[];
+}
+
 export class ListCbtQuestionBankDto {
   @IsOptional()
   @IsString()

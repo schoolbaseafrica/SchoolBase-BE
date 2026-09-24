@@ -15,9 +15,13 @@ import { InviteRole } from '../invites/dto/invite-user.dto';
 import { InviteService } from '../invites/invites.service';
 import { Student } from '../student/entities/student.entity';
 
-import { validateCbtQuestionDefinition } from './cbt-question-validation';
+import {
+  normalizeCbtQuestionBody,
+  validateCbtQuestionDefinition,
+} from './cbt-question-validation';
 import { answerIsCorrect } from './cbt-scoring';
 import {
+  ApplyCbtBlueprintDto,
   CreateCbtBankQuestionDto,
   CreateCbtExamDto,
   CreateCbtQuestionDto,
@@ -27,6 +31,7 @@ import {
   ListCbtApplicantsDto,
   ListCbtExamsDto,
   ListCbtQuestionBankDto,
+  PreviewCbtBlueprintDto,
   SaveCbtAnswerDto,
   TransitionCbtExamDto,
   UpdateCbtExamDto,
@@ -996,6 +1001,7 @@ export class CbtService {
     await this.getDraftExam(examId);
     this.assertQuestion(dto);
     await this.assertSectionBelongsToExam(dto.sectionId, examId);
+    await this.assertQuestionBodyIsUnique(examId, dto.body);
     const question = this.questionRepository.create({
       ...dto,
       examId,
@@ -1029,6 +1035,11 @@ export class CbtService {
       correctAnswer: dto.correctAnswer ?? question.correctAnswer ?? undefined,
     } as CreateCbtQuestionDto;
     this.assertQuestion(merged);
+    await this.assertQuestionBodyIsUnique(
+      question.examId,
+      dto.body ?? question.body,
+      question.id,
+    );
     Object.assign(question, dto);
     if (dto.marks !== undefined) question.marks = String(dto.marks);
     return this.questionRepository.save(question);
@@ -1149,6 +1160,7 @@ export class CbtService {
         'Question does not belong to the question bank',
       );
     }
+    await this.assertQuestionBodyIsUnique(examId, source.body);
     const sortOrder =
       dto.sortOrder ??
       (await this.questionRepository.count({ where: { examId } }));
@@ -1159,6 +1171,115 @@ export class CbtService {
         sortOrder,
       }),
     );
+  }
+
+  async previewBlueprint(examId: string, dto: PreviewCbtBlueprintDto) {
+    const exam = await this.getDraftExam(examId);
+    const existingBodies = new Set(
+      (await this.questionRepository.find({ where: { examId } })).map(
+        (question) => this.questionIdentity(question.body),
+      ),
+    );
+    const selectedIds = new Set<string>();
+    const selectedBodies = new Set(existingBodies);
+    const rules = [];
+
+    for (const [ruleIndex, rule] of dto.rules.entries()) {
+      await this.assertSectionBelongsToExam(rule.sectionId, exam.id);
+      const builder = this.questionRepository
+        .createQueryBuilder('question')
+        .addSelect('question.correctAnswer')
+        .addSelect('question.explanation')
+        .where('question.exam_id IS NULL')
+        .andWhere('question.is_archived = false');
+      if (rule.topic) {
+        builder.andWhere('LOWER(question.topic) = LOWER(:topic)', {
+          topic: rule.topic.trim(),
+        });
+      }
+      if (rule.type)
+        builder.andWhere('question.type = :type', { type: rule.type });
+      if (rule.difficulty) {
+        builder.andWhere('question.difficulty = :difficulty', {
+          difficulty: rule.difficulty,
+        });
+      }
+      const candidates = (await builder.getMany()).filter(
+        (question) =>
+          !selectedIds.has(question.id) &&
+          !selectedBodies.has(this.questionIdentity(question.body)),
+      );
+      this.shuffle(candidates);
+      const questions = candidates.slice(0, rule.count);
+      questions.forEach((question) => {
+        selectedIds.add(question.id);
+        selectedBodies.add(this.questionIdentity(question.body));
+      });
+      rules.push({
+        ruleIndex,
+        requested: rule.count,
+        available: candidates.length,
+        shortage: Math.max(rule.count - questions.length, 0),
+        sectionId: rule.sectionId ?? null,
+        questions,
+      });
+    }
+
+    return {
+      valid: rules.every((rule) => rule.shortage === 0),
+      requested: dto.rules.reduce((sum, rule) => sum + rule.count, 0),
+      selected: selectedIds.size,
+      rules,
+    };
+  }
+
+  async applyBlueprint(examId: string, dto: ApplyCbtBlueprintDto) {
+    await this.getDraftExam(examId);
+    const questionIds = dto.selections.map((selection) => selection.questionId);
+    if (new Set(questionIds).size !== questionIds.length) {
+      throw new BadRequestException(
+        'A generated paper cannot contain the same bank question twice',
+      );
+    }
+    for (const selection of dto.selections) {
+      await this.assertSectionBelongsToExam(selection.sectionId, examId);
+    }
+    const sources = await this.questionRepository
+      .createQueryBuilder('question')
+      .addSelect('question.correctAnswer')
+      .addSelect('question.explanation')
+      .where('question.id IN (:...questionIds)', { questionIds })
+      .andWhere('question.exam_id IS NULL')
+      .andWhere('question.is_archived = false')
+      .getMany();
+    if (sources.length !== questionIds.length) {
+      throw new BadRequestException(
+        'One or more selected questions are no longer available in the question bank',
+      );
+    }
+    const sourceById = new Map(sources.map((source) => [source.id, source]));
+    const existing = await this.questionRepository.find({ where: { examId } });
+    const bodies = new Set(
+      existing.map((question) => this.questionIdentity(question.body)),
+    );
+    const startOrder = existing.length;
+    const copies = dto.selections.map((selection, index) => {
+      const source = sourceById.get(selection.questionId)!;
+      const identity = this.questionIdentity(source.body);
+      if (bodies.has(identity)) {
+        throw new ConflictException(
+          `The generated paper already contains this question: ${source.body.slice(0, 80)}`,
+        );
+      }
+      bodies.add(identity);
+      return this.cloneQuestion(source, {
+        examId,
+        sectionId: selection.sectionId ?? null,
+        sortOrder: startOrder + index,
+      });
+    });
+    const saved = await this.questionRepository.save(copies);
+    return { imported: saved.length, questions: saved };
   }
 
   async publishExam(examId: string) {
@@ -1897,6 +2018,31 @@ export class CbtService {
       explanation: source.explanation,
       isArchived: false,
     });
+  }
+
+  private questionIdentity(body: string) {
+    return normalizeCbtQuestionBody(body);
+  }
+
+  private async assertQuestionBodyIsUnique(
+    examId: string,
+    body: string,
+    excludeQuestionId?: string,
+  ) {
+    const questions = await this.questionRepository.find({ where: { examId } });
+    const identity = this.questionIdentity(body);
+    if (
+      questions.some(
+        (question) =>
+          question.id !== excludeQuestionId &&
+          !question.isArchived &&
+          this.questionIdentity(question.body) === identity,
+      )
+    ) {
+      throw new ConflictException(
+        'This examination already contains a question with the same wording',
+      );
+    }
   }
 
   private async resolveClasses(classIds?: string[]) {

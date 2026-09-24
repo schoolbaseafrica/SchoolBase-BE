@@ -25,11 +25,13 @@ import {
   CreateCbtExamDto,
   CreateCbtQuestionDto,
   CreateCbtSectionDto,
+  ApplyCbtBlueprintDto,
   GradeCbtAnswerDto,
   ImportCbtBankQuestionDto,
   ListCbtExamsDto,
   ListCbtApplicantsDto,
   ListCbtQuestionBankDto,
+  PreviewCbtBlueprintDto,
   RecordCbtConnectionEventDto,
   SaveCbtAnswerDto,
   TransitionCbtExamDto,
@@ -190,6 +192,24 @@ export class CbtController {
     @Body() dto: ImportCbtBankQuestionDto,
   ) {
     return this.cbtService.importBankQuestion(examId, questionId, dto);
+  }
+
+  @Post('exams/:examId/blueprint/preview')
+  @Roles(UserRole.ADMIN)
+  previewBlueprint(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: PreviewCbtBlueprintDto,
+  ) {
+    return this.cbtService.previewBlueprint(examId, dto);
+  }
+
+  @Post('exams/:examId/blueprint/apply')
+  @Roles(UserRole.ADMIN)
+  applyBlueprint(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: ApplyCbtBlueprintDto,
+  ) {
+    return this.cbtService.applyBlueprint(examId, dto);
   }
 
   @Post('exams/:examId/sections')

@@ -1,4 +1,7 @@
-import { validateCbtQuestionDefinition } from './cbt-question-validation';
+import {
+  normalizeCbtQuestionBody,
+  validateCbtQuestionDefinition,
+} from './cbt-question-validation';
 import { CbtQuestionType } from './entities';
 
 describe('validateCbtQuestionDefinition', () => {
@@ -45,5 +48,13 @@ describe('validateCbtQuestionDefinition', () => {
         correctAnswer: 'yes',
       }),
     ).toBe('True-or-false answers must be true or false');
+  });
+});
+
+describe('normalizeCbtQuestionBody', () => {
+  it('treats casing and repeated whitespace as the same question wording', () => {
+    expect(normalizeCbtQuestionBody('  What   is Photosynthesis?\n')).toBe(
+      normalizeCbtQuestionBody('what is photosynthesis?'),
+    );
   });
 });

@@ -6,6 +6,10 @@ interface IQuestionDefinition {
   correctAnswer?: string;
 }
 
+export function normalizeCbtQuestionBody(body: string) {
+  return body.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
 export function validateCbtQuestionDefinition(
   definition: IQuestionDefinition,
 ): string | null {
