@@ -107,6 +107,7 @@ describe('StudentService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
   });
 
   it('should be defined', () => {
@@ -115,6 +116,7 @@ describe('StudentService', () => {
 
   describe('getStudentGrowthReport', () => {
     it('groups first enrollments by month within the selected session', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-11-01T00:00:00Z'));
       mockAcademicSessionModelAction.get.mockResolvedValue({
         id: 'session-1',
         name: '2026/2027',
@@ -143,6 +145,37 @@ describe('StudentService', () => {
           cumulative_students: 2,
         }),
       ]);
+      jest.useRealTimers();
+    });
+
+    it('does not include future months in the active reporting period', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-24T12:00:00Z'));
+      mockAcademicSessionModelAction.get.mockResolvedValue({
+        id: 'session-1',
+        name: '2026/2027',
+        startDate: new Date('2026-09-01'),
+        endDate: new Date('2026-12-31'),
+      });
+      mockDataSource.query
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { studentId: 'student-1', enrollmentDate: '2026-09-10T10:00:00Z' },
+        ]);
+
+      const result = await service.getStudentGrowthReport({
+        session_id: 'session-1',
+        interval: StudentGrowthInterval.MONTH,
+      });
+
+      expect(result.data.report).toEqual([
+        expect.objectContaining({
+          label: 'Sep 2026',
+          end_date: '2026-09-24',
+          new_students: 1,
+          cumulative_students: 1,
+        }),
+      ]);
+      jest.useRealTimers();
     });
   });
 

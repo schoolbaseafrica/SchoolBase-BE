@@ -513,22 +513,35 @@ export class StudentService {
 
     const scopeStart = new Date(selectedTerm?.startDate || session.startDate);
     const scopeEnd = new Date(selectedTerm?.endDate || session.endDate);
+    const today = new Date();
+    const todayUtc = new Date(
+      Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()),
+    );
+    const effectiveScopeEnd =
+      todayUtc < scopeStart
+        ? new Date(scopeStart.getTime() - 86_400_000)
+        : todayUtc < scopeEnd
+          ? todayUtc
+          : scopeEnd;
     const periods: Array<{ label: string; start: Date; end: Date }> = [];
 
     if (interval === StudentGrowthInterval.TERM) {
-      const scopedTerms = selectedTerm ? [selectedTerm] : terms;
+      const scopedTerms = (selectedTerm ? [selectedTerm] : terms).filter(
+        (term) => new Date(term.startDate) <= effectiveScopeEnd,
+      );
       for (const term of scopedTerms) {
+        const termEnd = new Date(term.endDate);
         periods.push({
           label: term.name,
           start: new Date(term.startDate),
-          end: new Date(term.endDate),
+          end: termEnd > effectiveScopeEnd ? effectiveScopeEnd : termEnd,
         });
       }
     } else {
       const cursor = new Date(
         Date.UTC(scopeStart.getUTCFullYear(), scopeStart.getUTCMonth(), 1),
       );
-      while (cursor <= scopeEnd) {
+      while (cursor <= effectiveScopeEnd) {
         const monthStart = new Date(cursor);
         const monthEnd = new Date(
           Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1, 0),
@@ -540,7 +553,7 @@ export class StudentService {
             timeZone: 'UTC',
           }),
           start: monthStart < scopeStart ? scopeStart : monthStart,
-          end: monthEnd > scopeEnd ? scopeEnd : monthEnd,
+          end: monthEnd > effectiveScopeEnd ? effectiveScopeEnd : monthEnd,
         });
         cursor.setUTCMonth(cursor.getUTCMonth() + 1);
       }
