@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, IsNull, Repository } from 'typeorm';
 
 import { Class } from '../class/entities/class.entity';
 import { InviteRole } from '../invites/dto/invite-user.dto';
@@ -1112,11 +1112,19 @@ export class CbtService {
         topic: query.topic.trim(),
       });
     }
-    return builder.take(250).getMany();
+    const questions = await builder.take(250).getMany();
+    const seen = new Set<string>();
+    return questions.filter((question) => {
+      const identity = this.questionIdentity(question.body);
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    });
   }
 
   async createBankQuestion(dto: CreateCbtBankQuestionDto) {
     this.assertQuestion(dto as CreateCbtQuestionDto);
+    await this.assertBankQuestionBodyIsUnique(dto.body);
     return this.questionRepository.save(
       this.questionRepository.create({
         ...dto,
@@ -1138,6 +1146,7 @@ export class CbtService {
       throw new ConflictException('Question is already in the question bank');
     }
     await this.getDraftExam(source.examId);
+    await this.assertBankQuestionBodyIsUnique(source.body);
     return this.questionRepository.save(
       this.cloneQuestion(source, {
         examId: null,
@@ -2041,6 +2050,22 @@ export class CbtService {
     ) {
       throw new ConflictException(
         'This examination already contains a question with the same wording',
+      );
+    }
+  }
+
+  private async assertBankQuestionBodyIsUnique(body: string) {
+    const questions = await this.questionRepository.find({
+      where: { examId: IsNull(), isArchived: false },
+    });
+    const identity = this.questionIdentity(body);
+    if (
+      questions.some(
+        (question) => this.questionIdentity(question.body) === identity,
+      )
+    ) {
+      throw new ConflictException(
+        'The question bank already contains a question with the same wording',
       );
     }
   }
