@@ -32,6 +32,7 @@ import {
   ListCbtQuestionBankDto,
   RecordCbtConnectionEventDto,
   SaveCbtAnswerDto,
+  TransitionCbtExamDto,
   UpdateCbtExamDto,
   UpdateCbtQuestionDto,
   UpdateCbtSectionDto,
@@ -228,6 +229,15 @@ export class CbtController {
   @Roles(UserRole.ADMIN)
   publishExam(@Param('examId', ParseUUIDPipe) examId: string) {
     return this.cbtService.publishExam(examId);
+  }
+
+  @Patch('exams/:examId/status')
+  @Roles(UserRole.ADMIN)
+  transitionExam(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: TransitionCbtExamDto,
+  ) {
+    return this.cbtService.transitionExam(examId, dto);
   }
 
   @Get('student/exams')

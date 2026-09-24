@@ -305,6 +305,11 @@ export class GradeCbtAnswerDto {
   comment?: string;
 }
 
+export class TransitionCbtExamDto {
+  @IsEnum(CbtExamStatus)
+  status: CbtExamStatus;
+}
+
 export class ListCbtExamsDto {
   @IsOptional()
   @IsEnum(CbtExamStatus)

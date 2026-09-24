@@ -5,6 +5,10 @@ export enum CbtExamType {
 
 export enum CbtExamStatus {
   DRAFT = 'draft',
+  REVIEW = 'review',
+  SCHEDULED = 'scheduled',
+  ACTIVE = 'active',
+  CLOSED = 'closed',
   PUBLISHED = 'published',
   ARCHIVED = 'archived',
 }

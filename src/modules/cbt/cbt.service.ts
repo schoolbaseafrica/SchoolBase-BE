@@ -28,6 +28,7 @@ import {
   ListCbtExamsDto,
   ListCbtQuestionBankDto,
   SaveCbtAnswerDto,
+  TransitionCbtExamDto,
   UpdateCbtExamDto,
   UpdateCbtQuestionDto,
   UpdateCbtSectionDto,
@@ -787,7 +788,7 @@ export class CbtService {
         (query) => query.andWhere('question.is_archived = false'),
       )
       .where('exam.exam_type = :type', { type: CbtExamType.ENTRANCE })
-      .andWhere('exam.status = :status', { status: CbtExamStatus.PUBLISHED })
+      .andWhere('exam.status = :status', { status: CbtExamStatus.ACTIVE })
       .andWhere(
         '(exam.available_from IS NULL OR exam.available_from <= :now)',
         {
@@ -1162,9 +1163,72 @@ export class CbtService {
 
   async publishExam(examId: string) {
     const exam = await this.getExamForManagement(examId);
+    if (exam.status !== CbtExamStatus.REVIEW) {
+      throw new ConflictException(
+        'Submit the examination for review before making it available',
+      );
+    }
+    this.validateExamForActivation(exam);
+    exam.status =
+      exam.availableFrom && exam.availableFrom.getTime() > Date.now()
+        ? CbtExamStatus.SCHEDULED
+        : CbtExamStatus.ACTIVE;
+    return this.examRepository.save(exam);
+  }
+
+  async transitionExam(examId: string, dto: TransitionCbtExamDto) {
+    const exam = await this.getExamForManagement(examId);
+    const allowed: Record<CbtExamStatus, CbtExamStatus[]> = {
+      [CbtExamStatus.DRAFT]: [CbtExamStatus.REVIEW, CbtExamStatus.ARCHIVED],
+      [CbtExamStatus.REVIEW]: [
+        CbtExamStatus.DRAFT,
+        CbtExamStatus.SCHEDULED,
+        CbtExamStatus.ACTIVE,
+      ],
+      [CbtExamStatus.SCHEDULED]: [
+        CbtExamStatus.DRAFT,
+        CbtExamStatus.ACTIVE,
+        CbtExamStatus.CLOSED,
+      ],
+      [CbtExamStatus.ACTIVE]: [CbtExamStatus.CLOSED],
+      [CbtExamStatus.CLOSED]: [CbtExamStatus.PUBLISHED, CbtExamStatus.ARCHIVED],
+      [CbtExamStatus.PUBLISHED]: [CbtExamStatus.ARCHIVED],
+      [CbtExamStatus.ARCHIVED]: [],
+    };
+    if (!allowed[exam.status].includes(dto.status)) {
+      throw new ConflictException(
+        `Cannot move an examination from ${exam.status} to ${dto.status}`,
+      );
+    }
+    if (
+      dto.status === CbtExamStatus.SCHEDULED ||
+      dto.status === CbtExamStatus.ACTIVE
+    ) {
+      this.validateExamForActivation(exam);
+    }
+    if (
+      dto.status === CbtExamStatus.SCHEDULED &&
+      (!exam.availableFrom || exam.availableFrom.getTime() <= Date.now())
+    ) {
+      throw new BadRequestException(
+        'A scheduled examination must have a future start date',
+      );
+    }
+    if (
+      dto.status === CbtExamStatus.ACTIVE &&
+      exam.availableTo &&
+      exam.availableTo.getTime() < Date.now()
+    ) {
+      throw new BadRequestException('This examination has already ended');
+    }
+    exam.status = dto.status;
+    return this.examRepository.save(exam);
+  }
+
+  private validateExamForActivation(exam: CbtExam) {
     if (!exam.questions.length) {
       throw new BadRequestException(
-        'Add at least one question before publishing',
+        'Add at least one question before activating the examination',
       );
     }
     if (exam.examType === CbtExamType.IN_SCHOOL && !exam.classes.length) {
@@ -1183,8 +1247,6 @@ export class CbtService {
       exam.availableFrom?.toISOString(),
       exam.availableTo?.toISOString(),
     );
-    exam.status = CbtExamStatus.PUBLISHED;
-    return this.examRepository.save(exam);
   }
 
   async listStudentExams(studentId: string, query: ListCbtApplicantsDto) {
@@ -1206,7 +1268,7 @@ export class CbtService {
         'question',
         (qb) => qb.andWhere('question.is_archived = false'),
       )
-      .where('exam.status = :status', { status: CbtExamStatus.PUBLISHED })
+      .where('exam.status = :status', { status: CbtExamStatus.ACTIVE })
       .andWhere('exam.session_id = :sessionId', { sessionId: period.sessionId })
       .andWhere(
         '(exam.available_from IS NULL OR exam.available_from <= :now)',
@@ -1603,9 +1665,9 @@ export class CbtService {
   private assertExternalExamAvailable(exam: CbtExam) {
     if (
       exam.examType !== CbtExamType.ENTRANCE ||
-      exam.status !== CbtExamStatus.PUBLISHED
+      exam.status !== CbtExamStatus.ACTIVE
     ) {
-      throw new ForbiddenException('External examination is not published');
+      throw new ForbiddenException('External examination is not active');
     }
     const now = Date.now();
     if (exam.availableFrom && now < exam.availableFrom.getTime()) {
@@ -1676,8 +1738,8 @@ export class CbtService {
   }
 
   private assertExamAvailable(exam: CbtExam, currentClassId: string | null) {
-    if (exam.status !== CbtExamStatus.PUBLISHED)
-      throw new ForbiddenException('Examination is not published');
+    if (exam.status !== CbtExamStatus.ACTIVE)
+      throw new ForbiddenException('Examination is not active');
     const now = Date.now();
     if (exam.availableFrom && now < exam.availableFrom.getTime()) {
       throw new ForbiddenException('Examination is not available yet');
