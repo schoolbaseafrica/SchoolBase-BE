@@ -26,6 +26,7 @@ import {
   CreateCbtQuestionDto,
   CreateCbtSectionDto,
   ApplyCbtBlueprintDto,
+  AssignCbtProctorDto,
   GradeCbtAnswerDto,
   ImportCbtBankQuestionDto,
   ListCbtExamsDto,
@@ -44,6 +45,7 @@ import { CbtAttemptEventType } from './entities';
 interface ICbtRequestUser {
   userId: string;
   student_id?: string;
+  teacher_id?: string;
 }
 
 interface ICbtRequest extends Request {
@@ -103,6 +105,75 @@ export class CbtController {
   @Roles(UserRole.ADMIN)
   getExamAttempts(@Param('examId', ParseUUIDPipe) examId: string) {
     return this.cbtService.getExamAttempts(examId);
+  }
+
+  @Get('exams/:examId/proctors')
+  @Roles(UserRole.ADMIN)
+  listExamProctors(@Param('examId', ParseUUIDPipe) examId: string) {
+    return this.cbtService.listExamProctors(examId);
+  }
+
+  @Post('exams/:examId/proctors')
+  @Roles(UserRole.ADMIN)
+  assignExamProctor(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: AssignCbtProctorDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.assignExamProctor(examId, dto, request.user.userId);
+  }
+
+  @Delete('exams/:examId/proctors/:userId')
+  @Roles(UserRole.ADMIN)
+  removeExamProctor(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.removeExamProctor(
+      examId,
+      userId,
+      request.user.userId,
+    );
+  }
+
+  @Get('proctor/exams')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  listAssignedProctorExams(@Req() request: ICbtRequest) {
+    return this.cbtService.listAssignedProctorExams(request.user.userId);
+  }
+
+  @Get('proctor/exams/:examId/attempts')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  getAssignedExamAttempts(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.getAssignedExamAttempts(examId, request.user.userId);
+  }
+
+  @Get('proctor/attempts/:attemptId/activity')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  getAssignedAttemptActivity(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.getAssignedAttemptActivity(
+      attemptId,
+      request.user.userId,
+    );
+  }
+
+  @Patch('proctor/attempt-events/:eventId/acknowledge')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  acknowledgeAssignedAttemptEvent(
+    @Param('eventId', ParseUUIDPipe) eventId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.acknowledgeAssignedAttemptEvent(
+      eventId,
+      request.user.userId,
+    );
   }
 
   @Get('question-bank')

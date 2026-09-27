@@ -22,6 +22,7 @@ import {
 import { answerIsCorrect } from './cbt-scoring';
 import {
   ApplyCbtBlueprintDto,
+  AssignCbtProctorDto,
   CreateCbtBankQuestionDto,
   CreateCbtExamDto,
   CreateCbtQuestionDto,
@@ -176,7 +177,7 @@ export class CbtService {
     return exam;
   }
 
-  async getExamAttempts(examId: string) {
+  async getExamAttempts(examId: string, classIds?: string[]) {
     const exam = await this.getExamForManagement(examId);
     const attempts = (await this.dataSource.query(
       `SELECT
@@ -228,8 +229,12 @@ export class CbtService {
         GROUP BY attempt_id
       ) event_counts ON event_counts.attempt_id = attempt.id
       WHERE attempt.exam_id = $1
+        AND ($2::uuid[] IS NULL OR attempt.student_id IN (
+          SELECT cs.student_id FROM class_students cs
+          WHERE cs.class_id = ANY($2::uuid[]) AND cs.is_active = true
+        ))
       ORDER BY attempt.started_at DESC`,
-      [examId],
+      [examId, classIds?.length ? classIds : null],
     )) as Array<{
       id: string;
       status: CbtAttemptStatus;
@@ -255,13 +260,34 @@ export class CbtService {
        FROM cbt_exam_classes exam_class
        JOIN class_students cs ON cs.class_id = exam_class.class_id AND cs.is_active = true
        JOIN students student ON student.id = cs.student_id AND student.is_deleted = false
-       WHERE exam_class.exam_id = $1`,
-      [examId],
+       WHERE exam_class.exam_id = $1
+         AND ($2::uuid[] IS NULL OR exam_class.class_id = ANY($2::uuid[]))`,
+      [examId, classIds?.length ? classIds : null],
     )) as Array<{ count: number }>;
     const expectedCandidates =
       exam.examType === CbtExamType.IN_SCHOOL
         ? Number(expectedRow[0]?.count ?? 0)
         : attempts.length;
+    const eligibleStudents =
+      exam.examType === CbtExamType.IN_SCHOOL
+        ? ((await this.dataSource.query(
+            `SELECT DISTINCT student.id AS "studentId",
+              student.registration_number AS "registrationNumber",
+              CONCAT_WS(' ', app_user.first_name, app_user.last_name) AS "studentName"
+             FROM cbt_exam_classes exam_class
+             JOIN class_students cs ON cs.class_id = exam_class.class_id AND cs.is_active = true
+             JOIN students student ON student.id = cs.student_id AND student.is_deleted = false
+             JOIN users app_user ON app_user.id = student.user_id
+             WHERE exam_class.exam_id = $1
+               AND ($2::uuid[] IS NULL OR exam_class.class_id = ANY($2::uuid[]))
+             ORDER BY "studentName"`,
+            [examId, classIds?.length ? classIds : null],
+          )) as Array<{
+            studentId: string;
+            registrationNumber: string | null;
+            studentName: string;
+          }>)
+        : [];
     const submitted = attempts.filter(
       (attempt) => attempt.status === CbtAttemptStatus.SUBMITTED,
     );
@@ -302,10 +328,38 @@ export class CbtService {
        LEFT JOIN cbt_attempts attempt ON attempt.exam_id = question.exam_id
        LEFT JOIN cbt_answers answer ON answer.attempt_id = attempt.id AND answer.question_id = question.id
        WHERE question.exam_id = $1 AND question.is_archived = false
+         AND ($2::uuid[] IS NULL OR attempt.student_id IS NULL OR attempt.student_id IN (
+           SELECT cs.student_id FROM class_students cs
+           WHERE cs.class_id = ANY($2::uuid[]) AND cs.is_active = true
+         ))
        GROUP BY question.id, section.title
        ORDER BY question.sort_order ASC`,
-      [examId],
+      [examId, classIds?.length ? classIds : null],
     )) as Array<Record<string, unknown>>;
+    const mappedAttempts = attempts.map((attempt) => ({
+      ...attempt,
+      score: attempt.score === null ? null : Number(attempt.score),
+      totalMarks: Number(attempt.totalMarks),
+      percentage:
+        attempt.status === CbtAttemptStatus.SUBMITTED &&
+        !attempt.manualGradingRequired &&
+        Number(attempt.totalMarks)
+          ? Math.round(
+              (Number(attempt.score ?? 0) / Number(attempt.totalMarks)) *
+                10_000,
+            ) / 100
+          : null,
+      deadlineAt: new Date(
+        new Date(attempt.startedAt).getTime() + exam.timeLimitMinutes * 60_000,
+      ).toISOString(),
+      connectionState:
+        attempt.lastEventType === CbtAttemptEventType.CONNECTION_LOST
+          ? 'offline'
+          : 'online',
+    }));
+    const attemptedStudentIds = new Set(
+      attempts.map((attempt) => attempt.studentId).filter(Boolean),
+    );
     return {
       summary: {
         started: attempts.length,
@@ -348,28 +402,33 @@ export class CbtService {
           ? Math.round((submitted.length / attempts.length) * 10000) / 100
           : 0,
       },
-      attempts: attempts.map((attempt) => ({
-        ...attempt,
-        score: attempt.score === null ? null : Number(attempt.score),
-        totalMarks: Number(attempt.totalMarks),
-        percentage:
-          attempt.status === CbtAttemptStatus.SUBMITTED &&
-          !attempt.manualGradingRequired &&
-          Number(attempt.totalMarks)
-            ? Math.round(
-                (Number(attempt.score ?? 0) / Number(attempt.totalMarks)) *
-                  10_000,
-              ) / 100
-            : null,
-        deadlineAt: new Date(
-          new Date(attempt.startedAt).getTime() +
-            exam.timeLimitMinutes * 60_000,
-        ).toISOString(),
-        connectionState:
-          attempt.lastEventType === CbtAttemptEventType.CONNECTION_LOST
-            ? 'offline'
-            : 'online',
-      })),
+      attempts: mappedAttempts,
+      candidates: [
+        ...mappedAttempts,
+        ...eligibleStudents
+          .filter((student) => !attemptedStudentIds.has(student.studentId))
+          .map((student) => ({
+            ...student,
+            id: `not-started-${student.studentId}`,
+            attemptId: null,
+            status: 'not_started' as const,
+            startedAt: null,
+            submittedAt: null,
+            lastSavedAt: null,
+            lastEventAt: null,
+            score: null,
+            totalMarks: 0,
+            percentage: null,
+            manualGradingRequired: false,
+            resultPublishedAt: null,
+            answeredQuestions: 0,
+            questionCount: exam.questions.length,
+            connectionLostCount: 0,
+            visibilityHiddenCount: 0,
+            deadlineAt: null,
+            connectionState: 'not_started' as const,
+          })),
+      ],
       scoreDistribution,
       questionAnalytics: questionAnalytics.map((item) => ({
         ...item,
@@ -382,6 +441,228 @@ export class CbtService {
           : null,
       })),
     };
+  }
+
+  async listExamProctors(examId: string) {
+    await this.getExamForManagement(examId);
+    return this.dataSource.query(
+      `SELECT p.user_id AS "userId",
+        CONCAT_WS(' ', u.first_name, u.last_name) AS name,
+        u.email,
+        json_agg(json_build_object('id', c.id, 'name', c.name, 'arm', c.arm) ORDER BY c.name, c.arm) AS classes
+       FROM cbt_exam_proctors p
+       JOIN users u ON u.id = p.user_id
+       JOIN classes c ON c.id = p.class_id
+       WHERE p.exam_id = $1
+       GROUP BY p.user_id, u.first_name, u.last_name, u.email
+       ORDER BY name`,
+      [examId],
+    );
+  }
+
+  async assignExamProctor(
+    examId: string,
+    dto: AssignCbtProctorDto,
+    assignedBy: string,
+  ) {
+    const exam = await this.getExamForManagement(examId);
+    if (exam.examType !== CbtExamType.IN_SCHOOL) {
+      throw new BadRequestException(
+        'Proctors can only be assigned to internal examinations',
+      );
+    }
+    const examClassIds = new Set(exam.classes.map((item) => item.id));
+    if (dto.classIds.some((id) => !examClassIds.has(id))) {
+      throw new BadRequestException(
+        'A proctor can only monitor classes assigned to this examination',
+      );
+    }
+    const teachers = (await this.dataSource.query(
+      `SELECT teacher.user_id AS "userId"
+       FROM teachers teacher
+       JOIN users app_user ON app_user.id = teacher.user_id
+       WHERE teacher.id = $1 AND teacher.is_active = true AND app_user.is_active = true`,
+      [dto.teacherId],
+    )) as Array<{ userId: string }>;
+    const proctorUserId = teachers[0]?.userId;
+    if (!proctorUserId)
+      throw new BadRequestException('Select an active teacher');
+
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `DELETE FROM cbt_exam_proctors WHERE exam_id = $1 AND user_id = $2`,
+        [examId, proctorUserId],
+      );
+      for (const classId of [...new Set(dto.classIds)]) {
+        await manager.query(
+          `INSERT INTO cbt_exam_proctors (exam_id, user_id, class_id, assigned_by)
+           VALUES ($1, $2, $3, $4)`,
+          [examId, proctorUserId, classId, assignedBy],
+        );
+      }
+      await this.writeCbtAudit(manager, assignedBy, examId, 'ASSIGN', {
+        proctorUserId,
+        teacherId: dto.teacherId,
+        classIds: dto.classIds,
+      });
+    });
+    return this.listExamProctors(examId);
+  }
+
+  async removeExamProctor(examId: string, userId: string, removedBy: string) {
+    await this.dataSource.transaction(async (manager) => {
+      const result = await manager.query(
+        `DELETE FROM cbt_exam_proctors WHERE exam_id = $1 AND user_id = $2 RETURNING class_id`,
+        [examId, userId],
+      );
+      if (!result.length)
+        throw new NotFoundException('Proctor assignment not found');
+      await this.writeCbtAudit(manager, removedBy, examId, 'UNASSIGN', {
+        proctorUserId: userId,
+        classIds: result.map((row: { class_id: string }) => row.class_id),
+      });
+    });
+    return { removed: true };
+  }
+
+  async listAssignedProctorExams(userId: string) {
+    return this.dataSource.query(
+      `SELECT e.id, e.name, e.status, e.available_from AS "availableFrom",
+        e.available_to AS "availableTo", e.time_limit_minutes AS "timeLimitMinutes",
+        e.proctoring_mode AS "proctoringMode",
+        json_agg(DISTINCT jsonb_build_object('id', c.id, 'name', c.name, 'arm', c.arm)) AS classes
+       FROM cbt_exam_proctors p
+       JOIN cbt_exams e ON e.id = p.exam_id AND e.exam_type = 'in_school'
+       JOIN classes c ON c.id = p.class_id
+       WHERE p.user_id = $1
+       GROUP BY e.id
+       ORDER BY e.available_from DESC NULLS LAST, e.created_at DESC`,
+      [userId],
+    );
+  }
+
+  async getAssignedExamAttempts(examId: string, userId: string) {
+    const classIds = await this.proctorClassIds(examId, userId);
+    return this.getExamAttempts(examId, classIds);
+  }
+
+  async acknowledgeAssignedAttemptEvent(eventId: string, userId: string) {
+    const rows = (await this.dataSource.query(
+      `SELECT event.id, attempt.exam_id AS "examId", attempt.student_id AS "studentId"
+       FROM cbt_attempt_events event
+       JOIN cbt_attempts attempt ON attempt.id = event.attempt_id
+       WHERE event.id = $1`,
+      [eventId],
+    )) as Array<{ id: string; examId: string; studentId: string | null }>;
+    const row = rows[0];
+    if (!row?.studentId)
+      throw new ForbiddenException(
+        'This event is outside your assigned classes',
+      );
+    const classIds = await this.proctorClassIds(row.examId, userId);
+    const allowed = (await this.dataSource.query(
+      `SELECT 1 FROM class_students WHERE student_id = $1 AND class_id = ANY($2::uuid[]) AND is_active = true LIMIT 1`,
+      [row.studentId, classIds],
+    )) as unknown[];
+    if (!allowed.length)
+      throw new ForbiddenException(
+        'This event is outside your assigned classes',
+      );
+    const event = await this.acknowledgeAttemptEvent(eventId, userId);
+    await this.writeCbtAudit(
+      this.dataSource.manager,
+      userId,
+      row.examId,
+      'ACKNOWLEDGE',
+      { eventId },
+    );
+    return event;
+  }
+
+  async getAssignedAttemptActivity(attemptId: string, userId: string) {
+    const rows = (await this.dataSource.query(
+      `SELECT attempt.id, attempt.exam_id AS "examId", attempt.student_id AS "studentId",
+        CONCAT_WS(' ', u.first_name, u.last_name) AS "candidateName"
+       FROM cbt_attempts attempt
+       LEFT JOIN students student ON student.id = attempt.student_id
+       LEFT JOIN users u ON u.id = student.user_id
+       WHERE attempt.id = $1`,
+      [attemptId],
+    )) as Array<{
+      id: string;
+      examId: string;
+      studentId: string | null;
+      candidateName: string;
+    }>;
+    const attempt = rows[0];
+    if (!attempt?.studentId)
+      throw new ForbiddenException(
+        'This attempt is outside your assigned classes',
+      );
+    const classIds = await this.proctorClassIds(attempt.examId, userId);
+    const allowed = (await this.dataSource.query(
+      `SELECT 1 FROM class_students WHERE student_id = $1 AND class_id = ANY($2::uuid[]) AND is_active = true LIMIT 1`,
+      [attempt.studentId, classIds],
+    )) as unknown[];
+    if (!allowed.length)
+      throw new ForbiddenException(
+        'This attempt is outside your assigned classes',
+      );
+    const events = await this.eventRepository.find({
+      where: { attemptId },
+      order: { createdAt: 'DESC' },
+    });
+    await this.writeCbtAudit(
+      this.dataSource.manager,
+      userId,
+      attempt.examId,
+      'REVIEW',
+      { attemptId },
+    );
+    return {
+      attemptId,
+      candidateName: attempt.candidateName || 'Student',
+      events: events.map((event) => ({
+        id: event.id,
+        eventType: event.eventType,
+        createdAt: event.createdAt,
+        metadata: event.metadata,
+      })),
+    };
+  }
+
+  private async proctorClassIds(examId: string, userId: string) {
+    const rows = (await this.dataSource.query(
+      `SELECT class_id AS "classId" FROM cbt_exam_proctors WHERE exam_id = $1 AND user_id = $2`,
+      [examId, userId],
+    )) as Array<{ classId: string }>;
+    if (!rows.length)
+      throw new ForbiddenException(
+        'You are not assigned to monitor this examination',
+      );
+    return rows.map((row) => row.classId);
+  }
+
+  private async writeCbtAudit(
+    manager: {
+      query: (query: string, parameters?: unknown[]) => Promise<unknown>;
+    },
+    userId: string,
+    examId: string,
+    action: string,
+    metadata: Record<string, unknown>,
+  ) {
+    await manager.query(
+      `INSERT INTO activity_logs (user_id, entity_type, entity_id, action, description, metadata)
+       VALUES ($1, 'CBT_EXAM', $2, $3, $4, $5::jsonb)`,
+      [
+        userId,
+        examId,
+        action,
+        `CBT proctor action: ${action.toLowerCase()}`,
+        JSON.stringify(metadata),
+      ],
+    );
   }
 
   async getAttemptReview(attemptId: string) {

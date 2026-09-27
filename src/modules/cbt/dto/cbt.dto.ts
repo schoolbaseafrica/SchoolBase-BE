@@ -448,3 +448,14 @@ export class RecordCbtConnectionEventDto {
   @IsObject()
   metadata?: Record<string, unknown>;
 }
+
+export class AssignCbtProctorDto {
+  @IsUUID()
+  teacherId: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsUUID('4', { each: true })
+  classIds: string[];
+}
