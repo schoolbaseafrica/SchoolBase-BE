@@ -47,6 +47,7 @@ import {
   AssignSingleStudentResponseDto,
   GetStudentsQueryDto,
   PromoteStudentsDto,
+  AssignTeacherToClassDto,
 } from '../dto';
 import { GetTeachersQueryDto } from '../dto/get-teachers-query.dto';
 import { TeacherAssignmentResponseDto } from '../dto/teacher-response.dto';
@@ -149,6 +150,35 @@ export class ClassController {
       message: sysMsg.TEACHER_CLASS_FETCHED,
       data: classes,
     };
+  }
+
+  // --- ASSIGN A TEACHER AS CLASS TEACHER (ADMIN ONLY) ---
+  @Post('teachers/:teacherId/assign')
+  @Roles(UserRole.ADMIN)
+  async assignTeacherToClass(
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Body() dto: AssignTeacherToClassDto,
+  ) {
+    return this.classService.assignTeacherToClass(
+      teacherId,
+      dto.classId,
+      dto.sessionId,
+    );
+  }
+
+  // --- UNASSIGN A CLASS TEACHER (ADMIN ONLY) ---
+  @Delete('teachers/:teacherId/classes/:classId')
+  @Roles(UserRole.ADMIN)
+  async unassignTeacherFromClass(
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Param('classId', ParseUUIDPipe) classId: string,
+    @Query('session_id') sessionId?: string,
+  ) {
+    return this.classService.unassignTeacherFromClass(
+      teacherId,
+      classId,
+      sessionId,
+    );
   }
 
   // --- POST: ASSIGN STUDENTS TO CLASS (ADMIN ONLY) ---

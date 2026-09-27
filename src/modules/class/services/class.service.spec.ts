@@ -33,13 +33,18 @@ const MOCK_CLASS_ID = '1';
 const MOCK_SESSION_ID = '2023-2024';
 const MOCK_ACTIVE_SESSION = '2024-2025';
 
-const mockRepository = {};
+const mockRepository = {
+  findOne: jest.fn(),
+  create: jest.fn((value) => value),
+  save: jest.fn((value) => Promise.resolve(value)),
+};
 
 const mockDataSource = {
   createEntityManager: jest.fn(),
   getRepository: jest.fn().mockReturnValue(mockRepository),
   transaction: jest.fn().mockImplementation(async (callback) => {
     const mockManager = {
+      getRepository: jest.fn().mockReturnValue(mockRepository),
       findOne: jest.fn(),
       save: jest
         .fn()
@@ -211,6 +216,71 @@ describe('ClassService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('assignTeacherToClass', () => {
+    const teacherId = 'teacher-id';
+    const classId = 'class-id';
+    const sessionId = 'session-id';
+    const classEntity = {
+      id: classId,
+      name: 'JSS 1',
+      arm: 'A',
+      is_deleted: false,
+      academicSession: { id: sessionId, name: '2026/2027' },
+    } as unknown as Class;
+
+    it('creates a class-teacher assignment in the class session', async () => {
+      mockTeacherModelActionMethods.get.mockResolvedValue({
+        id: teacherId,
+        is_active: true,
+      });
+      classModelAction.get.mockResolvedValue(classEntity);
+      mockRepository.findOne.mockResolvedValue(null);
+      mockRepository.save.mockImplementation((value) => Promise.resolve(value));
+
+      const result = await service.assignTeacherToClass(teacherId, classId);
+
+      expect(mockRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          teacher: { id: teacherId },
+          class: { id: classId },
+          session_id: sessionId,
+          is_active: true,
+        }),
+      );
+      expect(result.message).toBe('Teacher assigned to JSS 1 A successfully.');
+    });
+
+    it('returns an idempotent success when the assignment is already active', async () => {
+      const existing = {
+        is_active: true,
+        assignment_date: new Date('2026-09-01'),
+      } as ClassTeacher;
+      mockTeacherModelActionMethods.get.mockResolvedValue({
+        id: teacherId,
+        is_active: true,
+      });
+      classModelAction.get.mockResolvedValue(classEntity);
+      mockRepository.findOne.mockResolvedValue(existing);
+
+      const result = await service.assignTeacherToClass(teacherId, classId);
+
+      expect(mockRepository.save).not.toHaveBeenCalled();
+      expect(result.message).toBe('Teacher is already assigned to JSS 1 A.');
+    });
+
+    it('rejects a session that does not match the selected class', async () => {
+      mockTeacherModelActionMethods.get.mockResolvedValue({
+        id: teacherId,
+        is_active: true,
+      });
+      classModelAction.get.mockResolvedValue(classEntity);
+
+      await expect(
+        service.assignTeacherToClass(teacherId, classId, 'another-session'),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('getTeachersByClass', () => {

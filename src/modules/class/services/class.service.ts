@@ -37,6 +37,7 @@ import {
   PromotionPreview,
 } from '../dto';
 import { ClassStudent } from '../entities/class-student.entity';
+import { ClassTeacher } from '../entities/class-teacher.entity';
 import { Class } from '../entities/class.entity';
 import { ClassStudentModelAction } from '../model-actions/class-student.action';
 import { ClassTeacherModelAction } from '../model-actions/class-teacher.action';
@@ -214,6 +215,114 @@ export class ClassService {
     if (payload.length > 1)
       throw new ConflictException('Multiple active sessions found');
     return payload[0];
+  }
+
+  async assignTeacherToClass(
+    teacherId: string,
+    classId: string,
+    sessionId?: string,
+  ) {
+    const [teacher, classEntity] = await Promise.all([
+      this.teacherModelAction.get({ identifierOptions: { id: teacherId } }),
+      this.classModelAction.get({
+        identifierOptions: { id: classId },
+        relations: { academicSession: true },
+      }),
+    ]);
+
+    if (!teacher || !teacher.is_active) {
+      throw new NotFoundException(
+        'The selected teacher was not found or is inactive.',
+      );
+    }
+    if (!classEntity || classEntity.is_deleted) {
+      throw new NotFoundException(
+        'The selected class was not found or has been archived.',
+      );
+    }
+
+    const classSessionId = classEntity.academicSession?.id;
+    if (!classSessionId) {
+      throw new BadRequestException(
+        'The selected class is not linked to an academic session.',
+      );
+    }
+    if (sessionId && sessionId !== classSessionId) {
+      throw new BadRequestException(
+        `This class belongs to ${classEntity.academicSession.name}. Select a class from the intended session and try again.`,
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(ClassTeacher);
+      const existing = await repository.findOne({
+        where: {
+          teacher: { id: teacherId },
+          class: { id: classId },
+          session_id: classSessionId,
+        },
+      });
+
+      if (existing) {
+        if (existing.is_active) return { assignment: existing, created: false };
+        existing.is_active = true;
+        existing.assignment_date = new Date();
+        return { assignment: await repository.save(existing), created: true };
+      }
+
+      const assignment = repository.create({
+        teacher: { id: teacherId },
+        class: { id: classId },
+        session_id: classSessionId,
+        assignment_date: new Date(),
+        is_active: true,
+      });
+      return { assignment: await repository.save(assignment), created: true };
+    });
+
+    return {
+      message: result.created
+        ? `Teacher assigned to ${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''} successfully.`
+        : `Teacher is already assigned to ${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''}.`,
+      teacher_id: teacherId,
+      class_id: classId,
+      class_name: `${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''}`,
+      assignment_date: result.assignment.assignment_date,
+    };
+  }
+
+  async unassignTeacherFromClass(
+    teacherId: string,
+    classId: string,
+    sessionId?: string,
+  ) {
+    const classEntity = await this.classModelAction.get({
+      identifierOptions: { id: classId },
+      relations: { academicSession: true },
+    });
+    if (!classEntity || classEntity.is_deleted) {
+      throw new NotFoundException('The selected class was not found.');
+    }
+
+    const targetSessionId = sessionId || classEntity.academicSession?.id;
+    const repository = this.dataSource.getRepository(ClassTeacher);
+    const assignment = await repository.findOne({
+      where: {
+        teacher: { id: teacherId },
+        class: { id: classId },
+        session_id: targetSessionId,
+        is_active: true,
+      },
+    });
+    if (!assignment) {
+      throw new NotFoundException(
+        'This teacher is not assigned to the selected class for that session.',
+      );
+    }
+
+    assignment.is_active = false;
+    await repository.save(assignment);
+    return { message: 'Teacher unassigned from class successfully.' };
   }
 
   /**
