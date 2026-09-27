@@ -426,7 +426,9 @@ export class StudentService {
       total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
+      total_pages: Math.ceil(total / limit),
+      has_next: page < Math.ceil(total / limit),
+      has_previous: page > 1,
     };
 
     return { payload, paginationMeta };

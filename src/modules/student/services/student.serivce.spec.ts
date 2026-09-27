@@ -15,6 +15,7 @@ import { FileService } from '../../shared/file/file.service';
 import { User } from '../../user/entities/user.entity';
 import { UserModelAction } from '../../user/model-actions/user-actions';
 import { StudentProfileResponseDto } from '../dto';
+import { ListStudentsDto } from '../dto/list-student.dto';
 import { StudentGrowthInterval } from '../dto/student.growth.dto';
 import { Student } from '../entities';
 import { StudentModelAction } from '../model-actions';
@@ -34,6 +35,7 @@ const mockStudentModelAction = {
   get: jest.fn(),
   create: jest.fn(),
   generateRegistrationNumber: jest.fn(),
+  repository: undefined as { createQueryBuilder: jest.Mock } | undefined,
 };
 
 const mockUserModelAction = {
@@ -103,6 +105,38 @@ describe('StudentService', () => {
     }).compile();
 
     service = module.get<StudentService>(StudentService);
+  });
+
+  it('returns snake-case pagination metadata for period-filtered lists', async () => {
+    const queryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(21),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    mockStudentModelAction.repository = {
+      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+    };
+
+    const result = await service.findAll({
+      page: 2,
+      limit: 10,
+      session_id: '00000000-0000-0000-0000-000000000001',
+    } as ListStudentsDto);
+
+    expect(result.meta).toMatchObject({
+      total: 21,
+      page: 2,
+      limit: 10,
+      total_pages: 3,
+      has_next: true,
+      has_previous: true,
+    });
   });
 
   afterEach(() => {
