@@ -658,4 +658,51 @@ export class StudentService {
       sysMsg.PROFILE_RETRIEVED,
     );
   }
+
+  async getAcademicContext(
+    studentId: string,
+    sessionId: string,
+    authUser: IUserPayload,
+  ) {
+    const student = await this.studentModelAction.get({
+      identifierOptions: { id: studentId },
+      relations: { user: true },
+    });
+    if (!student || student.is_deleted) {
+      throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
+    }
+    if (
+      authUser.roles.includes(UserRole.STUDENT) &&
+      student.user.id !== authUser.id
+    ) {
+      throw new ForbiddenException(sysMsg.FORBIDDEN);
+    }
+
+    const { payload } = await this.classStudentModelAction.list({
+      filterRecordOptions: {
+        student: { id: studentId },
+        session_id: sessionId,
+        is_active: true,
+      },
+      relations: { class: { academicSession: true } },
+      paginationPayload: { page: 1, limit: 1 },
+    });
+    const assignedClass = payload[0]?.class ?? null;
+
+    return {
+      class_details: assignedClass
+        ? {
+            id: assignedClass.id,
+            name: `${assignedClass.name}${assignedClass.arm ? ` ${assignedClass.arm}` : ''}`,
+            arm: assignedClass.arm ?? null,
+          }
+        : null,
+      academic_details: assignedClass?.academicSession
+        ? {
+            id: assignedClass.academicSession.id,
+            name: assignedClass.academicSession.name,
+          }
+        : null,
+    };
+  }
 }

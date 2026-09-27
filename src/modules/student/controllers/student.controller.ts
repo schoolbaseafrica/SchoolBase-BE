@@ -97,6 +97,26 @@ export class StudentController {
     };
   }
 
+  @Get('/profile/:studentId/academic-context')
+  @Roles(UserRole.ADMIN, UserRole.STUDENT)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getAcademicContext(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Query('session_id', ParseUUIDPipe) sessionId: string,
+    @CurrentUser() user: IUserPayload,
+  ) {
+    const data = await this.studentService.getAcademicContext(
+      studentId,
+      sessionId,
+      user,
+    );
+    return {
+      message: 'Student academic context retrieved successfully',
+      status_code: HttpStatus.OK,
+      data,
+    };
+  }
+
   // --- GET: GET SINGLE STUDENT BY ID ---
   @Get(':id')
   @GetStudentDocs()

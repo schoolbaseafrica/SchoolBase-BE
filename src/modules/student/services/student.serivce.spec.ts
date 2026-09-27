@@ -346,4 +346,76 @@ describe('StudentService', () => {
       ).resolves.toBeInstanceOf(StudentProfileResponseDto);
     });
   });
+
+  describe('getAcademicContext', () => {
+    const studentId = 'student-id';
+    const sessionId = 'session-id';
+    const authUser: IUserPayload = {
+      id: 'user-id',
+      email: 'student@test.com',
+      roles: [UserRole.STUDENT],
+    };
+
+    it('returns the active class assignment for the selected session', async () => {
+      mockStudentModelAction.get.mockResolvedValue({
+        id: studentId,
+        is_deleted: false,
+        user: { id: authUser.id },
+      } as Student);
+      mockClassStudentModelAction.list.mockResolvedValue({
+        payload: [
+          {
+            class: {
+              id: 'class-id',
+              name: 'JSS 3',
+              arm: 'A',
+              academicSession: { id: sessionId, name: '2026/2027' },
+            },
+          },
+        ],
+        paginationMeta: {},
+      });
+
+      const result = await service.getAcademicContext(
+        studentId,
+        sessionId,
+        authUser,
+      );
+
+      expect(mockClassStudentModelAction.list).toHaveBeenCalledWith({
+        filterRecordOptions: {
+          student: { id: studentId },
+          session_id: sessionId,
+          is_active: true,
+        },
+        relations: { class: { academicSession: true } },
+        paginationPayload: { page: 1, limit: 1 },
+      });
+      expect(result.class_details).toEqual({
+        id: 'class-id',
+        name: 'JSS 3 A',
+        arm: 'A',
+      });
+    });
+
+    it('returns no class when the student has no enrollment in that session', async () => {
+      mockStudentModelAction.get.mockResolvedValue({
+        id: studentId,
+        is_deleted: false,
+        user: { id: authUser.id },
+      } as Student);
+      mockClassStudentModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+
+      const result = await service.getAcademicContext(
+        studentId,
+        sessionId,
+        authUser,
+      );
+
+      expect(result).toEqual({ class_details: null, academic_details: null });
+    });
+  });
 });
