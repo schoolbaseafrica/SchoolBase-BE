@@ -20,6 +20,8 @@ import {
   CreateVirtualClassroomDto,
   SendVirtualClassroomMessageDto,
   UpdateClassroomPermissionsDto,
+  UpdateVirtualClassroomStatusDto,
+  UpdateWhiteboardSnapshotDto,
 } from './virtual-classroom.dto';
 import { VirtualClassroomService } from './virtual-classroom.service';
 
@@ -35,7 +37,9 @@ export class VirtualClassroomController {
   private identity(req: IClassroomRequest) {
     return {
       userId: req.user.userId,
-      roles: req.user.roles ?? req.user.role ?? [],
+      roles: (req.user.roles ?? req.user.role ?? []).map((role) =>
+        role.toLowerCase(),
+      ),
     };
   }
 
@@ -60,6 +64,50 @@ export class VirtualClassroomController {
   ) {
     const user = this.identity(req);
     return this.service.join(id, user.userId, user.roles);
+  }
+  @Get(':id') detail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.get(id, user.userId, user.roles);
+  }
+  @Patch(':id/status') status(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateVirtualClassroomStatusDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.updateStatus(id, dto.status, user.userId, user.roles);
+  }
+  @Post(':id/heartbeat') heartbeat(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.heartbeat(id, user.userId, user.roles);
+  }
+  @Get(':id/participants') participants(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.getParticipants(id, user.userId, user.roles);
+  }
+  @Get(':id/whiteboard') whiteboard(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.getWhiteboard(id, user.userId, user.roles);
+  }
+  @Patch(':id/whiteboard') updateWhiteboard(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateWhiteboardSnapshotDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.updateWhiteboard(id, dto, user.userId, user.roles);
   }
   @Post(':id/leave') leave(
     @Param('id', ParseUUIDPipe) id: string,

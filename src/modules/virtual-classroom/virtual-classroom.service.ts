@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -16,6 +17,7 @@ import {
   CreateVirtualClassroomDto,
   SendVirtualClassroomMessageDto,
   UpdateClassroomPermissionsDto,
+  UpdateWhiteboardSnapshotDto,
 } from './virtual-classroom.dto';
 
 @Injectable()
@@ -37,17 +39,33 @@ export class VirtualClassroomService {
   ) {
     const rows = (await this.dataSource.query(
       `SELECT schedule.id, timetable.class_id AS "classId", schedule.subject_id AS "subjectId",
-        schedule.teacher_id AS "teacherId"
+        schedule.teacher_id AS "teacherId", class.academic_session_id AS "sessionId"
        FROM schedules schedule JOIN timetables timetable ON timetable.id = schedule.timetable_id
+       JOIN class ON class.id = timetable.class_id
        WHERE schedule.id = $1 LIMIT 1`,
       [dto.scheduleId],
     )) as Array<{
       classId: string;
       subjectId: string | null;
       teacherId: string;
+      sessionId: string;
     }>;
     const schedule = rows[0];
     if (!schedule) throw new NotFoundException('Timetable schedule not found');
+    if (schedule.sessionId !== dto.sessionId)
+      throw new BadRequestException(
+        'The timetable schedule does not belong to this academic session',
+      );
+    if (dto.termId) {
+      const term = (await this.dataSource.query(
+        `SELECT id FROM terms WHERE id = $1 AND session_id = $2 LIMIT 1`,
+        [dto.termId, dto.sessionId],
+      )) as Array<{ id: string }>;
+      if (!term.length)
+        throw new BadRequestException(
+          'The selected term does not belong to this academic session',
+        );
+    }
     if (!roles.includes('admin')) {
       const teacher = (await this.dataSource.query(
         `SELECT id FROM teachers WHERE user_id = $1`,
@@ -75,8 +93,44 @@ export class VirtualClassroomService {
         allowStudentChat: true,
         allowStudentDraw: false,
         whiteboardSnapshot: null,
+        whiteboardVersion: 0,
       }),
     );
+  }
+
+  async get(id: string, userId: string, roles: string[]) {
+    return this.authorize(id, userId, roles);
+  }
+
+  async updateStatus(
+    id: string,
+    status: 'live' | 'ended' | 'cancelled',
+    userId: string,
+    roles: string[],
+  ) {
+    const room = await this.authorize(id, userId, roles);
+    if (!roles.includes('admin') && !roles.includes('teacher'))
+      throw new ForbiddenException('Only teachers and admins control a class');
+
+    const transitions: Record<string, string[]> = {
+      scheduled: ['live', 'cancelled'],
+      live: ['ended'],
+      ended: [],
+      cancelled: [],
+    };
+    if (!transitions[room.status].includes(status))
+      throw new BadRequestException(
+        `A ${room.status} classroom cannot transition to ${status}`,
+      );
+
+    room.status = status;
+    if (status === 'ended' || status === 'cancelled') {
+      await this.participants.update(
+        { classroomId: id, leftAt: null },
+        { leftAt: new Date(), lastSeenAt: new Date() },
+      );
+    }
+    return this.sessions.save(room);
   }
 
   async list(
@@ -105,6 +159,12 @@ export class VirtualClassroomService {
 
   async join(id: string, userId: string, roles: string[]) {
     const room = await this.authorize(id, userId, roles);
+    if (room.status !== 'live')
+      throw new BadRequestException(
+        room.status === 'scheduled'
+          ? 'This classroom has not started yet'
+          : 'This classroom is no longer open',
+      );
     const role = roles.includes('admin')
       ? 'admin'
       : roles.includes('teacher')
@@ -127,6 +187,71 @@ export class VirtualClassroomService {
     participant.lastSeenAt = now;
     await this.participants.save(participant);
     return { room, participant };
+  }
+
+  async heartbeat(id: string, userId: string, roles: string[]) {
+    const room = await this.authorize(id, userId, roles);
+    if (room.status !== 'live')
+      throw new BadRequestException('This classroom is not live');
+    const active = await this.participants.findOne({
+      where: { classroomId: id, userId, leftAt: null },
+    });
+    if (!active)
+      throw new BadRequestException('Join the classroom before checking in');
+    active.lastSeenAt = new Date();
+    await this.participants.save(active);
+    return { lastSeenAt: active.lastSeenAt };
+  }
+
+  async getParticipants(id: string, userId: string, roles: string[]) {
+    await this.authorize(id, userId, roles);
+    if (!roles.includes('admin') && !roles.includes('teacher'))
+      throw new ForbiddenException('Participant details are restricted');
+    return this.participants.find({
+      where: { classroomId: id },
+      order: { joinedAt: 'ASC' },
+    });
+  }
+
+  async getWhiteboard(id: string, userId: string, roles: string[]) {
+    const room = await this.authorize(id, userId, roles);
+    return {
+      version: room.whiteboardVersion,
+      snapshot: room.whiteboardSnapshot ?? {},
+      allowStudentDraw: room.allowStudentDraw,
+    };
+  }
+
+  async updateWhiteboard(
+    id: string,
+    dto: UpdateWhiteboardSnapshotDto,
+    userId: string,
+    roles: string[],
+  ) {
+    const room = await this.authorize(id, userId, roles);
+    if (room.status !== 'live')
+      throw new BadRequestException(
+        'The whiteboard is editable only while live',
+      );
+    const isStudent = roles.includes('student');
+    if (isStudent && !room.allowStudentDraw)
+      throw new ForbiddenException('Student drawing is disabled');
+
+    const result = await this.sessions
+      .createQueryBuilder()
+      .update(VirtualClassroomSession)
+      .set({
+        whiteboardSnapshot: dto.snapshot,
+        whiteboardVersion: () => '"whiteboard_version" + 1',
+      })
+      .where('id = :id', { id })
+      .andWhere('whiteboard_version = :version', { version: dto.version })
+      .execute();
+    if (!result.affected)
+      throw new ConflictException(
+        'The whiteboard changed on another device. Refresh before saving again.',
+      );
+    return { version: dto.version + 1, snapshot: dto.snapshot };
   }
 
   async leave(id: string, userId: string) {
