@@ -39,9 +39,28 @@ export class ClassroomCollaborationGateway
       const identity = await this.collaboration.verifyTicket(ticket);
       client.data.identity = identity;
       await client.join(`classroom:${identity.classroomId}`);
+      client.emit('permissions', {
+        allowStudentDraw: identity.allowStudentDraw,
+      });
+      client.emit(
+        'presence-snapshot',
+        [...this.server.sockets.values()]
+          .filter(
+            (socket: ICollaborationSocket) =>
+              socket.data.identity?.classroomId === identity.classroomId,
+          )
+          .map((socket: ICollaborationSocket) => ({
+            userId: socket.data.identity!.sub,
+            name: socket.data.identity!.name,
+            roles: socket.data.identity!.roles,
+            socketId: socket.id,
+          })),
+      );
       this.server.to(`classroom:${identity.classroomId}`).emit('presence', {
         type: 'joined',
         userId: identity.sub,
+        name: identity.name,
+        roles: identity.roles,
         socketId: client.id,
       });
     } catch {
@@ -70,6 +89,10 @@ export class ClassroomCollaborationGateway
   ) {
     const identity = this.identity(client);
     const pageKey = body.pageKey ?? 'main';
+    if (client.data.pageKey && client.data.pageKey !== pageKey)
+      await client.leave(
+        `classroom:${identity.classroomId}:page:${client.data.pageKey}`,
+      );
     client.data.pageKey = pageKey;
     await client.join(`classroom:${identity.classroomId}:page:${pageKey}`);
     return this.collaboration.sync(
@@ -85,7 +108,14 @@ export class ClassroomCollaborationGateway
     @MessageBody() body: { pageKey?: string; update?: string },
   ) {
     const identity = this.identity(client);
-    if (!identity.canWrite) throw new WsException('Drawing is disabled');
+    if (
+      !(await this.collaboration.canWrite(
+        identity.classroomId,
+        identity.sub,
+        identity.roles,
+      ))
+    )
+      throw new WsException('Drawing is disabled');
     const pageKey = body.pageKey ?? client.data.pageKey ?? 'main';
     const result = await this.collaboration.appendUpdate(
       identity.classroomId,
@@ -113,6 +143,12 @@ export class ClassroomCollaborationGateway
         socketId: client.id,
         state: body.state ?? null,
       });
+  }
+
+  broadcastPermissions(classroomId: string, allowStudentDraw: boolean) {
+    this.server.to(`classroom:${classroomId}`).emit('permissions', {
+      allowStudentDraw,
+    });
   }
 
   private identity(client: ICollaborationSocket) {

@@ -7,6 +7,8 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ArrayMaxSize,
+  ArrayMinSize,
   MaxLength,
 } from 'class-validator';
 
@@ -39,4 +41,23 @@ export class UpdateWhiteboardSnapshotDto {
 
   @IsObject()
   snapshot: Record<string, unknown>;
+}
+
+export class CreateWhiteboardPageDto {
+  @IsString()
+  @MaxLength(120)
+  title: string;
+}
+
+export class RenameWhiteboardPageDto {
+  @IsString()
+  @MaxLength(120)
+  title: string;
+}
+
+export class ReorderWhiteboardPagesDto {
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  pageKeys: string[];
 }

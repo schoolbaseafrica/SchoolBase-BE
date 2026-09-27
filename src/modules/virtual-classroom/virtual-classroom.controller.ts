@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -16,9 +17,13 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../shared/enums';
 
+import { ClassroomCollaborationGateway } from './classroom-collaboration.gateway';
 import { ClassroomCollaborationService } from './classroom-collaboration.service';
 import {
   CreateVirtualClassroomDto,
+  CreateWhiteboardPageDto,
+  RenameWhiteboardPageDto,
+  ReorderWhiteboardPagesDto,
   SendVirtualClassroomMessageDto,
   UpdateClassroomPermissionsDto,
   UpdateVirtualClassroomStatusDto,
@@ -37,6 +42,7 @@ export class VirtualClassroomController {
   constructor(
     private readonly service: VirtualClassroomService,
     private readonly collaboration: ClassroomCollaborationService,
+    private readonly collaborationGateway: ClassroomCollaborationGateway,
   ) {}
   private identity(req: IClassroomRequest) {
     return {
@@ -84,6 +90,51 @@ export class VirtualClassroomController {
     return this.service
       .get(id, user.userId, user.roles)
       .then(() => this.collaboration.pages(id));
+  }
+  @Post(':id/whiteboard-pages')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  async createWhiteboardPage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateWhiteboardPageDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    await this.service.get(id, user.userId, user.roles);
+    return this.collaboration.createPage(id, dto.title);
+  }
+  @Patch(':id/whiteboard-pages/:pageKey')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  async renameWhiteboardPage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('pageKey') pageKey: string,
+    @Body() dto: RenameWhiteboardPageDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    await this.service.get(id, user.userId, user.roles);
+    return this.collaboration.renamePage(id, pageKey, dto.title);
+  }
+  @Patch(':id/whiteboard-pages')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  async reorderWhiteboardPages(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReorderWhiteboardPagesDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    await this.service.get(id, user.userId, user.roles);
+    return this.collaboration.reorderPages(id, dto.pageKeys);
+  }
+  @Delete(':id/whiteboard-pages/:pageKey')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  async deleteWhiteboardPage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('pageKey') pageKey: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    await this.service.get(id, user.userId, user.roles);
+    return this.collaboration.deletePage(id, pageKey);
   }
   @Get(':id') detail(
     @Param('id', ParseUUIDPipe) id: string,
@@ -150,12 +201,20 @@ export class VirtualClassroomController {
     const user = this.identity(req);
     return this.service.sendMessage(id, dto, user.userId, user.roles);
   }
-  @Patch(':id/permissions') permissions(
+  @Patch(':id/permissions') async permissions(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateClassroomPermissionsDto,
     @Req() req: IClassroomRequest,
   ) {
     const user = this.identity(req);
-    return this.service.updatePermissions(id, dto, user.userId, user.roles);
+    const room = await this.service.updatePermissions(
+      id,
+      dto,
+      user.userId,
+      user.roles,
+    );
+    if (dto.allowStudentDraw !== undefined)
+      this.collaborationGateway.broadcastPermissions(id, dto.allowStudentDraw);
+    return room;
   }
 }
