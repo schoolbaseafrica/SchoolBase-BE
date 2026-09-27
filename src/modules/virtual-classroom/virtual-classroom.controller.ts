@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../shared/enums';
 
+import { ClassroomCollaborationService } from './classroom-collaboration.service';
 import {
   CreateVirtualClassroomDto,
   SendVirtualClassroomMessageDto,
@@ -33,7 +34,10 @@ interface IClassroomRequest {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT)
 export class VirtualClassroomController {
-  constructor(private readonly service: VirtualClassroomService) {}
+  constructor(
+    private readonly service: VirtualClassroomService,
+    private readonly collaboration: ClassroomCollaborationService,
+  ) {}
   private identity(req: IClassroomRequest) {
     return {
       userId: req.user.userId,
@@ -64,6 +68,22 @@ export class VirtualClassroomController {
   ) {
     const user = this.identity(req);
     return this.service.join(id, user.userId, user.roles);
+  }
+  @Post(':id/collaboration-ticket') collaborationTicket(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.collaboration.createTicket(id, user.userId, user.roles);
+  }
+  @Get(':id/whiteboard-pages') whiteboardPages(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service
+      .get(id, user.userId, user.roles)
+      .then(() => this.collaboration.pages(id));
   }
   @Get(':id') detail(
     @Param('id', ParseUUIDPipe) id: string,

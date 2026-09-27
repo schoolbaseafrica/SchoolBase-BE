@@ -1,6 +1,10 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { ClassroomCollaborationGateway } from './classroom-collaboration.gateway';
+import { ClassroomCollaborationService } from './classroom-collaboration.service';
 import {
   VirtualClassroomMessage,
   VirtualClassroomParticipant,
@@ -11,6 +15,15 @@ import { VirtualClassroomService } from './virtual-classroom.service';
 
 @Module({
   imports: [
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret:
+          config.get<string>('jwt.secret') || config.get<string>('JWT_SECRET'),
+      }),
+    }),
     TypeOrmModule.forFeature([
       VirtualClassroomSession,
       VirtualClassroomParticipant,
@@ -18,6 +31,10 @@ import { VirtualClassroomService } from './virtual-classroom.service';
     ]),
   ],
   controllers: [VirtualClassroomController],
-  providers: [VirtualClassroomService],
+  providers: [
+    VirtualClassroomService,
+    ClassroomCollaborationService,
+    ClassroomCollaborationGateway,
+  ],
 })
 export class VirtualClassroomModule {}
