@@ -1388,6 +1388,7 @@ export class CbtService {
        ORDER BY enrollment_date DESC LIMIT 1`,
       [studentId, period.sessionId],
     )) as Array<{ classId: string }>;
+    if (!enrollment[0]?.classId) return [];
     const now = new Date();
     const exams = await this.examRepository
       .createQueryBuilder('exam')
@@ -1399,6 +1400,9 @@ export class CbtService {
         (qb) => qb.andWhere('question.is_archived = false'),
       )
       .where('exam.status = :status', { status: CbtExamStatus.ACTIVE })
+      .andWhere('exam.exam_type = :examType', {
+        examType: CbtExamType.IN_SCHOOL,
+      })
       .andWhere('exam.session_id = :sessionId', { sessionId: period.sessionId })
       .andWhere(
         '(exam.available_from IS NULL OR exam.available_from <= :now)',
@@ -1411,10 +1415,7 @@ export class CbtService {
       .andWhere('(exam.available_to IS NULL OR exam.available_to >= :now)', {
         now,
       })
-      .andWhere(
-        '(NOT EXISTS (SELECT 1 FROM cbt_exam_classes access WHERE access.exam_id = exam.id) OR class.id = :classId)',
-        { classId: enrollment[0]?.classId ?? null },
-      )
+      .andWhere('class.id = :classId', { classId: enrollment[0].classId })
       .orderBy('exam.available_from', 'ASC', 'NULLS FIRST')
       .getMany();
 
@@ -1585,6 +1586,7 @@ export class CbtService {
         relations: { exam: true },
       });
       if (!attempt) throw new NotFoundException('Attempt not found');
+      this.assertAttemptAudience(attempt.exam, owner);
       this.assertAttemptOpen(attempt);
       const question = await manager.getRepository(CbtQuestion).findOne({
         where: { id: questionId, examId: attempt.examId, isArchived: false },
@@ -1678,6 +1680,7 @@ export class CbtService {
         where: { id: attempt.examId },
       });
       if (!exam) throw new NotFoundException('Examination not found');
+      this.assertAttemptAudience(exam, owner);
       if (attempt.status === CbtAttemptStatus.SUBMITTED) {
         return this.submissionPayload(attempt, exam);
       }
@@ -1848,7 +1851,24 @@ export class CbtService {
       relations: { exam: true },
     });
     if (!attempt) throw new NotFoundException('Attempt not found');
+    this.assertAttemptAudience(attempt.exam, { studentId });
     return attempt;
+  }
+
+  private assertAttemptAudience(
+    exam: CbtExam,
+    owner: { studentId?: string; applicantId?: string },
+  ) {
+    const expectedType = owner.studentId
+      ? CbtExamType.IN_SCHOOL
+      : CbtExamType.ENTRANCE;
+    if (exam.examType !== expectedType) {
+      throw new ForbiddenException(
+        owner.studentId
+          ? 'External entrance examinations are only available through the public applicant portal'
+          : 'Internal school examinations require a student account',
+      );
+    }
   }
 
   private assertAttemptOpen(attempt: CbtAttempt) {
@@ -1868,6 +1888,11 @@ export class CbtService {
   }
 
   private assertExamAvailable(exam: CbtExam, currentClassId: string | null) {
+    if (exam.examType !== CbtExamType.IN_SCHOOL) {
+      throw new ForbiddenException(
+        'External entrance examinations are only available through the public applicant portal',
+      );
+    }
     if (exam.status !== CbtExamStatus.ACTIVE)
       throw new ForbiddenException('Examination is not active');
     const now = Date.now();
