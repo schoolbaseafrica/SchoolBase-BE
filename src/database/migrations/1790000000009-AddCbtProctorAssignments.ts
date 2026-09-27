@@ -14,7 +14,7 @@ export class AddCbtProctorAssignments1790000000009 implements MigrationInterface
         CONSTRAINT "PK_cbt_exam_proctors" PRIMARY KEY ("exam_id", "user_id", "class_id"),
         CONSTRAINT "FK_cbt_exam_proctors_exam" FOREIGN KEY ("exam_id") REFERENCES "cbt_exams"("id") ON DELETE CASCADE,
         CONSTRAINT "FK_cbt_exam_proctors_user" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE,
-        CONSTRAINT "FK_cbt_exam_proctors_class" FOREIGN KEY ("class_id") REFERENCES "classes"("id") ON DELETE CASCADE,
+        CONSTRAINT "FK_cbt_exam_proctors_class" FOREIGN KEY ("class_id") REFERENCES "class"("id") ON DELETE CASCADE,
         CONSTRAINT "FK_cbt_exam_proctors_assigner" FOREIGN KEY ("assigned_by") REFERENCES "users"("id") ON DELETE RESTRICT
       )
     `);

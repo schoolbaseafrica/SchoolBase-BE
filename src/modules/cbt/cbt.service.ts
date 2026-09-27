@@ -452,7 +452,7 @@ export class CbtService {
         json_agg(json_build_object('id', c.id, 'name', c.name, 'arm', c.arm) ORDER BY c.name, c.arm) AS classes
        FROM cbt_exam_proctors p
        JOIN users u ON u.id = p.user_id
-       JOIN classes c ON c.id = p.class_id
+       JOIN class c ON c.id = p.class_id
        WHERE p.exam_id = $1
        GROUP BY p.user_id, u.first_name, u.last_name, u.email
        ORDER BY name`,
