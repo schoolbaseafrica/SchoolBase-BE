@@ -383,12 +383,14 @@ export class StudentService {
       .where('student.is_deleted IS NOT TRUE');
 
     if (sessionId) {
-      queryBuilder.leftJoin(
-        'class_students',
-        'period_enrollment',
-        'period_enrollment.student_id = student.id AND period_enrollment.session_id = :sessionId AND period_enrollment.is_active = true',
-        { sessionId },
-      );
+      queryBuilder
+        .leftJoinAndSelect(
+          'student.class_assignments',
+          'period_enrollment',
+          'period_enrollment.session_id = :sessionId AND period_enrollment.is_active = true',
+          { sessionId },
+        )
+        .leftJoinAndSelect('period_enrollment.class', 'period_class');
     }
     if (classId) {
       queryBuilder.andWhere('period_enrollment.class_id = :classId', {
@@ -421,6 +423,14 @@ export class StudentService {
 
     const total = await queryBuilder.getCount();
     const payload = await queryBuilder.skip(skip).take(limit).getMany();
+
+    if (sessionId) {
+      for (const student of payload) {
+        const periodClass = student.class_assignments?.[0]?.class ?? null;
+        student.current_class_id = periodClass?.id ?? null;
+        student.current_class = periodClass;
+      }
+    }
 
     const paginationMeta = {
       total,
