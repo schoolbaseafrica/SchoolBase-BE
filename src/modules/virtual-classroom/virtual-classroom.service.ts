@@ -272,6 +272,29 @@ export class VirtualClassroomService {
     return { version: dto.version + 1, snapshot: dto.snapshot };
   }
 
+  async retireLegacyWhiteboard(id: string, userId: string, roles: string[]) {
+    await this.authorize(id, userId, roles);
+    if (!roles.includes('admin') && !roles.includes('teacher'))
+      throw new ForbiddenException(
+        'Only teachers and admins can migrate a legacy whiteboard',
+      );
+    await this.dataSource.query(
+      `UPDATE virtual_classroom_sessions
+       SET whiteboard_snapshot = COALESCE(whiteboard_snapshot, '{}'::jsonb) || jsonb_build_object(
+             'legacy_canvas_state', COALESCE(
+               whiteboard_snapshot->'legacy_canvas_state',
+               whiteboard_snapshot->'canvas_state',
+               'null'::jsonb
+             ),
+             'canvas_state', 'null'::jsonb
+           ),
+           whiteboard_version = whiteboard_version + 1
+       WHERE id = $1`,
+      [id],
+    );
+    return { migrated: true };
+  }
+
   async leave(id: string, userId: string) {
     const active = await this.participants.findOne({
       where: { classroomId: id, userId, leftAt: null },

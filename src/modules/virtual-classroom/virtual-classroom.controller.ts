@@ -196,6 +196,15 @@ export class VirtualClassroomController {
     const user = this.identity(req);
     return this.service.updateWhiteboard(id, dto, user.userId, user.roles);
   }
+  @Delete(':id/whiteboard/legacy')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  retireLegacyWhiteboard(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.retireLegacyWhiteboard(id, user.userId, user.roles);
+  }
   @Post(':id/leave') leave(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: IClassroomRequest,
