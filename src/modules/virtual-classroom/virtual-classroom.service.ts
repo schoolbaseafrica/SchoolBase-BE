@@ -169,7 +169,7 @@ export class VirtualClassroomService {
       );
     if (roles.includes('student'))
       qb.andWhere(
-        `EXISTS (SELECT 1 FROM students student JOIN class_students cs ON cs.student_id = student.id AND cs.is_active = true WHERE student.user_id = :userId AND cs.class_id = room.class_id AND cs.session_id = room.session_id)`,
+        `EXISTS (SELECT 1 FROM students student JOIN class_students cs ON cs.student_id = student.id AND cs.is_active = true WHERE student.user_id = :userId AND cs.class_id = room.class_id AND cs.session_id = CAST(room.session_id AS text))`,
         { userId },
       );
     return qb.getMany();
