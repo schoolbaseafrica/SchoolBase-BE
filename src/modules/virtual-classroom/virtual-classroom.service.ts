@@ -8,6 +8,14 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 
+import { IMulterFile } from '../../common/types/multer.types';
+import {
+  ALLOWED_AUDIO_MIME_TYPES,
+  MAX_CLASSROOM_VOICE_NOTE_DURATION,
+  MAX_CLASSROOM_VOICE_NOTE_SIZE,
+} from '../../constants/file-upload.constants';
+import { MinioService } from '../upload/services/minio.service';
+
 import {
   VirtualClassroomMessage,
   VirtualClassroomParticipant,
@@ -30,6 +38,7 @@ export class VirtualClassroomService {
     @InjectRepository(VirtualClassroomMessage)
     private readonly messages: Repository<VirtualClassroomMessage>,
     private readonly dataSource: DataSource,
+    private readonly minio: MinioService,
   ) {}
 
   async create(
@@ -268,11 +277,17 @@ export class VirtualClassroomService {
 
   async getMessages(id: string, userId: string, roles: string[]) {
     await this.authorize(id, userId, roles);
-    return this.messages.find({
+    const messages = await this.messages.find({
       where: { classroomId: id, deletedAt: null },
       order: { createdAt: 'ASC' },
       take: 500,
     });
+    return messages.map((message) => ({
+      ...message,
+      audioUrl: message.audioObjectKey
+        ? `/virtual-classrooms/${id}/messages/${message.id}/audio`
+        : null,
+    }));
   }
 
   async sendMessage(
@@ -281,25 +296,96 @@ export class VirtualClassroomService {
     userId: string,
     roles: string[],
   ) {
-    const room = await this.authorize(id, userId, roles);
-    const role = roles.includes('admin')
-      ? 'admin'
-      : roles.includes('teacher')
-        ? 'teacher'
-        : 'student';
-    if (role === 'student' && !room.allowStudentChat)
-      throw new ForbiddenException(
-        'Student chat is disabled for this classroom',
-      );
+    const role = await this.authorizeChat(id, userId, roles);
+    const body = dto.body.trim();
+    if (!body) throw new BadRequestException('A text message is required');
     return this.messages.save(
       this.messages.create({
         classroomId: id,
         senderId: userId,
         senderRole: role,
-        body: dto.body.trim(),
+        body,
+        messageType: 'text',
+        audioObjectKey: null,
+        audioDuration: null,
+        audioMimeType: null,
+        audioSize: null,
         deletedAt: null,
       }),
     );
+  }
+
+  async sendVoiceNote(
+    id: string,
+    file: IMulterFile,
+    duration: number,
+    userId: string,
+    roles: string[],
+  ) {
+    const role = await this.authorizeChat(id, userId, roles);
+    if (!file) throw new BadRequestException('Choose a voice note to send');
+    const mimeType = file.mimetype.split(';')[0].toLowerCase();
+    if (!ALLOWED_AUDIO_MIME_TYPES.includes(mimeType))
+      throw new BadRequestException(
+        'Voice notes must be WebM, OGG, MP4, MP3, or WAV audio',
+      );
+    if (file.size > MAX_CLASSROOM_VOICE_NOTE_SIZE)
+      throw new BadRequestException('Voice notes cannot exceed 8 MB');
+    if (
+      !Number.isInteger(duration) ||
+      duration < 1 ||
+      duration > MAX_CLASSROOM_VOICE_NOTE_DURATION
+    )
+      throw new BadRequestException(
+        'Voice notes must be between 1 and 120 seconds',
+      );
+
+    const uploaded = await this.minio.uploadFile(
+      file,
+      `classrooms/${id}/voice-notes`,
+    );
+    try {
+      const message = await this.messages.save(
+        this.messages.create({
+          classroomId: id,
+          senderId: userId,
+          senderRole: role,
+          body: null,
+          messageType: 'voice',
+          audioObjectKey: uploaded.publicId,
+          audioDuration: duration,
+          audioMimeType: mimeType,
+          audioSize: file.size,
+          deletedAt: null,
+        }),
+      );
+      return {
+        ...message,
+        audioUrl: `/virtual-classrooms/${id}/messages/${message.id}/audio`,
+      };
+    } catch (error) {
+      await this.minio.deleteImage(uploaded.publicId).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async getVoiceNote(
+    id: string,
+    messageId: string,
+    userId: string,
+    roles: string[],
+  ) {
+    await this.authorize(id, userId, roles);
+    const message = await this.messages.findOne({
+      where: { id: messageId, classroomId: id, deletedAt: null },
+    });
+    if (!message?.audioObjectKey || message.messageType !== 'voice')
+      throw new NotFoundException('Voice note not found');
+    return {
+      buffer: await this.minio.downloadFile(message.audioObjectKey),
+      mimeType: message.audioMimeType || 'audio/webm',
+      size: message.audioSize,
+    };
   }
 
   async updatePermissions(
@@ -331,5 +417,19 @@ export class VirtualClassroomService {
     if (!allowed.length)
       throw new ForbiddenException('You are not assigned to this classroom');
     return room;
+  }
+
+  private async authorizeChat(id: string, userId: string, roles: string[]) {
+    const room = await this.authorize(id, userId, roles);
+    const role: 'admin' | 'teacher' | 'student' = roles.includes('admin')
+      ? 'admin'
+      : roles.includes('teacher')
+        ? 'teacher'
+        : 'student';
+    if (role === 'student' && !room.allowStudentChat)
+      throw new ForbiddenException(
+        'Student chat is disabled for this classroom',
+      );
+    return role;
   }
 }

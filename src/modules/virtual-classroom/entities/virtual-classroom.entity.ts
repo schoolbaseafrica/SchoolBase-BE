@@ -54,7 +54,17 @@ export class VirtualClassroomMessage extends BaseEntity {
   classroomId: string;
   @Column({ name: 'sender_id', type: 'uuid' }) senderId: string;
   @Column({ name: 'sender_role' }) senderRole: 'teacher' | 'student' | 'admin';
-  @Column({ type: 'text' }) body: string;
+  @Column({ type: 'text', nullable: true }) body: string | null;
+  @Column({ name: 'message_type', default: 'text' })
+  messageType: 'text' | 'voice';
+  @Column({ name: 'audio_object_key', nullable: true })
+  audioObjectKey: string | null;
+  @Column({ name: 'audio_duration', type: 'integer', nullable: true })
+  audioDuration: number | null;
+  @Column({ name: 'audio_mime_type', nullable: true })
+  audioMimeType: string | null;
+  @Column({ name: 'audio_size', type: 'integer', nullable: true })
+  audioSize: number | null;
   @Column({ name: 'deleted_at', type: 'timestamptz', nullable: true })
   deletedAt: Date | null;
 }

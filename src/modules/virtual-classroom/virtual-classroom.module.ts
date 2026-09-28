@@ -3,6 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { UploadModule } from '../upload/upload.module';
+
 import { ClassroomCollaborationGateway } from './classroom-collaboration.gateway';
 import { ClassroomCollaborationService } from './classroom-collaboration.service';
 import {
@@ -29,6 +31,7 @@ import { VirtualClassroomService } from './virtual-classroom.service';
       VirtualClassroomParticipant,
       VirtualClassroomMessage,
     ]),
+    UploadModule,
   ],
   controllers: [VirtualClassroomController],
   providers: [

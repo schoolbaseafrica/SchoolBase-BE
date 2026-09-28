@@ -9,9 +9,18 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
+  UseInterceptors,
+  ParseIntPipe,
+  StreamableFile,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
 
+import { IMulterFile } from '../../common/types/multer.types';
+import { classroomVoiceNoteConfig } from '../../config/multer.config';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -200,6 +209,43 @@ export class VirtualClassroomController {
   ) {
     const user = this.identity(req);
     return this.service.sendMessage(id, dto, user.userId, user.roles);
+  }
+  @Post(':id/messages/voice')
+  @UseInterceptors(FileInterceptor('file', classroomVoiceNoteConfig))
+  sendVoiceNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: IMulterFile,
+    @Body('duration', ParseIntPipe) duration: number,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.sendVoiceNote(
+      id,
+      file,
+      duration,
+      user.userId,
+      user.roles,
+    );
+  }
+  @Get(':id/messages/:messageId/audio')
+  async voiceNote(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('messageId', ParseUUIDPipe) messageId: string,
+    @Req() req: IClassroomRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const user = this.identity(req);
+    const audio = await this.service.getVoiceNote(
+      id,
+      messageId,
+      user.userId,
+      user.roles,
+    );
+    response.setHeader('Content-Type', audio.mimeType);
+    response.setHeader('Content-Length', String(audio.buffer.length));
+    response.setHeader('Cache-Control', 'private, max-age=300');
+    response.setHeader('Content-Disposition', 'inline');
+    return new StreamableFile(audio.buffer);
   }
   @Patch(':id/permissions') async permissions(
     @Param('id', ParseUUIDPipe) id: string,

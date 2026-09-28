@@ -128,6 +128,58 @@ export class MinioService implements OnModuleInit {
     }
   }
 
+  async uploadFile(
+    file: IMulterFile,
+    folder: string,
+  ): Promise<{ publicId: string }> {
+    if (!file?.buffer) throw new BadRequestException(sysMsg.FILE_REQUIRED);
+    const extension =
+      path.extname(file.originalname) || this.extensionFor(file.mimetype);
+    const objectName = `${folder}/${uuidv4()}${extension}`;
+    try {
+      await this.minioClient.putObject(
+        this.bucketName,
+        objectName,
+        file.buffer,
+        file.size,
+        { contentType: file.mimetype, originalName: file.originalname },
+      );
+      return { publicId: objectName };
+    } catch (error) {
+      this.logger.error(
+        `Failed to upload file to Minio: ${error instanceof Error ? error.message : 'Unknown upload error'}`,
+      );
+      throw new BadRequestException(sysMsg.FILE_UPLOAD_FAILED);
+    }
+  }
+
+  async downloadFile(publicId: string): Promise<Buffer> {
+    const stream = await this.minioClient.getObject(this.bucketName, publicId);
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+
+  private extensionFor(mimeType: string) {
+    switch (mimeType.split(';')[0].toLowerCase()) {
+      case 'audio/webm':
+        return '.webm';
+      case 'audio/ogg':
+        return '.ogg';
+      case 'audio/mp4':
+        return '.m4a';
+      case 'audio/mpeg':
+        return '.mp3';
+      case 'audio/wav':
+      case 'audio/x-wav':
+        return '.wav';
+      default:
+        return '.bin';
+    }
+  }
+
   /**
    * Delete an image from Minio
    * @param publicId - The object name to delete
