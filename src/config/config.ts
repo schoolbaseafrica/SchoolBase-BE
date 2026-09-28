@@ -61,6 +61,13 @@ export default () => ({
     publicUrl: process.env.MINIO_PUBLIC_URL,
   },
 
+  livekit: {
+    url: process.env.LIVEKIT_URL,
+    apiUrl: process.env.LIVEKIT_API_URL || process.env.LIVEKIT_URL,
+    apiKey: process.env.LIVEKIT_API_KEY,
+    apiSecret: process.env.LIVEKIT_API_SECRET,
+  },
+
   cors: {
     origins: (process.env.CORS_ORIGINS || '')
       .split(',')

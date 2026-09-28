@@ -57,6 +57,7 @@
     "csv-parser": "^3.2.0",
     "dotenv": "^17.2.3",
     "google-auth-library": "^10.5.0",
+    "livekit-server-sdk": "^2.19.1",
     "minio": "^8.0.6",
     "morgan": "^1.10.1",
     "nest-winston": "^1.10.2",

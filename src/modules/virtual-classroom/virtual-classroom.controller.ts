@@ -91,6 +91,13 @@ export class VirtualClassroomController {
     const user = this.identity(req);
     return this.collaboration.createTicket(id, user.userId, user.roles);
   }
+  @Post(':id/media-token') mediaToken(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.createMediaToken(id, user.userId, user.roles);
+  }
   @Get(':id/whiteboard-pages') whiteboardPages(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: IClassroomRequest,

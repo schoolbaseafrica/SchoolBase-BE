@@ -4,8 +4,15 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import {
+  AccessToken,
+  RoomServiceClient,
+  TrackSource,
+} from 'livekit-server-sdk';
 import { DataSource, Repository } from 'typeorm';
 
 import { IMulterFile } from '../../common/types/multer.types';
@@ -39,6 +46,7 @@ export class VirtualClassroomService {
     private readonly messages: Repository<VirtualClassroomMessage>,
     private readonly dataSource: DataSource,
     private readonly minio: MinioService,
+    private readonly config: ConfigService,
   ) {}
 
   async create(
@@ -101,6 +109,7 @@ export class VirtualClassroomService {
         status: 'scheduled',
         allowStudentChat: true,
         allowStudentDraw: false,
+        allowStudentMicrophone: false,
         whiteboardSnapshot: null,
         whiteboardVersion: 0,
       }),
@@ -398,7 +407,59 @@ export class VirtualClassroomService {
     if (!roles.includes('admin') && !roles.includes('teacher'))
       throw new ForbiddenException();
     Object.assign(room, dto);
-    return this.sessions.save(room);
+    const saved = await this.sessions.save(room);
+    if (dto.allowStudentMicrophone !== undefined)
+      await this.syncStudentMicrophonePermission(
+        id,
+        dto.allowStudentMicrophone,
+      );
+    return saved;
+  }
+
+  async createMediaToken(id: string, userId: string, roles: string[]) {
+    const room = await this.authorize(id, userId, roles);
+    if (room.status !== 'live')
+      throw new BadRequestException(
+        'Live audio is available only while the classroom is live',
+      );
+    const settings = this.liveKitSettings();
+    if (!settings)
+      throw new ServiceUnavailableException(
+        'Live classroom audio is not configured yet',
+      );
+    const role: 'admin' | 'teacher' | 'student' = roles.includes('admin')
+      ? 'admin'
+      : roles.includes('teacher')
+        ? 'teacher'
+        : 'student';
+    const canPublish = role !== 'student' || room.allowStudentMicrophone;
+    const users = (await this.dataSource.query(
+      `SELECT concat_ws(' ', first_name, last_name) AS name FROM users WHERE id = $1 LIMIT 1`,
+      [userId],
+    )) as Array<{ name: string }>;
+    const name = users[0]?.name?.trim() || 'Classroom participant';
+    const token = new AccessToken(settings.apiKey, settings.apiSecret, {
+      identity: userId,
+      name,
+      ttl: '2h',
+      metadata: JSON.stringify({ role, classroomId: id }),
+    });
+    token.addGrant({
+      roomJoin: true,
+      room: this.mediaRoomName(id),
+      canSubscribe: true,
+      canPublish,
+      canPublishData: false,
+      canPublishSources: canPublish ? [TrackSource.MICROPHONE] : [],
+    });
+    return {
+      token: await token.toJwt(),
+      url: settings.url,
+      roomName: this.mediaRoomName(id),
+      canPublish,
+      allowStudentMicrophone: room.allowStudentMicrophone,
+      expiresInSeconds: 7200,
+    };
   }
 
   private async authorize(id: string, userId: string, roles: string[]) {
@@ -431,5 +492,60 @@ export class VirtualClassroomService {
         'Student chat is disabled for this classroom',
       );
     return role;
+  }
+
+  private async syncStudentMicrophonePermission(
+    classroomId: string,
+    allowed: boolean,
+  ) {
+    const settings = this.liveKitSettings();
+    if (!settings) return;
+    const client = new RoomServiceClient(
+      settings.apiUrl,
+      settings.apiKey,
+      settings.apiSecret,
+    );
+    const roomName = this.mediaRoomName(classroomId);
+    let participants;
+    try {
+      participants = await client.listParticipants(roomName);
+    } catch {
+      return;
+    }
+    await Promise.all(
+      participants.map(async (participant) => {
+        let role = '';
+        try {
+          role = JSON.parse(participant.metadata || '{}').role as string;
+        } catch {
+          role = '';
+        }
+        if (role !== 'student') return;
+        await client.updateParticipant(roomName, participant.identity, {
+          permission: {
+            canSubscribe: true,
+            canPublish: allowed,
+            canPublishData: false,
+            canPublishSources: allowed ? [TrackSource.MICROPHONE] : [],
+          },
+        });
+      }),
+    );
+  }
+
+  private mediaRoomName(classroomId: string) {
+    return `schoolbase-classroom-${classroomId}`;
+  }
+
+  private liveKitSettings() {
+    const url = this.config.get<string>('livekit.url');
+    const apiKey = this.config.get<string>('livekit.apiKey');
+    const apiSecret = this.config.get<string>('livekit.apiSecret');
+    const configuredApiUrl = this.config.get<string>('livekit.apiUrl');
+    if (!url || !apiKey || !apiSecret) return null;
+    const apiUrl = (configuredApiUrl || url)
+      .replace(/^wss:/, 'https:')
+      .replace(/^ws:/, 'http:');
+    return { url, apiUrl, apiKey, apiSecret };
   }
 }
