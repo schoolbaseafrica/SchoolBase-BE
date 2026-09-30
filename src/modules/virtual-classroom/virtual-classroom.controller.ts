@@ -21,7 +21,10 @@ import { Response } from 'express';
 
 import { SkipWrap } from '../../common/decorators/skip-wrap.decorator';
 import { IMulterFile } from '../../common/types/multer.types';
-import { classroomVoiceNoteConfig } from '../../config/multer.config';
+import {
+  classroomVoiceNoteConfig,
+  pictureUploadConfig,
+} from '../../config/multer.config';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -223,6 +226,22 @@ export class VirtualClassroomController {
   ) {
     const user = this.identity(req);
     return this.service.updateWhiteboard(id, dto, user.userId, user.roles);
+  }
+  @Post(':id/whiteboard/images')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  @UseInterceptors(FileInterceptor('file', pictureUploadConfig))
+  uploadWhiteboardImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: IMulterFile,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.uploadWhiteboardImage(
+      id,
+      file,
+      user.userId,
+      user.roles,
+    );
   }
   @Delete(':id/whiteboard/legacy')
   @Roles(UserRole.ADMIN, UserRole.TEACHER)

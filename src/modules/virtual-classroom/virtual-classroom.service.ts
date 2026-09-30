@@ -633,6 +633,21 @@ export class VirtualClassroomService {
     }
   }
 
+  async uploadWhiteboardImage(
+    id: string,
+    file: IMulterFile,
+    userId: string,
+    roles: string[],
+  ) {
+    await this.authorize(id, userId, roles);
+    if (!roles.includes('admin') && !roles.includes('teacher'))
+      throw new ForbiddenException(
+        'Only teachers can upload whiteboard images',
+      );
+    if (!file) throw new BadRequestException('Choose an image to upload');
+    return this.minio.uploadImage(file, `classrooms/${id}/whiteboard`);
+  }
+
   async getVoiceNote(
     id: string,
     messageId: string,
