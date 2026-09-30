@@ -6,8 +6,11 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
+import { AccessToken, TrackSource } from 'livekit-server-sdk';
 import { DataSource, In, IsNull, Repository } from 'typeorm';
 
 import { Class } from '../class/entities/class.entity';
@@ -96,7 +99,72 @@ export class CbtService {
     private readonly studentRepository: Repository<Student>,
     private readonly inviteService: InviteService,
     private readonly dataSource: DataSource,
+    private readonly config: ConfigService,
   ) {}
+
+  async createStudentProctoringToken(attemptId: string, studentId: string) {
+    const attempt = await this.getOwnedAttempt(attemptId, studentId);
+    this.assertAttemptOpen(attempt);
+    const students = (await this.dataSource.query(
+      `SELECT CONCAT_WS(' ', app_user.first_name, app_user.last_name) AS name
+       FROM students student
+       JOIN users app_user ON app_user.id = student.user_id
+       WHERE student.id = $1 LIMIT 1`,
+      [studentId],
+    )) as Array<{ name: string }>;
+    return this.createCandidateCameraToken(
+      attempt,
+      students[0]?.name?.trim() || 'Student',
+    );
+  }
+
+  async createPublicProctoringToken(attemptId: string, accessToken: string) {
+    const { attempt } = await this.getTokenOwnedAttempt(attemptId, accessToken);
+    this.assertAttemptOpen(attempt);
+    const applicants = (await this.dataSource.query(
+      `SELECT full_name AS name FROM cbt_applicants WHERE id = $1 LIMIT 1`,
+      [attempt.applicantId],
+    )) as Array<{ name: string }>;
+    return this.createCandidateCameraToken(
+      attempt,
+      applicants[0]?.name?.trim() || 'Applicant',
+    );
+  }
+
+  async createProctorMediaToken(
+    examId: string,
+    userId: string,
+    isAdmin: boolean,
+  ) {
+    const exam = await this.examRepository.findOne({ where: { id: examId } });
+    if (!exam) throw new NotFoundException('Examination not found');
+    this.assertCameraMonitoring(exam);
+    if (!isAdmin) await this.proctorClassIds(examId, userId);
+    const users = (await this.dataSource.query(
+      `SELECT CONCAT_WS(' ', first_name, last_name) AS name FROM users WHERE id = $1 LIMIT 1`,
+      [userId],
+    )) as Array<{ name: string }>;
+    const settings = this.liveKitSettings();
+    const token = new AccessToken(settings.apiKey, settings.apiSecret, {
+      identity: `proctor-${userId}`,
+      name: users[0]?.name?.trim() || 'Proctor',
+      ttl: '2h',
+      metadata: JSON.stringify({ role: isAdmin ? 'admin' : 'proctor', examId }),
+    });
+    token.addGrant({
+      roomJoin: true,
+      room: this.proctoringRoomName(examId),
+      canSubscribe: true,
+      canPublish: false,
+      canPublishData: false,
+    });
+    return {
+      token: await token.toJwt(),
+      url: settings.url,
+      roomName: this.proctoringRoomName(examId),
+      expiresInSeconds: 7200,
+    };
+  }
 
   async createExam(dto: CreateCbtExamDto, userId: string) {
     this.assertDateRange(dto.availableFrom, dto.availableTo);
@@ -2030,6 +2098,62 @@ export class CbtService {
     return exam;
   }
 
+  private async createCandidateCameraToken(
+    attempt: CbtAttempt,
+    candidateName: string,
+  ) {
+    this.assertCameraMonitoring(attempt.exam);
+    const settings = this.liveKitSettings();
+    const token = new AccessToken(settings.apiKey, settings.apiSecret, {
+      identity: `candidate-${attempt.id}`,
+      name: candidateName,
+      ttl: '2h',
+      metadata: JSON.stringify({
+        role: 'candidate',
+        examId: attempt.examId,
+        attemptId: attempt.id,
+      }),
+    });
+    token.addGrant({
+      roomJoin: true,
+      room: this.proctoringRoomName(attempt.examId),
+      canSubscribe: false,
+      canPublish: true,
+      canPublishData: false,
+      canPublishSources: [TrackSource.CAMERA],
+    });
+    return {
+      token: await token.toJwt(),
+      url: settings.url,
+      roomName: this.proctoringRoomName(attempt.examId),
+      expiresInSeconds: 7200,
+    };
+  }
+
+  private assertCameraMonitoring(exam: CbtExam) {
+    if (exam.proctoringMode !== 'human' && exam.proctoringMode !== 'both') {
+      throw new BadRequestException(
+        'Live camera monitoring is not enabled for this examination',
+      );
+    }
+  }
+
+  private proctoringRoomName(examId: string) {
+    return `schoolbase-cbt-${examId}`;
+  }
+
+  private liveKitSettings() {
+    const url = this.config.get<string>('livekit.url');
+    const apiKey = this.config.get<string>('livekit.apiKey');
+    const apiSecret = this.config.get<string>('livekit.apiSecret');
+    if (!url || !apiKey || !apiSecret) {
+      throw new ServiceUnavailableException(
+        'Live camera monitoring is not configured yet',
+      );
+    }
+    return { url, apiKey, apiSecret };
+  }
+
   private async createAttempt(
     attemptRepo: Repository<CbtAttempt>,
     eventRepo: Repository<CbtAttemptEvent>,
@@ -2215,6 +2339,7 @@ export class CbtService {
         name: exam.name,
         instructions: exam.instructions,
         timeLimitMinutes: exam.timeLimitMinutes,
+        proctoringMode: exam.proctoringMode,
         shuffleOptions: exam.shuffleOptions,
         sections: (exam.sections ?? [])
           .slice()

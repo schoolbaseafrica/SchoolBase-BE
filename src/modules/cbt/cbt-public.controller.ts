@@ -49,6 +49,14 @@ export class CbtPublicController {
     return this.cbtService.getPublicAttempt(attemptId, accessToken);
   }
 
+  @Post('attempts/:attemptId/media-token')
+  createProctoringToken(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Headers('x-cbt-access-token') accessToken: string,
+  ) {
+    return this.cbtService.createPublicProctoringToken(attemptId, accessToken);
+  }
+
   @Patch('attempts/:attemptId/answers/:questionId')
   saveAnswer(
     @Param('attemptId', ParseUUIDPipe) attemptId: string,

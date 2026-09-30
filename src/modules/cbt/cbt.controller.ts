@@ -46,6 +46,8 @@ interface ICbtRequestUser {
   userId: string;
   student_id?: string;
   teacher_id?: string;
+  roles?: string[];
+  role?: string[];
 }
 
 interface ICbtRequest extends Request {
@@ -150,6 +152,21 @@ export class CbtController {
     @Req() request: ICbtRequest,
   ) {
     return this.cbtService.getAssignedExamAttempts(examId, request.user.userId);
+  }
+
+  @Post('proctor/exams/:examId/media-token')
+  @Roles(UserRole.TEACHER, UserRole.ADMIN)
+  createProctorMediaToken(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.createProctorMediaToken(
+      examId,
+      request.user.userId,
+      (request.user.roles ?? request.user.role ?? []).some(
+        (role) => role.toLowerCase() === 'admin',
+      ),
+    );
   }
 
   @Get('proctor/attempts/:attemptId/activity')
@@ -359,6 +376,18 @@ export class CbtController {
     @Req() request: ICbtRequest,
   ) {
     return this.cbtService.getAttempt(attemptId, this.studentId(request));
+  }
+
+  @Post('student/attempts/:attemptId/media-token')
+  @Roles(UserRole.STUDENT)
+  createStudentProctoringToken(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.createStudentProctoringToken(
+      attemptId,
+      this.studentId(request),
+    );
   }
 
   @Patch('student/attempts/:attemptId/answers/:questionId')

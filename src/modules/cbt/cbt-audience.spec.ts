@@ -26,6 +26,7 @@ describe('CBT audience boundaries', () => {
     null as never,
     null as never,
     null as never,
+    null as never,
   ) as unknown as AudienceChecks;
 
   const exam = (examType: CbtExamType) =>
