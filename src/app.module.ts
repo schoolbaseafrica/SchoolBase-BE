@@ -14,6 +14,7 @@ import { LoggingInterceptor } from './middleware/logging.interceptor';
 import { AcademicSessionModule } from './modules/academic-session/academic-session.module';
 import { TermModule } from './modules/academic-term/term.module';
 import { ActivityLogModule } from './modules/activity-log/activity-log.module';
+import { AssignmentModule } from './modules/assignment/assignment.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CbtModule } from './modules/cbt/cbt.module';
@@ -117,6 +118,7 @@ import { VirtualClassroomModule } from './modules/virtual-classroom/virtual-clas
     AcademicSessionModule,
     ActivityLogModule,
     AttendanceModule,
+    AssignmentModule,
     SubjectModule,
     UploadModule,
     TermModule,
