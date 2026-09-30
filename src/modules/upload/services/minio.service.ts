@@ -43,7 +43,10 @@ export class MinioService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    this.logger.info('Minio service initialized');
+    const accessKey = this.configService.get<string>('minio.accessKey') || '';
+    this.logger.info(
+      `Minio service initialized (${this.storageTarget()}, accessKey=${this.maskAccessKey(accessKey)})`,
+    );
     // Optional: Check if bucket exists on startup
     try {
       const bucketExists = await this.minioClient.bucketExists(this.bucketName);
@@ -137,6 +140,9 @@ export class MinioService implements OnModuleInit {
     const extension =
       path.extname(file.originalname) || this.extensionFor(contentType);
     const objectName = `${folder}/${uuidv4()}${extension}`;
+    this.logger.info(
+      `Uploading file to Minio (${this.storageTarget()}, object=${objectName}, contentType=${contentType}, bytes=${file.size})`,
+    );
     try {
       await this.minioClient.putObject(
         this.bucketName,
@@ -144,12 +150,16 @@ export class MinioService implements OnModuleInit {
         file.buffer,
         file.size,
       );
+      this.logger.info(
+        `File uploaded successfully to Minio (bucket=${this.bucketName}, object=${objectName})`,
+      );
       return { publicId: objectName };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown upload error';
+      const storageError = this.storageErrorDetails(error);
       this.logger.error(
-        `Failed to upload file to Minio (${contentType}, ${file.size} bytes, ${objectName}): ${errorMessage}`,
+        `Failed to upload file to Minio (${this.storageTarget()}, object=${objectName}, contentType=${contentType}, bytes=${file.size}, ${storageError}): ${errorMessage}`,
         error instanceof Error ? error.stack : undefined,
       );
       throw new BadRequestException(sysMsg.FILE_UPLOAD_FAILED);
@@ -200,5 +210,33 @@ export class MinioService implements OnModuleInit {
       );
       throw new BadRequestException('Failed to delete image');
     }
+  }
+
+  private storageTarget() {
+    const endpoint = this.configService.get<string>('minio.endPoint');
+    const port = this.configService.get<number>('minio.port');
+    const useSSL = this.configService.get<boolean>('minio.useSSL');
+    return `endpoint=${endpoint}:${port}, ssl=${Boolean(useSSL)}, bucket=${this.bucketName}`;
+  }
+
+  private maskAccessKey(accessKey: string) {
+    if (!accessKey) return 'missing';
+    if (accessKey.length <= 4) return '****';
+    return `${accessKey.slice(0, 2)}***${accessKey.slice(-2)}`;
+  }
+
+  private storageErrorDetails(error: unknown) {
+    if (!error || typeof error !== 'object') return 'code=unknown';
+    const details = error as Record<string, unknown>;
+    return [
+      ['code', details.code],
+      ['statusCode', details.statusCode],
+      ['requestId', details.requestid ?? details.requestId],
+      ['resource', details.resource],
+      ['region', details.region],
+    ]
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(', ');
   }
 }
