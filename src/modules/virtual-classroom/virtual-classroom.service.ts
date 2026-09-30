@@ -119,6 +119,7 @@ export class VirtualClassroomService {
         allowStudentChat: true,
         allowStudentDraw: false,
         allowStudentMicrophone: false,
+        allowStudentCamera: false,
         whiteboardSnapshot: null,
         whiteboardVersion: 0,
       }),
@@ -725,11 +726,11 @@ export class VirtualClassroomService {
       throw new ForbiddenException();
     Object.assign(room, dto);
     const saved = await this.sessions.save(room);
-    if (dto.allowStudentMicrophone !== undefined)
-      await this.syncStudentMicrophonePermission(
-        id,
-        dto.allowStudentMicrophone,
-      );
+    if (
+      dto.allowStudentMicrophone !== undefined ||
+      dto.allowStudentCamera !== undefined
+    )
+      await this.syncStudentMediaPermissions(saved);
     return saved;
   }
 
@@ -751,11 +752,13 @@ export class VirtualClassroomService {
         : 'student';
     const publishSources =
       role === 'student'
-        ? room.allowStudentMicrophone
-          ? [TrackSource.MICROPHONE]
-          : []
+        ? [
+            ...(room.allowStudentMicrophone ? [TrackSource.MICROPHONE] : []),
+            ...(room.allowStudentCamera ? [TrackSource.CAMERA] : []),
+          ]
         : [
             TrackSource.MICROPHONE,
+            TrackSource.CAMERA,
             TrackSource.SCREEN_SHARE,
             TrackSource.SCREEN_SHARE_AUDIO,
           ];
@@ -785,6 +788,7 @@ export class VirtualClassroomService {
       roomName: this.mediaRoomName(id),
       canPublish,
       allowStudentMicrophone: room.allowStudentMicrophone,
+      allowStudentCamera: room.allowStudentCamera,
       expiresInSeconds: 7200,
     };
   }
@@ -821,10 +825,7 @@ export class VirtualClassroomService {
     return role;
   }
 
-  private async syncStudentMicrophonePermission(
-    classroomId: string,
-    allowed: boolean,
-  ) {
+  private async syncStudentMediaPermissions(room: VirtualClassroomSession) {
     const settings = this.liveKitSettings();
     if (!settings) return;
     const client = new RoomServiceClient(
@@ -832,7 +833,7 @@ export class VirtualClassroomService {
       settings.apiKey,
       settings.apiSecret,
     );
-    const roomName = this.mediaRoomName(classroomId);
+    const roomName = this.mediaRoomName(room.id);
     let participants;
     try {
       participants = await client.listParticipants(roomName);
@@ -848,12 +849,16 @@ export class VirtualClassroomService {
           role = '';
         }
         if (role !== 'student') return;
+        const sources = [
+          ...(room.allowStudentMicrophone ? [TrackSource.MICROPHONE] : []),
+          ...(room.allowStudentCamera ? [TrackSource.CAMERA] : []),
+        ];
         await client.updateParticipant(roomName, participant.identity, {
           permission: {
             canSubscribe: true,
-            canPublish: allowed,
+            canPublish: sources.length > 0,
             canPublishData: false,
-            canPublishSources: allowed ? [TrackSource.MICROPHONE] : [],
+            canPublishSources: sources,
           },
         });
       }),

@@ -29,6 +29,7 @@ export class UpdateClassroomPermissionsDto {
   @IsOptional() @IsBoolean() allowStudentChat?: boolean;
   @IsOptional() @IsBoolean() allowStudentDraw?: boolean;
   @IsOptional() @IsBoolean() allowStudentMicrophone?: boolean;
+  @IsOptional() @IsBoolean() allowStudentCamera?: boolean;
 }
 
 export class UpdateVirtualClassroomStatusDto {

@@ -30,6 +30,8 @@ export class VirtualClassroomSession extends BaseEntity {
   allowStudentDraw: boolean;
   @Column({ name: 'allow_student_microphone', default: false })
   allowStudentMicrophone: boolean;
+  @Column({ name: 'allow_student_camera', default: false })
+  allowStudentCamera: boolean;
   @Column({ name: 'whiteboard_snapshot', type: 'jsonb', nullable: true })
   whiteboardSnapshot: Record<string, unknown> | null;
   @Column({ name: 'whiteboard_version', type: 'integer', default: 0 })
