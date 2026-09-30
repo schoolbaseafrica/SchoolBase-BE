@@ -470,7 +470,17 @@ export class VirtualClassroomService {
       : roles.includes('teacher')
         ? 'teacher'
         : 'student';
-    const canPublish = role !== 'student' || room.allowStudentMicrophone;
+    const publishSources =
+      role === 'student'
+        ? room.allowStudentMicrophone
+          ? [TrackSource.MICROPHONE]
+          : []
+        : [
+            TrackSource.MICROPHONE,
+            TrackSource.SCREEN_SHARE,
+            TrackSource.SCREEN_SHARE_AUDIO,
+          ];
+    const canPublish = publishSources.length > 0;
     const users = (await this.dataSource.query(
       `SELECT concat_ws(' ', first_name, last_name) AS name FROM users WHERE id = $1 LIMIT 1`,
       [userId],
@@ -488,7 +498,7 @@ export class VirtualClassroomService {
       canSubscribe: true,
       canPublish,
       canPublishData: false,
-      canPublishSources: canPublish ? [TrackSource.MICROPHONE] : [],
+      canPublishSources: publishSources,
     });
     return {
       token: await token.toJwt(),
