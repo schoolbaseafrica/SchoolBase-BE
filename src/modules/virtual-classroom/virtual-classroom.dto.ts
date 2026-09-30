@@ -38,6 +38,17 @@ export class ModerateClassroomParticipantDto {
   @IsBoolean() enabled: boolean;
 }
 
+export class CreateClassroomHealthEventDto {
+  @IsIn(['media', 'collaboration', 'network', 'device'])
+  category: 'media' | 'collaboration' | 'network' | 'device';
+  @IsString() @MaxLength(80) eventType: string;
+  @IsIn(['info', 'warning', 'error']) severity: 'info' | 'warning' | 'error';
+  @IsOptional() @IsObject() details?: Record<
+    string,
+    string | number | boolean | null
+  >;
+}
+
 export class UpdateVirtualClassroomStatusDto {
   @IsIn(['live', 'ended', 'cancelled'])
   status: 'live' | 'ended' | 'cancelled';

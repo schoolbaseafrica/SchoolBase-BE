@@ -78,6 +78,22 @@ export class VirtualClassroomAttendanceAdjustment extends BaseEntity {
   @Column({ name: 'corrected_by', type: 'uuid' }) correctedBy: string;
 }
 
+@Entity('virtual_classroom_health_events')
+export class VirtualClassroomHealthEvent extends BaseEntity {
+  @Index()
+  @Column({ name: 'classroom_id', type: 'uuid' })
+  classroomId: string;
+  @Index()
+  @Column({ name: 'user_id', type: 'uuid' })
+  userId: string;
+  @Column() category: 'media' | 'collaboration' | 'network' | 'device';
+  @Column({ name: 'event_type' }) eventType: string;
+  @Column({ default: 'info' }) severity: 'info' | 'warning' | 'error';
+  @Column({ type: 'jsonb', default: () => "'{}'::jsonb" })
+  details: Record<string, string | number | boolean | null>;
+  @Column({ name: 'occurred_at', type: 'timestamptz' }) occurredAt: Date;
+}
+
 @Entity('virtual_classroom_messages')
 export class VirtualClassroomMessage extends BaseEntity {
   @Index()

@@ -32,9 +32,11 @@ import {
   VirtualClassroomSession,
   VirtualClassroomAttendanceEvent,
   VirtualClassroomAttendanceAdjustment,
+  VirtualClassroomHealthEvent,
 } from './entities/virtual-classroom.entity';
 import {
   CreateVirtualClassroomDto,
+  CreateClassroomHealthEventDto,
   CorrectClassroomAttendanceDto,
   ModerateClassroomParticipantDto,
   SendVirtualClassroomMessageDto,
@@ -55,6 +57,8 @@ export class VirtualClassroomService {
     private readonly attendanceEvents: Repository<VirtualClassroomAttendanceEvent>,
     @InjectRepository(VirtualClassroomAttendanceAdjustment)
     private readonly attendanceAdjustments: Repository<VirtualClassroomAttendanceAdjustment>,
+    @InjectRepository(VirtualClassroomHealthEvent)
+    private readonly healthEvents: Repository<VirtualClassroomHealthEvent>,
     private readonly dataSource: DataSource,
     private readonly minio: MinioService,
     private readonly config: ConfigService,
@@ -895,6 +899,72 @@ export class VirtualClassroomService {
       participantIdentity: participant.identity,
       source: dto.source,
       enabled: dto.enabled,
+    };
+  }
+
+  async recordHealthEvent(
+    id: string,
+    dto: CreateClassroomHealthEventDto,
+    userId: string,
+    roles: string[],
+  ) {
+    await this.authorize(id, userId, roles);
+    const details = Object.fromEntries(
+      Object.entries(dto.details ?? {})
+        .slice(0, 12)
+        .map(([key, value]) => [
+          key.slice(0, 60),
+          typeof value === 'string' ? value.slice(0, 240) : value,
+        ]),
+    );
+    await this.healthEvents.save(
+      this.healthEvents.create({
+        classroomId: id,
+        userId,
+        category: dto.category,
+        eventType: dto.eventType,
+        severity: dto.severity,
+        details,
+        occurredAt: new Date(),
+      }),
+    );
+    return { recorded: true };
+  }
+
+  async getHealthEvents(id: string, userId: string, roles: string[]) {
+    await this.authorize(id, userId, roles);
+    if (!roles.includes('admin') && !roles.includes('teacher'))
+      throw new ForbiddenException();
+    const events = await this.healthEvents.find({
+      where: { classroomId: id },
+      order: { occurredAt: 'DESC' },
+      take: 200,
+    });
+    const userIds = [...new Set(events.map((event) => event.userId))];
+    const users = userIds.length
+      ? ((await this.dataSource.query(
+          `SELECT id, concat_ws(' ', first_name, last_name) AS name FROM users WHERE id = ANY($1::uuid[])`,
+          [userIds],
+        )) as Array<{ id: string; name: string }>)
+      : [];
+    const names = new Map(users.map((user) => [user.id, user.name]));
+    const summary = {
+      total: events.length,
+      warnings: 0,
+      errors: 0,
+      reconnects: 0,
+    };
+    for (const event of events) {
+      if (event.severity === 'warning') summary.warnings += 1;
+      if (event.severity === 'error') summary.errors += 1;
+      if (event.eventType.includes('reconnect')) summary.reconnects += 1;
+    }
+    return {
+      summary,
+      events: events.map((event) => ({
+        ...event,
+        userName: names.get(event.userId) || 'Participant',
+      })),
     };
   }
 

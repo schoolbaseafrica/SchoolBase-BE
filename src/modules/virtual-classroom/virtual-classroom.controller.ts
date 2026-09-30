@@ -34,6 +34,7 @@ import { ClassroomCollaborationGateway } from './classroom-collaboration.gateway
 import { ClassroomCollaborationService } from './classroom-collaboration.service';
 import {
   CreateVirtualClassroomDto,
+  CreateClassroomHealthEventDto,
   CorrectClassroomAttendanceDto,
   ModerateClassroomParticipantDto,
   CreateWhiteboardPageDto,
@@ -363,5 +364,23 @@ export class VirtualClassroomController {
       user.userId,
       user.roles,
     );
+  }
+  @Post(':id/health-events')
+  recordHealthEvent(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateClassroomHealthEventDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.recordHealthEvent(id, dto, user.userId, user.roles);
+  }
+  @Get(':id/health-events')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  getHealthEvents(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.getHealthEvents(id, user.userId, user.roles);
   }
 }
