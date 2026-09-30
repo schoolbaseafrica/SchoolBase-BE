@@ -137,15 +137,12 @@ export class MinioService implements OnModuleInit {
     const extension =
       path.extname(file.originalname) || this.extensionFor(contentType);
     const objectName = `${folder}/${uuidv4()}${extension}`;
-    const metadata: Record<string, string> = {};
-    metadata['Content-Type'] = contentType;
     try {
       await this.minioClient.putObject(
         this.bucketName,
         objectName,
         file.buffer,
         file.size,
-        metadata,
       );
       return { publicId: objectName };
     } catch (error) {
