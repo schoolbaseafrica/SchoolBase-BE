@@ -148,7 +148,6 @@ export class MinioService implements OnModuleInit {
         this.bucketName,
         objectName,
         file.buffer,
-        file.size,
       );
       this.logger.info(
         `File uploaded successfully to Minio (bucket=${this.bucketName}, object=${objectName})`,
