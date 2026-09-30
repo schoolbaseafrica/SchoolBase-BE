@@ -32,6 +32,12 @@ export class UpdateClassroomPermissionsDto {
   @IsOptional() @IsBoolean() allowStudentCamera?: boolean;
 }
 
+export class ModerateClassroomParticipantDto {
+  @IsUUID() participantIdentity: string;
+  @IsIn(['microphone', 'camera']) source: 'microphone' | 'camera';
+  @IsBoolean() enabled: boolean;
+}
+
 export class UpdateVirtualClassroomStatusDto {
   @IsIn(['live', 'ended', 'cancelled'])
   status: 'live' | 'ended' | 'cancelled';

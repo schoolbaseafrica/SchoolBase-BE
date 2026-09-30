@@ -36,6 +36,7 @@ import {
 import {
   CreateVirtualClassroomDto,
   CorrectClassroomAttendanceDto,
+  ModerateClassroomParticipantDto,
   SendVirtualClassroomMessageDto,
   UpdateClassroomPermissionsDto,
   UpdateWhiteboardSnapshotDto,
@@ -832,6 +833,68 @@ export class VirtualClassroomService {
       allowStudentMicrophone: room.allowStudentMicrophone,
       allowStudentCamera: room.allowStudentCamera,
       expiresInSeconds: 7200,
+    };
+  }
+
+  async moderateParticipantMedia(
+    id: string,
+    dto: ModerateClassroomParticipantDto,
+    userId: string,
+    roles: string[],
+  ) {
+    const room = await this.authorize(id, userId, roles);
+    if (!roles.includes('admin') && !roles.includes('teacher'))
+      throw new ForbiddenException();
+    const settings = this.liveKitSettings();
+    if (!settings)
+      throw new ServiceUnavailableException(
+        'Live classroom media is not configured',
+      );
+    const client = new RoomServiceClient(
+      settings.apiUrl,
+      settings.apiKey,
+      settings.apiSecret,
+    );
+    const roomName = this.mediaRoomName(id);
+    const participants = await client.listParticipants(roomName);
+    const participant = participants.find(
+      (item) => item.identity === dto.participantIdentity,
+    );
+    if (!participant)
+      throw new NotFoundException('Participant is no longer connected');
+    let role = '';
+    try {
+      role = JSON.parse(participant.metadata || '{}').role as string;
+    } catch {
+      role = '';
+    }
+    if (role !== 'student')
+      throw new ForbiddenException('Only students can be moderated');
+    const requested =
+      dto.source === 'camera' ? TrackSource.CAMERA : TrackSource.MICROPHONE;
+    const globallyAllowed =
+      dto.source === 'camera'
+        ? room.allowStudentCamera
+        : room.allowStudentMicrophone;
+    if (dto.enabled && !globallyAllowed)
+      throw new BadRequestException(
+        `Student ${dto.source}s are disabled for this lesson`,
+      );
+    const current = participant.permission?.canPublishSources ?? [];
+    const sources = current.filter((source) => source !== requested);
+    if (dto.enabled) sources.push(requested);
+    await client.updateParticipant(roomName, participant.identity, {
+      permission: {
+        canSubscribe: true,
+        canPublish: sources.length > 0,
+        canPublishData: false,
+        canPublishSources: sources,
+      },
+    });
+    return {
+      participantIdentity: participant.identity,
+      source: dto.source,
+      enabled: dto.enabled,
     };
   }
 

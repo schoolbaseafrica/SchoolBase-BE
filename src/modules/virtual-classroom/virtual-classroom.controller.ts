@@ -35,6 +35,7 @@ import { ClassroomCollaborationService } from './classroom-collaboration.service
 import {
   CreateVirtualClassroomDto,
   CorrectClassroomAttendanceDto,
+  ModerateClassroomParticipantDto,
   CreateWhiteboardPageDto,
   RenameWhiteboardPageDto,
   ReorderWhiteboardPagesDto,
@@ -347,5 +348,20 @@ export class VirtualClassroomController {
     if (dto.allowStudentDraw !== undefined)
       this.collaborationGateway.broadcastPermissions(id, dto.allowStudentDraw);
     return room;
+  }
+  @Patch(':id/participants/media')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  moderateParticipantMedia(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ModerateClassroomParticipantDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.moderateParticipantMedia(
+      id,
+      dto,
+      user.userId,
+      user.roles,
+    );
   }
 }
