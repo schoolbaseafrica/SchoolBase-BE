@@ -31,6 +31,7 @@ import { ClassroomCollaborationGateway } from './classroom-collaboration.gateway
 import { ClassroomCollaborationService } from './classroom-collaboration.service';
 import {
   CreateVirtualClassroomDto,
+  CorrectClassroomAttendanceDto,
   CreateWhiteboardPageDto,
   RenameWhiteboardPageDto,
   ReorderWhiteboardPagesDto,
@@ -181,6 +182,32 @@ export class VirtualClassroomController {
   ) {
     const user = this.identity(req);
     return this.service.getParticipants(id, user.userId, user.roles);
+  }
+  @Get(':id/attendance')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  attendance(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.getAttendanceReview(id, user.userId, user.roles);
+  }
+  @Patch(':id/attendance/:studentUserId')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  correctAttendance(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('studentUserId', ParseUUIDPipe) studentUserId: string,
+    @Body() dto: CorrectClassroomAttendanceDto,
+    @Req() req: IClassroomRequest,
+  ) {
+    const user = this.identity(req);
+    return this.service.correctAttendance(
+      id,
+      studentUserId,
+      dto,
+      user.userId,
+      user.roles,
+    );
   }
   @Get(':id/whiteboard') whiteboard(
     @Param('id', ParseUUIDPipe) id: string,

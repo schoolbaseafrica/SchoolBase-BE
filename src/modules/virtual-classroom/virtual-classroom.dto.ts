@@ -62,3 +62,12 @@ export class ReorderWhiteboardPagesDto {
   @IsString({ each: true })
   pageKeys: string[];
 }
+
+export class CorrectClassroomAttendanceDto {
+  @IsIn(['present', 'late', 'partial', 'absent'])
+  status: 'present' | 'late' | 'partial' | 'absent';
+
+  @IsString()
+  @MaxLength(500)
+  reason: string;
+}

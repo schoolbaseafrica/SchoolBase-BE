@@ -29,9 +29,12 @@ import {
   VirtualClassroomMessage,
   VirtualClassroomParticipant,
   VirtualClassroomSession,
+  VirtualClassroomAttendanceEvent,
+  VirtualClassroomAttendanceAdjustment,
 } from './entities/virtual-classroom.entity';
 import {
   CreateVirtualClassroomDto,
+  CorrectClassroomAttendanceDto,
   SendVirtualClassroomMessageDto,
   UpdateClassroomPermissionsDto,
   UpdateWhiteboardSnapshotDto,
@@ -46,6 +49,10 @@ export class VirtualClassroomService {
     private readonly participants: Repository<VirtualClassroomParticipant>,
     @InjectRepository(VirtualClassroomMessage)
     private readonly messages: Repository<VirtualClassroomMessage>,
+    @InjectRepository(VirtualClassroomAttendanceEvent)
+    private readonly attendanceEvents: Repository<VirtualClassroomAttendanceEvent>,
+    @InjectRepository(VirtualClassroomAttendanceAdjustment)
+    private readonly attendanceAdjustments: Repository<VirtualClassroomAttendanceAdjustment>,
     private readonly dataSource: DataSource,
     private readonly minio: MinioService,
     private readonly config: ConfigService,
@@ -194,6 +201,9 @@ export class VirtualClassroomService {
       where: { classroomId: id, userId, leftAt: null },
     });
     const now = new Date();
+    const isReconnect = Boolean(
+      active && now.getTime() - active.lastSeenAt.getTime() > 45_000,
+    );
     const participant =
       active ??
       this.participants.create({
@@ -206,6 +216,15 @@ export class VirtualClassroomService {
       });
     participant.lastSeenAt = now;
     await this.participants.save(participant);
+    if (!active || isReconnect)
+      await this.attendanceEvents.save(
+        this.attendanceEvents.create({
+          classroomId: id,
+          userId,
+          eventType: isReconnect ? 'reconnect' : 'join',
+          occurredAt: now,
+        }),
+      );
     return { room, participant };
   }
 
@@ -305,8 +324,195 @@ export class VirtualClassroomService {
       active.leftAt = new Date();
       active.lastSeenAt = active.leftAt;
       await this.participants.save(active);
+      await this.attendanceEvents.save(
+        this.attendanceEvents.create({
+          classroomId: id,
+          userId,
+          eventType: 'leave',
+          occurredAt: active.leftAt,
+        }),
+      );
     }
     return { left: Boolean(active) };
+  }
+
+  async getAttendanceReview(id: string, userId: string, roles: string[]) {
+    const room = await this.authorize(id, userId, roles);
+    if (!roles.includes('admin') && !roles.includes('teacher'))
+      throw new ForbiddenException('Classroom attendance is restricted');
+    const rows = (await this.dataSource.query(
+      `SELECT student.id AS "studentId", app_user.id AS "userId",
+              concat_ws(' ', app_user.first_name, app_user.last_name) AS name,
+              student.registration_number AS "registrationNumber"
+       FROM class_students enrollment
+       JOIN students student ON student.id = enrollment.student_id
+       JOIN users app_user ON app_user.id = student.user_id
+       WHERE enrollment.class_id = $1 AND enrollment.session_id = $2
+         AND enrollment.is_active = true AND student.is_deleted = false
+       ORDER BY app_user.first_name, app_user.last_name`,
+      [room.classId, room.sessionId],
+    )) as Array<{
+      studentId: string;
+      userId: string;
+      name: string;
+      registrationNumber: string;
+    }>;
+    const userIds = rows.map((row) => row.userId);
+    const visits = userIds.length
+      ? ((await this.dataSource.query(
+          `SELECT user_id AS "userId", MIN(joined_at) AS "firstJoin",
+                  MAX(last_seen_at) AS "lastActivity",
+                  SUM(GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(left_at, last_seen_at) - joined_at))))::int AS "connectedSeconds",
+                  GREATEST(COUNT(*)::int - 1, 0) AS "visitReconnects"
+           FROM virtual_classroom_participants
+           WHERE classroom_id = $1 AND role = 'student' AND user_id = ANY($2::uuid[])
+           GROUP BY user_id`,
+          [id, userIds],
+        )) as Array<{
+          userId: string;
+          firstJoin: string;
+          lastActivity: string;
+          connectedSeconds: number;
+          visitReconnects: number;
+        }>)
+      : [];
+    const eventCounts = userIds.length
+      ? ((await this.dataSource.query(
+          `SELECT user_id AS "userId", COUNT(*)::int AS count
+           FROM virtual_classroom_attendance_events
+           WHERE classroom_id = $1 AND event_type = 'reconnect' AND user_id = ANY($2::uuid[])
+           GROUP BY user_id`,
+          [id, userIds],
+        )) as Array<{ userId: string; count: number }>)
+      : [];
+    const adjustments = userIds.length
+      ? ((await this.dataSource.query(
+          `SELECT DISTINCT ON (adjustment.student_user_id)
+                  adjustment.student_user_id AS "userId", adjustment.status,
+                  adjustment.reason, adjustment.corrected_by AS "correctedBy",
+                  adjustment.created_at AS "correctedAt",
+                  concat_ws(' ', app_user.first_name, app_user.last_name) AS "correctedByName"
+           FROM virtual_classroom_attendance_adjustments adjustment
+           JOIN users app_user ON app_user.id = adjustment.corrected_by
+           WHERE adjustment.classroom_id = $1 AND adjustment.student_user_id = ANY($2::uuid[])
+           ORDER BY adjustment.student_user_id, adjustment.created_at DESC`,
+          [id, userIds],
+        )) as Array<{
+          userId: string;
+          status: 'present' | 'late' | 'partial' | 'absent';
+          reason: string;
+          correctedBy: string;
+          correctedAt: string;
+          correctedByName: string;
+        }>)
+      : [];
+    const visitMap = new Map(visits.map((visit) => [visit.userId, visit]));
+    const eventMap = new Map(
+      eventCounts.map((event) => [event.userId, event.count]),
+    );
+    const adjustmentMap = new Map(
+      adjustments.map((adjustment) => [adjustment.userId, adjustment]),
+    );
+    const startsAt = new Date(room.startsAt).getTime();
+    const endsAt = new Date(room.endsAt).getTime();
+    const effectiveEnd =
+      room.status === 'ended' ? endsAt : Math.min(Date.now(), endsAt);
+    const lessonSeconds = Math.max(
+      1,
+      Math.floor((effectiveEnd - startsAt) / 1000),
+    );
+    const students = rows.map((student) => {
+      const visit = visitMap.get(student.userId);
+      const connectedSeconds = Number(visit?.connectedSeconds ?? 0);
+      let derivedStatus: 'present' | 'late' | 'partial' | 'absent' = 'absent';
+      if (visit) {
+        const late =
+          new Date(visit.firstJoin).getTime() > startsAt + 10 * 60_000;
+        derivedStatus =
+          connectedSeconds < lessonSeconds * 0.5
+            ? 'partial'
+            : late
+              ? 'late'
+              : 'present';
+      }
+      const adjustment = adjustmentMap.get(student.userId) ?? null;
+      return {
+        ...student,
+        firstJoin: visit?.firstJoin ?? null,
+        lastActivity: visit?.lastActivity ?? null,
+        connectedSeconds,
+        reconnectCount: Math.max(
+          Number(visit?.visitReconnects ?? 0),
+          Number(eventMap.get(student.userId) ?? 0),
+        ),
+        derivedStatus,
+        status: adjustment?.status ?? derivedStatus,
+        adjustment,
+      };
+    });
+    return {
+      classroom: {
+        id: room.id,
+        title: room.title,
+        status: room.status,
+        sessionId: room.sessionId,
+        termId: room.termId,
+        startsAt: room.startsAt,
+        endsAt: room.endsAt,
+      },
+      thresholds: { lateAfterMinutes: 10, partialBelowPercent: 50 },
+      summary: {
+        total: students.length,
+        present: students.filter((item) => item.status === 'present').length,
+        late: students.filter((item) => item.status === 'late').length,
+        partial: students.filter((item) => item.status === 'partial').length,
+        absent: students.filter((item) => item.status === 'absent').length,
+      },
+      students,
+    };
+  }
+
+  async correctAttendance(
+    id: string,
+    studentUserId: string,
+    dto: CorrectClassroomAttendanceDto,
+    userId: string,
+    roles: string[],
+  ) {
+    const review = await this.getAttendanceReview(id, userId, roles);
+    const student = review.students.find(
+      (item) => item.userId === studentUserId,
+    );
+    if (!student)
+      throw new NotFoundException('Student is not enrolled in this classroom');
+    const reason = dto.reason.trim();
+    if (!reason)
+      throw new BadRequestException('A correction reason is required');
+    const adjustment = await this.attendanceAdjustments.save(
+      this.attendanceAdjustments.create({
+        classroomId: id,
+        studentUserId,
+        status: dto.status,
+        reason,
+        correctedBy: userId,
+      }),
+    );
+    await this.dataSource.query(
+      `INSERT INTO activity_logs (user_id, entity_type, entity_id, action, description, metadata)
+       VALUES ($1, 'CLASSROOM_ATTENDANCE', $2, 'UPDATE', 'Classroom attendance status corrected', $3::jsonb)`,
+      [
+        userId,
+        id,
+        JSON.stringify({
+          studentUserId,
+          previousStatus: student.status,
+          derivedStatus: student.derivedStatus,
+          status: dto.status,
+          reason,
+        }),
+      ],
+    );
+    return adjustment;
   }
 
   async getMessages(id: string, userId: string, roles: string[]) {

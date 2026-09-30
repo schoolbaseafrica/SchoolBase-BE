@@ -49,6 +49,33 @@ export class VirtualClassroomParticipant extends BaseEntity {
   @Column({ name: 'last_seen_at', type: 'timestamptz' }) lastSeenAt: Date;
 }
 
+@Entity('virtual_classroom_attendance_events')
+export class VirtualClassroomAttendanceEvent extends BaseEntity {
+  @Index()
+  @Column({ name: 'classroom_id', type: 'uuid' })
+  classroomId: string;
+  @Index()
+  @Column({ name: 'user_id', type: 'uuid' })
+  userId: string;
+  @Column({ name: 'event_type' })
+  eventType: 'join' | 'reconnect' | 'leave';
+  @Column({ name: 'occurred_at', type: 'timestamptz' })
+  occurredAt: Date;
+}
+
+@Entity('virtual_classroom_attendance_adjustments')
+export class VirtualClassroomAttendanceAdjustment extends BaseEntity {
+  @Index()
+  @Column({ name: 'classroom_id', type: 'uuid' })
+  classroomId: string;
+  @Index()
+  @Column({ name: 'student_user_id', type: 'uuid' })
+  studentUserId: string;
+  @Column() status: 'present' | 'late' | 'partial' | 'absent';
+  @Column({ type: 'text' }) reason: string;
+  @Column({ name: 'corrected_by', type: 'uuid' }) correctedBy: string;
+}
+
 @Entity('virtual_classroom_messages')
 export class VirtualClassroomMessage extends BaseEntity {
   @Index()

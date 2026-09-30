@@ -11,6 +11,8 @@ import {
   VirtualClassroomMessage,
   VirtualClassroomParticipant,
   VirtualClassroomSession,
+  VirtualClassroomAttendanceEvent,
+  VirtualClassroomAttendanceAdjustment,
 } from './entities/virtual-classroom.entity';
 import { VirtualClassroomController } from './virtual-classroom.controller';
 import { VirtualClassroomService } from './virtual-classroom.service';
@@ -30,6 +32,8 @@ import { VirtualClassroomService } from './virtual-classroom.service';
       VirtualClassroomSession,
       VirtualClassroomParticipant,
       VirtualClassroomMessage,
+      VirtualClassroomAttendanceEvent,
+      VirtualClassroomAttendanceAdjustment,
     ]),
     UploadModule,
   ],
