@@ -166,12 +166,32 @@ export class MinioService implements OnModuleInit {
   }
 
   async downloadFile(publicId: string): Promise<Buffer> {
-    const stream = await this.minioClient.getObject(this.bucketName, publicId);
-    const chunks: Buffer[] = [];
-    for await (const chunk of stream) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    this.logger.info(
+      `Downloading file from Minio (${this.storageTarget()}, object=${publicId})`,
+    );
+    try {
+      const stream = await this.minioClient.getObject(
+        this.bucketName,
+        publicId,
+      );
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      this.logger.info(
+        `File downloaded successfully from Minio (bucket=${this.bucketName}, object=${publicId}, bytes=${buffer.length})`,
+      );
+      return buffer;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown download error';
+      this.logger.error(
+        `Failed to download file from Minio (${this.storageTarget()}, object=${publicId}, ${this.storageErrorDetails(error)}): ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw error;
     }
-    return Buffer.concat(chunks);
   }
 
   private extensionFor(mimeType: string) {

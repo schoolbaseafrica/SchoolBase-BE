@@ -314,8 +314,23 @@ export class VirtualClassroomService {
       order: { createdAt: 'ASC' },
       take: 500,
     });
+    const senderIds = [...new Set(messages.map((message) => message.senderId))];
+    const senders = senderIds.length
+      ? ((await this.dataSource.query(
+          `SELECT id, first_name AS "firstName", last_name AS "lastName"
+           FROM users WHERE id = ANY($1::uuid[])`,
+          [senderIds],
+        )) as Array<{ id: string; firstName: string; lastName: string }>)
+      : [];
+    const senderNames = new Map(
+      senders.map((sender) => [
+        sender.id,
+        [sender.firstName, sender.lastName].filter(Boolean).join(' ').trim(),
+      ]),
+    );
     return messages.map((message) => ({
       ...message,
+      senderName: senderNames.get(message.senderId) || null,
       audioUrl: message.audioObjectKey
         ? `/virtual-classrooms/${id}/messages/${message.id}/audio`
         : null,
