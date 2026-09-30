@@ -133,21 +133,27 @@ export class MinioService implements OnModuleInit {
     folder: string,
   ): Promise<{ publicId: string }> {
     if (!file?.buffer) throw new BadRequestException(sysMsg.FILE_REQUIRED);
+    const contentType = file.mimetype.split(';')[0].trim().toLowerCase();
     const extension =
-      path.extname(file.originalname) || this.extensionFor(file.mimetype);
+      path.extname(file.originalname) || this.extensionFor(contentType);
     const objectName = `${folder}/${uuidv4()}${extension}`;
+    const metadata: Record<string, string> = {};
+    metadata['Content-Type'] = contentType;
     try {
       await this.minioClient.putObject(
         this.bucketName,
         objectName,
         file.buffer,
         file.size,
-        { contentType: file.mimetype, originalName: file.originalname },
+        metadata,
       );
       return { publicId: objectName };
     } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown upload error';
       this.logger.error(
-        `Failed to upload file to Minio: ${error instanceof Error ? error.message : 'Unknown upload error'}`,
+        `Failed to upload file to Minio (${contentType}, ${file.size} bytes, ${objectName}): ${errorMessage}`,
+        error instanceof Error ? error.stack : undefined,
       );
       throw new BadRequestException(sysMsg.FILE_UPLOAD_FAILED);
     }

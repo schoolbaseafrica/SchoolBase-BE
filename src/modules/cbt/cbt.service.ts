@@ -533,7 +533,7 @@ export class CbtService {
         json_agg(DISTINCT jsonb_build_object('id', c.id, 'name', c.name, 'arm', c.arm)) AS classes
        FROM cbt_exam_proctors p
        JOIN cbt_exams e ON e.id = p.exam_id AND e.exam_type = 'in_school'
-       JOIN classes c ON c.id = p.class_id
+       JOIN class c ON c.id = p.class_id
        WHERE p.user_id = $1
        GROUP BY e.id
        ORDER BY e.available_from DESC NULLS LAST, e.created_at DESC`,
