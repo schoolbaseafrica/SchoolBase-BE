@@ -59,6 +59,15 @@ export class AssignmentController {
     );
   }
 
+  @Get('options/subjects')
+  @Roles(UserRole.TEACHER)
+  teacherSubjects(
+    @Query('class_id', ParseUUIDPipe) classId: string,
+    @Req() req: IAssignmentRequest,
+  ) {
+    return this.service.teacherSubjects(classId, this.user(req).id);
+  }
+
   @Get(':id') get(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: IAssignmentRequest,

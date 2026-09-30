@@ -9,6 +9,7 @@ import { Class } from '../class/entities/class.entity';
 import { Student } from '../student/entities/student.entity';
 import { Subject } from '../subject/entities/subject.entity';
 import { Teacher } from '../teacher/entities/teacher.entity';
+import { Schedule } from '../timetable/entities/schedule.entity';
 
 import { AssignmentController } from './assignment.controller';
 import { AssignmentService } from './assignment.service';
@@ -27,6 +28,7 @@ import { Assignment, AssignmentSubmission } from './entities/assignment.entity';
       Student,
       Subject,
       Teacher,
+      Schedule,
     ]),
   ],
   controllers: [AssignmentController],

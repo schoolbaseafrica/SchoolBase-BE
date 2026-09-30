@@ -15,6 +15,7 @@ import { Class } from '../class/entities/class.entity';
 import { Student } from '../student/entities/student.entity';
 import { Subject } from '../subject/entities/subject.entity';
 import { Teacher } from '../teacher/entities/teacher.entity';
+import { Schedule } from '../timetable/entities/schedule.entity';
 
 import {
   CreateAssignmentDto,
@@ -56,6 +57,8 @@ export class AssignmentService {
     @InjectRepository(AcademicSession)
     private readonly sessions: Repository<AcademicSession>,
     @InjectRepository(Term) private readonly terms: Repository<Term>,
+    @InjectRepository(Schedule)
+    private readonly schedules: Repository<Schedule>,
   ) {}
 
   private isAdmin(roles: string[]) {
@@ -85,6 +88,34 @@ export class AssignmentService {
     const teacher = await this.teacherFor(userId);
     if (assignment.teacher.id !== teacher.id)
       throw new ForbiddenException('You do not manage this assignment');
+  }
+
+  async teacherSubjects(classId: string, userId: string) {
+    const teacher = await this.teacherFor(userId);
+    const [classSubjects, schedules] = await Promise.all([
+      this.classSubjects.find({
+        where: { class: { id: classId }, teacher: { id: teacher.id } },
+        relations: { subject: true },
+      }),
+      this.schedules
+        .createQueryBuilder('schedule')
+        .innerJoin('schedule.timetable', 'timetable')
+        .innerJoinAndSelect('schedule.subject', 'subject')
+        .where('timetable.class_id = :classId', { classId })
+        .andWhere('timetable.is_active = true')
+        .andWhere('schedule.teacher_id = :teacherId', {
+          teacherId: teacher.id,
+        })
+        .getMany(),
+    ]);
+    const subjects = new Map<string, Subject>();
+    classSubjects.forEach((item) =>
+      subjects.set(item.subject.id, item.subject),
+    );
+    schedules.forEach((item) => {
+      if (item.subject) subjects.set(item.subject.id, item.subject);
+    });
+    return [...subjects.values()].sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async list(
@@ -196,13 +227,28 @@ export class AssignmentService {
       throw new BadRequestException('Academic term is invalid');
     const teacher = await this.teacherFor(userId);
     if (!this.isAdmin(roles)) {
-      const assigned = await this.classSubjects.exists({
-        where: {
-          class: { id: classroom.id },
-          subject: { id: subject.id },
-          teacher: { id: teacher.id },
-        },
-      });
+      const [classSubjectAssigned, scheduled] = await Promise.all([
+        this.classSubjects.exists({
+          where: {
+            class: { id: classroom.id },
+            subject: { id: subject.id },
+            teacher: { id: teacher.id },
+          },
+        }),
+        this.schedules
+          .createQueryBuilder('schedule')
+          .innerJoin('schedule.timetable', 'timetable')
+          .where('timetable.class_id = :classId', { classId: classroom.id })
+          .andWhere('timetable.is_active = true')
+          .andWhere('schedule.subject_id = :subjectId', {
+            subjectId: subject.id,
+          })
+          .andWhere('schedule.teacher_id = :teacherId', {
+            teacherId: teacher.id,
+          })
+          .getExists(),
+      ]);
+      const assigned = classSubjectAssigned || scheduled;
       if (!assigned)
         throw new ForbiddenException(
           'You are not assigned to teach this subject in this class',
