@@ -29,7 +29,7 @@ export enum AssignmentSubmissionStatus {
   RETURNED = 'returned',
 }
 
-@Entity('assignments')
+@Entity('school_assignments')
 @Index(['classroom', 'academicSession', 'academicTerm'])
 export class Assignment extends BaseEntity {
   @Column({ length: 180 }) title: string;
@@ -76,7 +76,7 @@ export class Assignment extends BaseEntity {
   submissions: AssignmentSubmission[];
 }
 
-@Entity('assignment_submissions')
+@Entity('school_assignment_submissions')
 @Index(['assignment', 'student'], { unique: true })
 export class AssignmentSubmission extends BaseEntity {
   @ManyToOne(() => Assignment, (assignment) => assignment.submissions, {
