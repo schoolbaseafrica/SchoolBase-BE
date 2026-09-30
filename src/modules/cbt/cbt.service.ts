@@ -214,7 +214,8 @@ export class CbtService {
       .leftJoinAndSelect('exam.questions', 'questions')
       .leftJoinAndSelect('exam.sections', 'sections')
       .where('exam.session_id = :sessionId', { sessionId: period.sessionId })
-      .orderBy('exam.created_at', 'DESC');
+      .orderBy("CASE WHEN exam.status = 'archived' THEN 1 ELSE 0 END", 'ASC')
+      .addOrderBy('exam.created_at', 'DESC');
     if (period.termId) {
       builder.andWhere('exam.term_id = :termId', {
         termId: period.termId,
@@ -227,6 +228,23 @@ export class CbtService {
         examType: query.examType,
       });
     return builder.getMany();
+  }
+
+  async deleteDraftExam(examId: string) {
+    const exam = await this.getExamForManagement(examId);
+    if (exam.status !== CbtExamStatus.DRAFT) {
+      throw new ConflictException(
+        'Only an unused draft examination can be deleted. Archive completed examinations instead.',
+      );
+    }
+    const attempts = await this.attemptRepository.count({ where: { examId } });
+    if (attempts > 0) {
+      throw new ConflictException(
+        'This examination already has attempts and must be archived instead.',
+      );
+    }
+    await this.examRepository.remove(exam);
+    return { deleted: true };
   }
 
   async getExamForManagement(examId: string) {

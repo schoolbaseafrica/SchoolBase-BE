@@ -103,6 +103,12 @@ export class CbtController {
     return this.cbtService.getExamForManagement(examId);
   }
 
+  @Delete('exams/:examId')
+  @Roles(UserRole.ADMIN)
+  deleteExam(@Param('examId', ParseUUIDPipe) examId: string) {
+    return this.cbtService.deleteDraftExam(examId);
+  }
+
   @Get('exams/:examId/attempts')
   @Roles(UserRole.ADMIN)
   getExamAttempts(@Param('examId', ParseUUIDPipe) examId: string) {
