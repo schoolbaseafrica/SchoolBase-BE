@@ -148,6 +148,7 @@ export class MinioService implements OnModuleInit {
         this.bucketName,
         objectName,
         file.buffer,
+        file.size,
       );
       this.logger.info(
         `File uploaded successfully to Minio (bucket=${this.bucketName}, object=${objectName})`,
@@ -163,6 +164,15 @@ export class MinioService implements OnModuleInit {
       );
       throw new BadRequestException(sysMsg.FILE_UPLOAD_FAILED);
     }
+  }
+
+  async replaceFile(publicId: string, buffer: Buffer): Promise<void> {
+    await this.minioClient.putObject(
+      this.bucketName,
+      publicId,
+      buffer,
+      buffer.length,
+    );
   }
 
   async downloadFile(publicId: string): Promise<Buffer> {

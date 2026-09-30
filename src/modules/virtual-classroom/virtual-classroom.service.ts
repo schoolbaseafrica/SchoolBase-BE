@@ -1,3 +1,5 @@
+import { spawn } from 'child_process';
+
 import {
   BadRequestException,
   ConflictException,
@@ -387,8 +389,16 @@ export class VirtualClassroomService {
         'Voice notes must be between 1 and 120 seconds',
       );
 
+    const normalizedBuffer = await this.transcodeVoiceNote(file.buffer);
+    const normalizedFile: IMulterFile = {
+      ...file,
+      originalname: `${file.originalname.replace(/\.[^.]+$/, '')}.mp3`,
+      mimetype: 'audio/mpeg',
+      size: normalizedBuffer.length,
+      buffer: normalizedBuffer,
+    };
     const uploaded = await this.minio.uploadFile(
-      file,
+      normalizedFile,
       `classrooms/${id}/voice-notes`,
     );
     try {
@@ -401,8 +411,8 @@ export class VirtualClassroomService {
           messageType: 'voice',
           audioObjectKey: uploaded.publicId,
           audioDuration: duration,
-          audioMimeType: mimeType,
-          audioSize: file.size,
+          audioMimeType: normalizedFile.mimetype,
+          audioSize: normalizedFile.size,
           deletedAt: null,
         }),
       );
@@ -428,11 +438,74 @@ export class VirtualClassroomService {
     });
     if (!message?.audioObjectKey || message.messageType !== 'voice')
       throw new NotFoundException('Voice note not found');
-    return {
-      buffer: await this.minio.downloadFile(message.audioObjectKey),
-      mimeType: message.audioMimeType || 'audio/webm',
-      size: message.audioSize,
-    };
+    let buffer = await this.minio.downloadFile(message.audioObjectKey);
+    let mimeType = message.audioMimeType || 'audio/webm';
+    if (mimeType !== 'audio/mpeg') {
+      buffer = await this.transcodeVoiceNote(buffer);
+      mimeType = 'audio/mpeg';
+      await this.minio.replaceFile(message.audioObjectKey, buffer);
+      message.audioMimeType = mimeType;
+      message.audioSize = buffer.length;
+      await this.messages.save(message);
+    }
+    return { buffer, mimeType, size: buffer.length };
+  }
+
+  private transcodeVoiceNote(input: Buffer): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      const process = spawn('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-i',
+        'pipe:0',
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        '24000',
+        '-b:a',
+        '48k',
+        '-f',
+        'mp3',
+        'pipe:1',
+      ]);
+      const output: Buffer[] = [];
+      const errors: Buffer[] = [];
+      const timeout = setTimeout(() => {
+        process.kill('SIGKILL');
+        reject(
+          new ServiceUnavailableException('Voice note processing timed out'),
+        );
+      }, 15_000);
+      process.stdout.on('data', (chunk: Buffer) => output.push(chunk));
+      process.stderr.on('data', (chunk: Buffer) => errors.push(chunk));
+      process.on('error', () => {
+        clearTimeout(timeout);
+        reject(
+          new ServiceUnavailableException(
+            'Voice note processing is unavailable',
+          ),
+        );
+      });
+      process.on('close', (code) => {
+        clearTimeout(timeout);
+        if (code !== 0 || !output.length) {
+          const detail = Buffer.concat(errors).toString().trim();
+          reject(
+            new BadRequestException(
+              detail
+                ? `Voice note could not be decoded: ${detail.slice(0, 160)}`
+                : 'Voice note could not be decoded',
+            ),
+          );
+          return;
+        }
+        resolve(Buffer.concat(output));
+      });
+      process.stdin.on('error', () => undefined);
+      process.stdin.end(input);
+    });
   }
 
   async updatePermissions(
