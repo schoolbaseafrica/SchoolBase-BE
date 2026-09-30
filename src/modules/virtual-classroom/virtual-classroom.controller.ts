@@ -243,18 +243,18 @@ export class VirtualClassroomController {
       user.roles,
     );
   }
-  @Get(':id/whiteboard/image')
+  @Get(':id/whiteboard/images/:token')
   @SkipWrap()
   async getWhiteboardImage(
     @Param('id', ParseUUIDPipe) id: string,
-    @Query('key') key: string,
+    @Param('token') token: string,
     @Req() req: IClassroomRequest,
     @Res({ passthrough: true }) response: Response,
   ) {
     const user = this.identity(req);
     const image = await this.service.getWhiteboardImage(
       id,
-      key,
+      token,
       user.userId,
       user.roles,
     );

@@ -651,11 +651,17 @@ export class VirtualClassroomService {
 
   async getWhiteboardImage(
     id: string,
-    key: string,
+    token: string,
     userId: string,
     roles: string[],
   ) {
     await this.authorize(id, userId, roles);
+    let key = '';
+    try {
+      key = Buffer.from(token, 'base64url').toString('utf8');
+    } catch {
+      throw new BadRequestException('Invalid whiteboard image');
+    }
     const prefix = `classrooms/${id}/whiteboard/`;
     if (!key?.startsWith(prefix))
       throw new BadRequestException('Invalid whiteboard image');
