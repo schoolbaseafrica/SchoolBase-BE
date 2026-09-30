@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import * as path from 'path';
 
 import {
   BadRequestException,
@@ -646,6 +647,26 @@ export class VirtualClassroomService {
       );
     if (!file) throw new BadRequestException('Choose an image to upload');
     return this.minio.uploadImage(file, `classrooms/${id}/whiteboard`);
+  }
+
+  async getWhiteboardImage(
+    id: string,
+    key: string,
+    userId: string,
+    roles: string[],
+  ) {
+    await this.authorize(id, userId, roles);
+    const prefix = `classrooms/${id}/whiteboard/`;
+    if (!key?.startsWith(prefix))
+      throw new BadRequestException('Invalid whiteboard image');
+    const extension = path.extname(key).toLowerCase();
+    const mimeType =
+      extension === '.png'
+        ? 'image/png'
+        : extension === '.webp'
+          ? 'image/webp'
+          : 'image/jpeg';
+    return { buffer: await this.minio.downloadFile(key), mimeType };
   }
 
   async getVoiceNote(

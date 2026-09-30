@@ -243,6 +243,27 @@ export class VirtualClassroomController {
       user.roles,
     );
   }
+  @Get(':id/whiteboard/image')
+  @SkipWrap()
+  async getWhiteboardImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('key') key: string,
+    @Req() req: IClassroomRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const user = this.identity(req);
+    const image = await this.service.getWhiteboardImage(
+      id,
+      key,
+      user.userId,
+      user.roles,
+    );
+    response.setHeader('Content-Type', image.mimeType);
+    response.setHeader('Content-Length', String(image.buffer.length));
+    response.setHeader('Cache-Control', 'private, max-age=3600');
+    response.setHeader('Content-Disposition', 'inline');
+    return new StreamableFile(image.buffer);
+  }
   @Delete(':id/whiteboard/legacy')
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
   retireLegacyWhiteboard(
