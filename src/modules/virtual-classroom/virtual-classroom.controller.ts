@@ -19,6 +19,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 
+import { SkipWrap } from '../../common/decorators/skip-wrap.decorator';
 import { IMulterFile } from '../../common/types/multer.types';
 import { classroomVoiceNoteConfig } from '../../config/multer.config';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -244,6 +245,7 @@ export class VirtualClassroomController {
     );
   }
   @Get(':id/messages/:messageId/audio')
+  @SkipWrap()
   async voiceNote(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('messageId', ParseUUIDPipe) messageId: string,
