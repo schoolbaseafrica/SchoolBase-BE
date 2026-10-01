@@ -2,10 +2,13 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { IMulterFile } from '../../common/types/multer.types';
 import { AcademicSession } from '../academic-session/entities/academic-session.entity';
@@ -29,6 +32,10 @@ import {
 } from './assignment.dto';
 import { AssignmentAttachment } from './entities/assignment-attachment.entity';
 import {
+  AssignmentReminder,
+  AssignmentReminderType,
+} from './entities/assignment-reminder.entity';
+import {
   Assignment,
   AssignmentStatus,
   AssignmentSubmission,
@@ -45,7 +52,10 @@ const relations = {
 } as const;
 
 @Injectable()
-export class AssignmentService {
+export class AssignmentService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(AssignmentService.name);
+  private reminderTimer?: NodeJS.Timeout;
+
   constructor(
     @InjectRepository(Assignment)
     private readonly assignments: Repository<Assignment>,
@@ -68,8 +78,29 @@ export class AssignmentService {
     private readonly attachments: Repository<AssignmentAttachment>,
     @InjectRepository(Notification)
     private readonly notifications: Repository<Notification>,
+    @InjectRepository(AssignmentReminder)
+    private readonly reminders: Repository<AssignmentReminder>,
     private readonly minio: MinioService,
+    private readonly dataSource: DataSource,
   ) {}
+
+  onModuleInit() {
+    this.reminderTimer = setInterval(
+      () =>
+        void this.processReminders().catch((error) => this.logger.error(error)),
+      15 * 60 * 1000,
+    );
+    this.reminderTimer.unref();
+    setTimeout(
+      () =>
+        void this.processReminders().catch((error) => this.logger.error(error)),
+      15_000,
+    ).unref();
+  }
+
+  onModuleDestroy() {
+    if (this.reminderTimer) clearInterval(this.reminderTimer);
+  }
 
   private createNotification(
     recipientId: string,
@@ -105,6 +136,22 @@ export class AssignmentService {
       relations: { user: true },
     });
     if (!student) throw new ForbiddenException('Student profile not found');
+    return student;
+  }
+
+  private async studentForParent(studentId: string, parentUserId: string) {
+    const student = await this.students.findOne({
+      where: {
+        id: studentId,
+        is_deleted: false,
+        parent: { user_id: parentUserId, is_active: true },
+      },
+      relations: { user: true, parent: { user: true } },
+    });
+    if (!student)
+      throw new ForbiddenException(
+        'This student is not linked to your account',
+      );
     return student;
   }
 
@@ -194,15 +241,28 @@ export class AssignmentService {
     );
   }
 
-  async listAttachments(assignmentId: string, userId: string, roles: string[]) {
-    await this.get(assignmentId, userId, roles);
+  async listAttachments(
+    assignmentId: string,
+    userId: string,
+    roles: string[],
+    parentStudentId?: string,
+  ) {
+    let visibleStudent: Student | null = null;
+    if (roles.includes('parent')) {
+      if (!parentStudentId)
+        throw new BadRequestException('A linked student is required');
+      visibleStudent = await this.studentForParent(parentStudentId, userId);
+      await this.assertStudentAssignmentAccess(assignmentId, visibleStudent.id);
+    } else {
+      await this.get(assignmentId, userId, roles);
+    }
     const rows = await this.attachments.find({
       where: { assignment: { id: assignmentId } },
       relations: { student: { user: true } },
       order: { createdAt: 'ASC' },
     });
-    if (!roles.includes('student')) return rows;
-    const student = await this.studentFor(userId);
+    if (!roles.includes('student') && !roles.includes('parent')) return rows;
+    const student = visibleStudent ?? (await this.studentFor(userId));
     return rows.filter(
       (item) => !item.student || item.student.id === student.id,
     );
@@ -213,8 +273,14 @@ export class AssignmentService {
     attachmentId: string,
     userId: string,
     roles: string[],
+    parentStudentId?: string,
   ) {
-    const allowed = await this.listAttachments(assignmentId, userId, roles);
+    const allowed = await this.listAttachments(
+      assignmentId,
+      userId,
+      roles,
+      parentStudentId,
+    );
     const attachment = allowed.find((item) => item.id === attachmentId);
     if (!attachment)
       throw new NotFoundException('Assignment attachment not found');
@@ -222,6 +288,255 @@ export class AssignmentService {
       attachment,
       buffer: await this.minio.downloadFile(attachment.objectKey),
     };
+  }
+
+  private async assertStudentAssignmentAccess(
+    assignmentId: string,
+    studentId: string,
+  ) {
+    const assignment = await this.assignments.findOne({
+      where: { id: assignmentId },
+      relations: { classroom: true },
+    });
+    if (
+      !assignment ||
+      ![AssignmentStatus.PUBLISHED, AssignmentStatus.CLOSED].includes(
+        assignment.status,
+      )
+    )
+      throw new NotFoundException('Assignment not found');
+    const enrolled = await this.classStudents.exists({
+      where: {
+        class: { id: assignment.classroom.id },
+        student: { id: studentId },
+        is_active: true,
+      },
+    });
+    if (!enrolled)
+      throw new ForbiddenException(
+        'This assignment is not assigned to the student',
+      );
+    return assignment;
+  }
+
+  async listForParent(
+    studentId: string,
+    parentUserId: string,
+    sessionId?: string,
+    termId?: string,
+  ) {
+    const student = await this.studentForParent(studentId, parentUserId);
+    const enrolments = await this.classStudents.find({
+      where: { student: { id: student.id }, is_active: true },
+      relations: { class: true },
+    });
+    const classIds = enrolments.map((item) => item.class.id);
+    if (!classIds.length) return [];
+    const qb = this.assignments
+      .createQueryBuilder('assignment')
+      .leftJoinAndSelect('assignment.classroom', 'classroom')
+      .leftJoinAndSelect('assignment.subject', 'subject')
+      .leftJoinAndSelect('assignment.teacher', 'teacher')
+      .leftJoinAndSelect('teacher.user', 'teacherUser')
+      .leftJoinAndSelect('assignment.academicSession', 'academicSession')
+      .leftJoinAndSelect('assignment.academicTerm', 'academicTerm')
+      .leftJoinAndSelect(
+        'assignment.submissions',
+        'submission',
+        'submission.student_id = :studentId',
+        { studentId },
+      )
+      .leftJoinAndSelect('submission.student', 'submissionStudent')
+      .where('classroom.id IN (:...classIds)', { classIds })
+      .andWhere('assignment.status IN (:...visible)', {
+        visible: [AssignmentStatus.PUBLISHED, AssignmentStatus.CLOSED],
+      })
+      .orderBy('assignment.dueAt', 'ASC', 'NULLS LAST');
+    if (sessionId)
+      qb.andWhere('academicSession.id = :sessionId', { sessionId });
+    if (termId) qb.andWhere('academicTerm.id = :termId', { termId });
+    return qb.getMany();
+  }
+
+  async report(
+    userId: string,
+    roles: string[],
+    filters: {
+      sessionId?: string;
+      termId?: string;
+      classId?: string;
+      subjectId?: string;
+      status?: string;
+    },
+  ) {
+    const assignments = (
+      await this.list(userId, roles, filters.sessionId, filters.termId, false)
+    ).filter(
+      (item) =>
+        (!filters.classId || item.classroom.id === filters.classId) &&
+        (!filters.subjectId || item.subject.id === filters.subjectId),
+    );
+    const rows: Array<Record<string, unknown>> = [];
+    for (const assignment of assignments) {
+      const enrolments = await this.classStudents.find({
+        where: { class: { id: assignment.classroom.id }, is_active: true },
+        relations: { student: { user: true } },
+      });
+      const submissions = new Map(
+        assignment.submissions.map((item) => [item.student.id, item]),
+      );
+      for (const enrolment of enrolments) {
+        const submission = submissions.get(enrolment.student.id);
+        const state = submission?.status ?? 'missing';
+        const reportStatus = submission?.isLate ? 'late' : state;
+        if (
+          filters.status &&
+          filters.status !== 'all' &&
+          filters.status !== reportStatus
+        )
+          continue;
+        rows.push({
+          assignmentId: assignment.id,
+          assignment: assignment.title,
+          className: `${assignment.classroom.name}${assignment.classroom.arm ? ` ${assignment.classroom.arm}` : ''}`,
+          subject: assignment.subject.name,
+          dueAt: assignment.dueAt,
+          studentId: enrolment.student.id,
+          student:
+            `${enrolment.student.user?.first_name ?? ''} ${enrolment.student.user?.last_name ?? ''}`.trim() ||
+            enrolment.student.registration_number,
+          registrationNumber: enrolment.student.registration_number,
+          status: reportStatus,
+          submittedAt: submission?.submittedAt ?? null,
+          marksAwarded: submission?.marksAwarded ?? null,
+          totalMarks: assignment.totalMarks,
+        });
+      }
+    }
+    const count = (status: string) =>
+      rows.filter((row) => row.status === status).length;
+    const gradedRows = rows.filter((row) => row.status === 'graded');
+    return {
+      summary: {
+        total: rows.length,
+        missing: count('missing') + count('draft') + count('returned'),
+        submitted: count('submitted'),
+        late: count('late'),
+        graded: gradedRows.length,
+        averagePercentage: gradedRows.length
+          ? Number(
+              (
+                gradedRows.reduce(
+                  (total, row) =>
+                    total +
+                    (Number(row.marksAwarded) / Number(row.totalMarks)) * 100,
+                  0,
+                ) / gradedRows.length
+              ).toFixed(1),
+            )
+          : null,
+      },
+      rows,
+    };
+  }
+
+  async processReminders(now = new Date()) {
+    const runner = this.dataSource.createQueryRunner();
+    await runner.connect();
+    const lock = await runner.query(
+      'SELECT pg_try_advisory_lock(214748301) AS acquired',
+    );
+    if (!lock[0]?.acquired) {
+      await runner.release();
+      return { processed: 0 };
+    }
+    let processed = 0;
+    try {
+      const assignments = await this.assignments
+        .createQueryBuilder('assignment')
+        .leftJoinAndSelect('assignment.classroom', 'classroom')
+        .leftJoinAndSelect('assignment.subject', 'subject')
+        .where('assignment.status = :status', {
+          status: AssignmentStatus.PUBLISHED,
+        })
+        .andWhere('assignment.due_at IS NOT NULL')
+        .andWhere('assignment.due_at <= :limit', {
+          limit: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+        })
+        .getMany();
+      for (const assignment of assignments) {
+        const enrolments = await this.classStudents.find({
+          where: { class: { id: assignment.classroom.id }, is_active: true },
+          relations: { student: { user: true, parent: { user: true } } },
+        });
+        const completed = await this.submissions.find({
+          where: { assignment: { id: assignment.id } },
+          relations: { student: true },
+        });
+        const submitted = new Set(
+          completed
+            .filter((item) =>
+              [
+                AssignmentSubmissionStatus.SUBMITTED,
+                AssignmentSubmissionStatus.GRADED,
+              ].includes(item.status),
+            )
+            .map((item) => item.student.id),
+        );
+        const type =
+          assignment.dueAt! <= now
+            ? AssignmentReminderType.OVERDUE
+            : AssignmentReminderType.DUE_SOON;
+        for (const enrolment of enrolments) {
+          if (submitted.has(enrolment.student.id)) continue;
+          let reminder = await this.reminders.findOne({
+            where: {
+              assignment: { id: assignment.id },
+              student: { id: enrolment.student.id },
+              type,
+            },
+          });
+          if (reminder?.sentAt) continue;
+          reminder ??= await this.reminders.save(
+            this.reminders.create({
+              assignment,
+              student: enrolment.student,
+              type,
+              sentAt: null,
+            }),
+          );
+          const overdue = type === AssignmentReminderType.OVERDUE;
+          await this.createNotification(
+            enrolment.student.user.id,
+            overdue ? 'Assignment overdue' : 'Assignment due soon',
+            `${assignment.subject.name}: ${assignment.title}`,
+            {
+              assignment_id: assignment.id,
+              deep_link: '/student/assignments',
+            },
+          );
+          if (overdue && enrolment.student.parent?.user?.id) {
+            await this.createNotification(
+              enrolment.student.parent.user.id,
+              'Child assignment overdue',
+              `${enrolment.student.user.first_name}: ${assignment.title}`,
+              {
+                assignment_id: assignment.id,
+                student_id: enrolment.student.id,
+                deep_link: '/parent/assignments',
+              },
+            );
+          }
+          reminder.sentAt = now;
+          await this.reminders.save(reminder);
+          processed += 1;
+        }
+      }
+      return { processed };
+    } finally {
+      await runner.query('SELECT pg_advisory_unlock(214748301)');
+      await runner.release();
+    }
   }
 
   async deleteAttachment(
@@ -559,7 +874,10 @@ export class AssignmentService {
       throw new BadRequestException('Marks cannot exceed the assignment total');
     const submission = await this.submissions.findOne({
       where: { id: submissionId, assignment: { id: assignmentId } },
-      relations: { assignment: true, student: { user: true } },
+      relations: {
+        assignment: true,
+        student: { user: true, parent: { user: true } },
+      },
     });
     if (!submission) throw new NotFoundException('Submission not found');
     if (submission.status === AssignmentSubmissionStatus.DRAFT)
@@ -575,6 +893,18 @@ export class AssignmentService {
         'Assignment graded',
         `${assignment.title} has been graded`,
         { assignment_id: assignment.id, deep_link: '/student/assignments' },
+      );
+    }
+    if (submission.student.parent?.user?.id) {
+      await this.createNotification(
+        submission.student.parent.user.id,
+        'Child assignment graded',
+        `${submission.student.user.first_name}: ${assignment.title}`,
+        {
+          assignment_id: assignment.id,
+          student_id: submission.student.id,
+          deep_link: '/parent/assignments',
+        },
       );
     }
     return saved;

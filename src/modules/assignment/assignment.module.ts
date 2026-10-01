@@ -16,6 +16,7 @@ import { UploadModule } from '../upload/upload.module';
 import { AssignmentController } from './assignment.controller';
 import { AssignmentService } from './assignment.service';
 import { AssignmentAttachment } from './entities/assignment-attachment.entity';
+import { AssignmentReminder } from './entities/assignment-reminder.entity';
 import { Assignment, AssignmentSubmission } from './entities/assignment.entity';
 
 @Module({
@@ -35,6 +36,7 @@ import { Assignment, AssignmentSubmission } from './entities/assignment.entity';
       Schedule,
       AssignmentAttachment,
       Notification,
+      AssignmentReminder,
     ]),
   ],
   controllers: [AssignmentController],

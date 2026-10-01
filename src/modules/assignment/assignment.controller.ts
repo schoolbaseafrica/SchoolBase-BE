@@ -41,7 +41,7 @@ interface IAssignmentRequest {
 
 @Controller('assignments')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT)
+@Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)
 export class AssignmentController {
   constructor(private readonly service: AssignmentService) {}
   private user(req: IAssignmentRequest) {
@@ -78,13 +78,50 @@ export class AssignmentController {
     return this.service.teacherSubjects(classId, this.user(req).id);
   }
 
+  @Get('parent/:studentId')
+  @Roles(UserRole.PARENT)
+  parentAssignments(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Req() req: IAssignmentRequest,
+    @Query('session_id') sessionId?: string,
+    @Query('term_id') termId?: string,
+  ) {
+    return this.service.listForParent(
+      studentId,
+      this.user(req).id,
+      sessionId,
+      termId,
+    );
+  }
+
+  @Get('reports/class-work')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  report(
+    @Req() req: IAssignmentRequest,
+    @Query('session_id') sessionId?: string,
+    @Query('term_id') termId?: string,
+    @Query('class_id') classId?: string,
+    @Query('subject_id') subjectId?: string,
+    @Query('status') status?: string,
+  ) {
+    const user = this.user(req);
+    return this.service.report(user.id, user.roles, {
+      sessionId,
+      termId,
+      classId,
+      subjectId,
+      status,
+    });
+  }
+
   @Get(':id/attachments')
   attachments(
     @Param('id', ParseUUIDPipe) id: string,
     @Req() req: IAssignmentRequest,
+    @Query('student_id') studentId?: string,
   ) {
     const user = this.user(req);
-    return this.service.listAttachments(id, user.id, user.roles);
+    return this.service.listAttachments(id, user.id, user.roles, studentId);
   }
 
   @Post(':id/attachments')
@@ -105,6 +142,7 @@ export class AssignmentController {
     @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
     @Req() req: IAssignmentRequest,
     @Res({ passthrough: true }) response: Response,
+    @Query('student_id') studentId?: string,
   ) {
     const user = this.user(req);
     const { attachment, buffer } = await this.service.downloadAttachment(
@@ -112,6 +150,7 @@ export class AssignmentController {
       attachmentId,
       user.id,
       user.roles,
+      studentId,
     );
     response.setHeader('Content-Type', attachment.mimeType);
     response.setHeader(
