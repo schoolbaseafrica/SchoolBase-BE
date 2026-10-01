@@ -1690,7 +1690,10 @@ export class CbtService {
       [CbtExamStatus.ACTIVE]: [CbtExamStatus.CLOSED],
       [CbtExamStatus.CLOSED]: [CbtExamStatus.PUBLISHED, CbtExamStatus.ARCHIVED],
       [CbtExamStatus.PUBLISHED]: [CbtExamStatus.ARCHIVED],
-      [CbtExamStatus.ARCHIVED]: [],
+      // Restoring to closed keeps attempts and results immutable while returning
+      // the examination to the management workflow. An administrator can then
+      // republish it deliberately if required.
+      [CbtExamStatus.ARCHIVED]: [CbtExamStatus.CLOSED],
     };
     if (!allowed[exam.status].includes(dto.status)) {
       throw new ConflictException(

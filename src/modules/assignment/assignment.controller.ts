@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -8,9 +9,18 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
 
+import { SkipWrap } from '../../common/decorators/skip-wrap.decorator';
+import { IMulterFile } from '../../common/types/multer.types';
+import { assignmentAttachmentConfig } from '../../config/multer.config';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -66,6 +76,60 @@ export class AssignmentController {
     @Req() req: IAssignmentRequest,
   ) {
     return this.service.teacherSubjects(classId, this.user(req).id);
+  }
+
+  @Get(':id/attachments')
+  attachments(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: IAssignmentRequest,
+  ) {
+    const user = this.user(req);
+    return this.service.listAttachments(id, user.id, user.roles);
+  }
+
+  @Post(':id/attachments')
+  @UseInterceptors(FileInterceptor('file', assignmentAttachmentConfig))
+  uploadAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: IMulterFile,
+    @Req() req: IAssignmentRequest,
+  ) {
+    const user = this.user(req);
+    return this.service.uploadAttachment(id, file, user.id, user.roles);
+  }
+
+  @Get(':id/attachments/:attachmentId/download')
+  @SkipWrap()
+  async downloadAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
+    @Req() req: IAssignmentRequest,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const user = this.user(req);
+    const { attachment, buffer } = await this.service.downloadAttachment(
+      id,
+      attachmentId,
+      user.id,
+      user.roles,
+    );
+    response.setHeader('Content-Type', attachment.mimeType);
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(attachment.originalName)}`,
+    );
+    return new StreamableFile(buffer);
+  }
+
+  @Delete(':id/attachments/:attachmentId')
+  async deleteAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
+    @Req() req: IAssignmentRequest,
+  ) {
+    const user = this.user(req);
+    await this.service.deleteAttachment(id, attachmentId, user.id, user.roles);
+    return { deleted: true };
   }
 
   @Get(':id') get(

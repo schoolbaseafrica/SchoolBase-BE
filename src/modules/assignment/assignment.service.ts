@@ -7,15 +7,19 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { IMulterFile } from '../../common/types/multer.types';
 import { AcademicSession } from '../academic-session/entities/academic-session.entity';
 import { Term } from '../academic-term/entities/term.entity';
 import { ClassStudent } from '../class/entities/class-student.entity';
 import { ClassSubject } from '../class/entities/class-subject.entity';
 import { Class } from '../class/entities/class.entity';
+import { NotificationService } from '../notification/services/notification.service';
+import { NotificationType } from '../notification/types/notification.types';
 import { Student } from '../student/entities/student.entity';
 import { Subject } from '../subject/entities/subject.entity';
 import { Teacher } from '../teacher/entities/teacher.entity';
 import { Schedule } from '../timetable/entities/schedule.entity';
+import { MinioService } from '../upload/services/minio.service';
 
 import {
   CreateAssignmentDto,
@@ -23,6 +27,7 @@ import {
   SaveSubmissionDto,
   UpdateAssignmentDto,
 } from './assignment.dto';
+import { AssignmentAttachment } from './entities/assignment-attachment.entity';
 import {
   Assignment,
   AssignmentStatus,
@@ -59,6 +64,10 @@ export class AssignmentService {
     @InjectRepository(Term) private readonly terms: Repository<Term>,
     @InjectRepository(Schedule)
     private readonly schedules: Repository<Schedule>,
+    @InjectRepository(AssignmentAttachment)
+    private readonly attachments: Repository<AssignmentAttachment>,
+    private readonly minio: MinioService,
+    private readonly notifications: NotificationService,
   ) {}
 
   private isAdmin(roles: string[]) {
@@ -74,6 +83,7 @@ export class AssignmentService {
   private async studentFor(userId: string) {
     const student = await this.students.findOne({
       where: { user: { id: userId } },
+      relations: { user: true },
     });
     if (!student) throw new ForbiddenException('Student profile not found');
     return student;
@@ -116,6 +126,141 @@ export class AssignmentService {
       if (item.subject) subjects.set(item.subject.id, item.subject);
     });
     return [...subjects.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async uploadAttachment(
+    assignmentId: string,
+    file: IMulterFile,
+    userId: string,
+    roles: string[],
+  ) {
+    const assignment = await this.get(assignmentId, userId, roles);
+    let student: Student | null = null;
+    if (roles.includes('student')) {
+      if (assignment.status !== AssignmentStatus.PUBLISHED)
+        throw new BadRequestException(
+          'This assignment is not accepting attachments',
+        );
+      student = await this.studentFor(userId);
+      const graded = await this.submissions.exists({
+        where: {
+          assignment: { id: assignmentId },
+          student: { id: student.id },
+          status: AssignmentSubmissionStatus.GRADED,
+        },
+      });
+      if (graded)
+        throw new BadRequestException(
+          'A graded submission cannot receive new attachments',
+        );
+    } else if (assignment.status !== AssignmentStatus.DRAFT) {
+      throw new BadRequestException(
+        'Teacher resources can only be changed while the assignment is a draft',
+      );
+    }
+    const uploaded = await this.minio.uploadFile(
+      file,
+      `assignments/${assignmentId}/${student?.id ?? 'teacher'}`,
+    );
+    return this.attachments.save(
+      this.attachments.create({
+        assignment,
+        student,
+        objectKey: uploaded.publicId,
+        originalName: file.originalname.slice(0, 255),
+        mimeType: file.mimetype,
+        size: file.size,
+        uploadedBy: userId,
+      }),
+    );
+  }
+
+  async listAttachments(assignmentId: string, userId: string, roles: string[]) {
+    await this.get(assignmentId, userId, roles);
+    const rows = await this.attachments.find({
+      where: { assignment: { id: assignmentId } },
+      relations: { student: { user: true } },
+      order: { createdAt: 'ASC' },
+    });
+    if (!roles.includes('student')) return rows;
+    const student = await this.studentFor(userId);
+    return rows.filter(
+      (item) => !item.student || item.student.id === student.id,
+    );
+  }
+
+  async downloadAttachment(
+    assignmentId: string,
+    attachmentId: string,
+    userId: string,
+    roles: string[],
+  ) {
+    const allowed = await this.listAttachments(assignmentId, userId, roles);
+    const attachment = allowed.find((item) => item.id === attachmentId);
+    if (!attachment)
+      throw new NotFoundException('Assignment attachment not found');
+    return {
+      attachment,
+      buffer: await this.minio.downloadFile(attachment.objectKey),
+    };
+  }
+
+  async deleteAttachment(
+    assignmentId: string,
+    attachmentId: string,
+    userId: string,
+    roles: string[],
+  ) {
+    const allowed = await this.listAttachments(assignmentId, userId, roles);
+    const attachment = allowed.find((item) => item.id === attachmentId);
+    if (!attachment)
+      throw new NotFoundException('Assignment attachment not found');
+    if (attachment.uploadedBy !== userId && !this.isAdmin(roles))
+      throw new ForbiddenException(
+        'Only the uploader can remove this attachment',
+      );
+    if (roles.includes('student')) {
+      const assignment = await this.assignments.findOneBy({ id: assignmentId });
+      const student = await this.studentFor(userId);
+      const graded = await this.submissions.exists({
+        where: {
+          assignment: { id: assignmentId },
+          student: { id: student.id },
+          status: AssignmentSubmissionStatus.GRADED,
+        },
+      });
+      if (assignment?.status !== AssignmentStatus.PUBLISHED || graded)
+        throw new BadRequestException(
+          'Attachments cannot be changed after the assignment closes or is graded',
+        );
+    }
+    await this.minio.deleteImage(attachment.objectKey);
+    await this.attachments.remove(attachment);
+  }
+
+  private async notifyClass(assignment: Assignment) {
+    const enrolments = await this.classStudents.find({
+      where: { class: { id: assignment.classroom.id }, is_active: true },
+      relations: { student: { user: true } },
+    });
+    await Promise.all(
+      enrolments.flatMap((item) =>
+        item.student?.user?.id
+          ? [
+              this.notifications.createNotification(
+                item.student.user.id,
+                'New assignment',
+                `${assignment.subject.name}: ${assignment.title}`,
+                NotificationType.ASSIGNMENT,
+                {
+                  assignment_id: assignment.id,
+                  deep_link: '/student/assignments',
+                },
+              ),
+            ]
+          : [],
+      ),
+    );
   }
 
   async list(
@@ -297,6 +442,8 @@ export class AssignmentService {
     roles: string[],
   ) {
     const assignment = await this.get(id, userId, roles);
+    const firstPublication =
+      status === AssignmentStatus.PUBLISHED && !assignment.publishedAt;
     const allowed: Record<AssignmentStatus, AssignmentStatus[]> = {
       draft: [AssignmentStatus.PUBLISHED, AssignmentStatus.ARCHIVED],
       published: [AssignmentStatus.CLOSED, AssignmentStatus.ARCHIVED],
@@ -311,7 +458,9 @@ export class AssignmentService {
       assignment.publishedAt = assignment.publishedAt ?? new Date();
     if (status === AssignmentStatus.CLOSED) assignment.closedAt = new Date();
     assignment.status = status;
-    return this.assignments.save(assignment);
+    const saved = await this.assignments.save(assignment);
+    if (firstPublication) await this.notifyClass(assignment);
+    return saved;
   }
 
   async saveSubmission(
@@ -343,10 +492,18 @@ export class AssignmentService {
       requestedStatus === AssignmentSubmissionStatus.SUBMITTED &&
       !dto.responseText?.trim() &&
       !dto.attachmentUrl
-    )
-      throw new BadRequestException(
-        'Add a response or attachment before submitting',
-      );
+    ) {
+      const hasAttachment = await this.attachments.exists({
+        where: {
+          assignment: { id: assignmentId },
+          student: { id: student.id },
+        },
+      });
+      if (!hasAttachment)
+        throw new BadRequestException(
+          'Add a response or attachment before submitting',
+        );
+    }
     submission ??= this.submissions.create({ assignment, student });
     submission.responseText = dto.responseText?.trim() || null;
     submission.attachmentUrl = dto.attachmentUrl ?? null;
@@ -357,7 +514,20 @@ export class AssignmentService {
         assignment.dueAt && submission.submittedAt > assignment.dueAt,
       );
     }
-    return this.submissions.save(submission);
+    const saved = await this.submissions.save(submission);
+    if (
+      requestedStatus === AssignmentSubmissionStatus.SUBMITTED &&
+      assignment.teacher.user?.id
+    ) {
+      await this.notifications.createNotification(
+        assignment.teacher.user.id,
+        'Assignment submitted',
+        `${student.user?.first_name ?? student.registration_number} submitted ${assignment.title}`,
+        NotificationType.ASSIGNMENT,
+        { assignment_id: assignment.id, deep_link: '/teacher/assignments' },
+      );
+    }
+    return saved;
   }
 
   async grade(
@@ -381,6 +551,16 @@ export class AssignmentService {
     submission.feedback = dto.feedback?.trim() || null;
     submission.status = dto.status ?? AssignmentSubmissionStatus.GRADED;
     submission.gradedAt = new Date();
-    return this.submissions.save(submission);
+    const saved = await this.submissions.save(submission);
+    if (submission.student.user?.id) {
+      await this.notifications.createNotification(
+        submission.student.user.id,
+        'Assignment graded',
+        `${assignment.title} has been graded`,
+        NotificationType.ASSIGNMENT,
+        { assignment_id: assignment.id, deep_link: '/student/assignments' },
+      );
+    }
+    return saved;
   }
 }

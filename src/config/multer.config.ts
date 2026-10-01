@@ -56,3 +56,28 @@ export const pictureUploadConfig: MulterOptions = {
     }
   },
 };
+
+const assignmentMimeTypes = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+  ...ALLOWED_IMAGE_MIME_TYPES,
+];
+
+export const assignmentAttachmentConfig: MulterOptions = {
+  storage: memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (assignmentMimeTypes.includes(file.mimetype)) cb(null, true);
+    else
+      cb(
+        new Error('Assignments support PDF, Office, text and image files.'),
+        false,
+      );
+  },
+};
