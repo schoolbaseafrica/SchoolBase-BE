@@ -15,6 +15,8 @@ import { FileService } from '../../shared/file/file.service';
 import { User } from '../../user/entities/user.entity';
 import { UserModelAction } from '../../user/model-actions/user-actions';
 import { StudentProfileResponseDto } from '../dto';
+import { ListStudentsDto } from '../dto/list-student.dto';
+import { StudentGrowthInterval } from '../dto/student.growth.dto';
 import { Student } from '../entities';
 import { StudentModelAction } from '../model-actions';
 
@@ -33,6 +35,7 @@ const mockStudentModelAction = {
   get: jest.fn(),
   create: jest.fn(),
   generateRegistrationNumber: jest.fn(),
+  repository: undefined as { createQueryBuilder: jest.Mock } | undefined,
 };
 
 const mockUserModelAction = {
@@ -42,6 +45,7 @@ const mockUserModelAction = {
 
 const mockDataSource = {
   transaction: jest.fn(),
+  query: jest.fn(),
 };
 
 const mockFileService = {
@@ -50,7 +54,7 @@ const mockFileService = {
 
 const mockClassStudentModelAction = { list: jest.fn() };
 const mockClassModelAction = { find: jest.fn() };
-const mockAcademicSessionModelAction = { find: jest.fn() };
+const mockAcademicSessionModelAction = { find: jest.fn(), get: jest.fn() };
 
 describe('StudentService', () => {
   let service: StudentService;
@@ -103,12 +107,110 @@ describe('StudentService', () => {
     service = module.get<StudentService>(StudentService);
   });
 
+  it('returns snake-case pagination metadata for period-filtered lists', async () => {
+    const queryBuilder = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getCount: jest.fn().mockResolvedValue(21),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    mockStudentModelAction.repository = {
+      createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
+    };
+
+    const result = await service.findAll({
+      page: 2,
+      limit: 10,
+      session_id: '00000000-0000-0000-0000-000000000001',
+    } as ListStudentsDto);
+
+    expect(result.meta).toMatchObject({
+      total: 21,
+      page: 2,
+      limit: 10,
+      total_pages: 3,
+      has_next: true,
+      has_previous: true,
+    });
+  });
+
   afterEach(() => {
     jest.clearAllMocks();
+    jest.useRealTimers();
   });
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('getStudentGrowthReport', () => {
+    it('groups first enrollments by month within the selected session', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-11-01T00:00:00Z'));
+      mockAcademicSessionModelAction.get.mockResolvedValue({
+        id: 'session-1',
+        name: '2026/2027',
+        startDate: new Date('2026-09-01'),
+        endDate: new Date('2026-10-31'),
+      });
+      mockDataSource.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        { studentId: 'student-1', enrollmentDate: '2026-09-10T10:00:00Z' },
+        { studentId: 'student-2', enrollmentDate: '2026-10-02T10:00:00Z' },
+      ]);
+
+      const result = await service.getStudentGrowthReport({
+        session_id: 'session-1',
+        interval: StudentGrowthInterval.MONTH,
+      });
+
+      expect(result.data.report).toEqual([
+        expect.objectContaining({
+          label: 'Sep 2026',
+          new_students: 1,
+          cumulative_students: 1,
+        }),
+        expect.objectContaining({
+          label: 'Oct 2026',
+          new_students: 1,
+          cumulative_students: 2,
+        }),
+      ]);
+      jest.useRealTimers();
+    });
+
+    it('does not include future months in the active reporting period', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-09-24T12:00:00Z'));
+      mockAcademicSessionModelAction.get.mockResolvedValue({
+        id: 'session-1',
+        name: '2026/2027',
+        startDate: new Date('2026-09-01'),
+        endDate: new Date('2026-12-31'),
+      });
+      mockDataSource.query
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { studentId: 'student-1', enrollmentDate: '2026-09-10T10:00:00Z' },
+        ]);
+
+      const result = await service.getStudentGrowthReport({
+        session_id: 'session-1',
+        interval: StudentGrowthInterval.MONTH,
+      });
+
+      expect(result.data.report).toEqual([
+        expect.objectContaining({
+          label: 'Sep 2026',
+          end_date: '2026-09-24',
+          new_students: 1,
+          cumulative_students: 1,
+        }),
+      ]);
+      jest.useRealTimers();
+    });
   });
 
   describe('getMyProfile', () => {
@@ -242,6 +344,78 @@ describe('StudentService', () => {
       await expect(
         service.getMyProfile(studentId, mockAdminUser),
       ).resolves.toBeInstanceOf(StudentProfileResponseDto);
+    });
+  });
+
+  describe('getAcademicContext', () => {
+    const studentId = 'student-id';
+    const sessionId = 'session-id';
+    const authUser: IUserPayload = {
+      id: 'user-id',
+      email: 'student@test.com',
+      roles: [UserRole.STUDENT],
+    };
+
+    it('returns the active class assignment for the selected session', async () => {
+      mockStudentModelAction.get.mockResolvedValue({
+        id: studentId,
+        is_deleted: false,
+        user: { id: authUser.id },
+      } as Student);
+      mockClassStudentModelAction.list.mockResolvedValue({
+        payload: [
+          {
+            class: {
+              id: 'class-id',
+              name: 'JSS 3',
+              arm: 'A',
+              academicSession: { id: sessionId, name: '2026/2027' },
+            },
+          },
+        ],
+        paginationMeta: {},
+      });
+
+      const result = await service.getAcademicContext(
+        studentId,
+        sessionId,
+        authUser,
+      );
+
+      expect(mockClassStudentModelAction.list).toHaveBeenCalledWith({
+        filterRecordOptions: {
+          student: { id: studentId },
+          session_id: sessionId,
+          is_active: true,
+        },
+        relations: { class: { academicSession: true } },
+        paginationPayload: { page: 1, limit: 1 },
+      });
+      expect(result.class_details).toEqual({
+        id: 'class-id',
+        name: 'JSS 3 A',
+        arm: 'A',
+      });
+    });
+
+    it('returns no class when the student has no enrollment in that session', async () => {
+      mockStudentModelAction.get.mockResolvedValue({
+        id: studentId,
+        is_deleted: false,
+        user: { id: authUser.id },
+      } as Student);
+      mockClassStudentModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+
+      const result = await service.getAcademicContext(
+        studentId,
+        sessionId,
+        authUser,
+      );
+
+      expect(result).toEqual({ class_details: null, academic_details: null });
     });
   });
 });

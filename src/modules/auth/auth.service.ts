@@ -126,8 +126,9 @@ export class AuthService {
   }
 
   async login(loginPayload: LoginDto) {
-    // Find user by email
-    const user = await this.userService.findByEmail(loginPayload.email);
+    const user = await this.userService.findByLoginIdentifier(
+      loginPayload.email,
+    );
     if (!user) {
       throw new UnauthorizedException(sysMsg.INVALID_CREDENTIALS);
     }

@@ -20,6 +20,7 @@ import { Role, SuperAdmin } from '../superadmin/entities/superadmin.entity';
 import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
 
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import { WebsiteLayout } from './dto/update-website-layout.dto';
 import { School } from './entities/school.entity';
 import { SchoolModelAction } from './model-actions/school.action';
 import { SchoolService } from './school.service';
@@ -351,7 +352,12 @@ describe('SchoolService', () => {
 
       const result = await service.getSchoolDetails();
 
-      expect(result).toEqual(mockSchool);
+      expect(result).toEqual({
+        ...mockSchool,
+        website_layout: WebsiteLayout.ONE_PAGE,
+        use_marketing_site: false,
+        marketing_site_config: null,
+      });
       expect(schoolModelAction.list).toHaveBeenCalledWith({
         filterRecordOptions: { installation_completed: true },
       });
@@ -366,6 +372,89 @@ describe('SchoolService', () => {
       await expect(service.getSchoolDetails()).rejects.toThrow(
         ConflictException,
       );
+    });
+  });
+
+  describe('updateWebsiteLayout', () => {
+    it('enables the multi-page website without replacing its saved content', async () => {
+      const school = {
+        id: 'uuid-123',
+        installation_completed: true,
+        use_marketing_site: false,
+        marketing_site_config: { hiddenPages: [] },
+      } as unknown as School;
+      schoolModelAction.list.mockResolvedValue({
+        payload: [school],
+        paginationMeta: {},
+      });
+      schoolModelAction.update.mockResolvedValue({
+        ...school,
+        use_marketing_site: true,
+      });
+
+      await expect(
+        service.updateWebsiteLayout({
+          website_layout: WebsiteLayout.MULTI_PAGE,
+        }),
+      ).resolves.toEqual({
+        id: 'uuid-123',
+        website_layout: WebsiteLayout.MULTI_PAGE,
+        use_marketing_site: true,
+      });
+      expect(schoolModelAction.update).toHaveBeenCalledWith({
+        identifierOptions: { id: 'uuid-123' },
+        updatePayload: { use_marketing_site: true },
+        transactionOptions: { useTransaction: false },
+      });
+    });
+  });
+
+  describe('updateMarketingSite', () => {
+    it('updates multi-page content without changing the selected layout', async () => {
+      const school = {
+        id: 'uuid-123',
+        installation_completed: true,
+        use_marketing_site: true,
+        marketing_site_config: { hiddenPages: [] },
+      } as unknown as School;
+      const marketingSiteConfig = {
+        hiddenPages: ['news'],
+        home: { heroImageUrl: 'https://files.example/school-hero.jpg' },
+      };
+      schoolModelAction.list.mockResolvedValue({
+        payload: [school],
+        paginationMeta: {},
+      });
+      schoolModelAction.update.mockResolvedValue({
+        ...school,
+        marketing_site_config: marketingSiteConfig,
+      });
+
+      await expect(
+        service.updateMarketingSite({
+          marketing_site_config: marketingSiteConfig,
+        }),
+      ).resolves.toEqual({
+        id: 'uuid-123',
+        marketing_site_config: marketingSiteConfig,
+      });
+      expect(schoolModelAction.update).toHaveBeenCalledWith({
+        identifierOptions: { id: 'uuid-123' },
+        updatePayload: { marketing_site_config: marketingSiteConfig },
+        transactionOptions: { useTransaction: false },
+      });
+    });
+
+    it('rejects an update when the school has not been installed', async () => {
+      schoolModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+
+      await expect(
+        service.updateMarketingSite({ marketing_site_config: {} }),
+      ).rejects.toThrow(ConflictException);
+      expect(schoolModelAction.update).not.toHaveBeenCalled();
     });
   });
 

@@ -41,6 +41,7 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
       status,
       class_id,
       term_id,
+      session_id,
       search,
       page = 1,
       limit = 20,
@@ -51,6 +52,8 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
     const queryBuilder = this.feeRepository
       .createQueryBuilder('fee')
       .leftJoinAndSelect('fee.term', 'term')
+      .leftJoinAndSelect('term.academicSession', 'academicSession')
+      .leftJoinAndSelect('fee.academicSession', 'feeSession')
       .leftJoinAndSelect('fee.classes', 'classes')
       .leftJoin('fee.createdBy', 'createdBy')
       .addSelect([
@@ -66,7 +69,14 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
     }
 
     if (term_id) {
-      queryBuilder.andWhere('fee.term_id = :term_id', { term_id });
+      queryBuilder.andWhere(
+        '(fee.term_id = :term_id OR (fee.period_type = :sessionPeriod AND fee.session_id = (SELECT session_id FROM terms WHERE id = :term_id)))',
+        { term_id, sessionPeriod: 'SESSION' },
+      );
+    }
+
+    if (session_id) {
+      queryBuilder.andWhere('fee.session_id = :session_id', { session_id });
     }
 
     if (class_id) {
@@ -124,14 +134,50 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
       totalPages,
     };
   }
-  async getTotalExpectedFees(termId?: string): Promise<number> {
+  async getTotalExpectedFees(
+    termId?: string,
+    sessionId?: string,
+  ): Promise<number> {
     const query = this.feeRepository
       .createQueryBuilder('fee')
-      .select('COALESCE(SUM(fee.amount), 0)', 'total')
+      .select(
+        `COALESCE(SUM(
+          fee.amount * (
+            SELECT COUNT(DISTINCT assigned.student_id)
+            FROM (
+              SELECT cs.student_id
+              FROM fee_classes fc
+              INNER JOIN class_students cs
+                ON cs.class_id = fc.class_id
+                AND cs.is_active = true
+                AND cs.session_id = fee.session_id
+              INNER JOIN students student
+                ON student.id = cs.student_id
+                AND student.is_deleted = false
+              WHERE fc.fee_id = fee.id
+              UNION
+              SELECT direct.student_id
+              FROM fee_assignments direct
+              INNER JOIN students student
+                ON student.id = direct.student_id
+                AND student.is_deleted = false
+              WHERE direct.fee_id = fee.id
+            ) assigned
+          )
+        ), 0)`,
+        'total',
+      )
       .where('fee.status = :status', { status: FeeStatus.ACTIVE });
 
     if (termId) {
-      query.andWhere('fee.term_id = :termId', { termId });
+      query.andWhere(
+        '(fee.term_id = :termId OR (fee.period_type = :sessionPeriod AND fee.session_id = (SELECT session_id FROM terms WHERE id = :termId)))',
+        { termId, sessionPeriod: 'SESSION' },
+      );
+    }
+
+    if (sessionId) {
+      query.andWhere('fee.session_id = :sessionId', { sessionId });
     }
 
     const result = await query.getRawOne();

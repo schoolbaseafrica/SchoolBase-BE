@@ -687,7 +687,12 @@ export class AttendanceService {
 
   // Get a single student's monthly attendance for current month
 
-  async getStudentMonthlyAttendance(studentId: string): Promise<{
+  async getStudentMonthlyAttendance(
+    studentId: string,
+    sessionId?: string,
+    requestedYear?: number,
+    requestedMonth?: number,
+  ): Promise<{
     message: string;
     month: string;
     year: number;
@@ -708,8 +713,19 @@ export class AttendanceService {
   }> {
     // Get current month start and end dates
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
+    const year = requestedYear ?? now.getFullYear();
+    const monthNumber = requestedMonth ?? now.getMonth() + 1;
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(monthNumber) ||
+      monthNumber < 1 ||
+      monthNumber > 12
+    ) {
+      throw new BadRequestException(
+        'A valid attendance year and month are required',
+      );
+    }
+    const month = monthNumber - 1;
 
     // First day of current month
     const startDate = new Date(year, month, 1);
@@ -723,9 +739,11 @@ export class AttendanceService {
     const { payload: attendanceRecords } =
       await this.studentDailyAttendanceModelAction.list({
         filterRecordOptions: {
-          session_id: await this.academicSessionService
-            .activeSessions()
-            .then((s) => s.data.id),
+          session_id:
+            sessionId ??
+            (await this.academicSessionService
+              .activeSessions()
+              .then((s) => s.data.id)),
           student_id: studentId,
         },
       });
@@ -1189,7 +1207,12 @@ export class AttendanceService {
 
   //parents endpoints to view child attendance
 
-  async getParentChildMonthlyAttendance(registrationNumber: string): Promise<{
+  async getParentChildMonthlyAttendance(
+    registrationNumber: string,
+    sessionId?: string,
+    requestedYear?: number,
+    requestedMonth?: number,
+  ): Promise<{
     message: string;
     month: string;
     year: number;
@@ -1225,8 +1248,19 @@ export class AttendanceService {
 
     // Get current month start and end dates
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
+    const year = requestedYear ?? now.getFullYear();
+    const monthNumber = requestedMonth ?? now.getMonth() + 1;
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(monthNumber) ||
+      monthNumber < 1 ||
+      monthNumber > 12
+    ) {
+      throw new BadRequestException(
+        'A valid attendance year and month are required',
+      );
+    }
+    const month = monthNumber - 1;
 
     const startDate = new Date(year, month, 1);
     const startDateStr = startDate.toISOString().split('T')[0];
@@ -1238,9 +1272,11 @@ export class AttendanceService {
     const { payload: attendanceRecords } =
       await this.studentDailyAttendanceModelAction.list({
         filterRecordOptions: {
-          session_id: await this.academicSessionService
-            .activeSessions()
-            .then((s) => s.data.id),
+          session_id:
+            sessionId ??
+            (await this.academicSessionService
+              .activeSessions()
+              .then((s) => s.data.id)),
           student_id: student.id, // 👈 use student.id after lookup
         },
       });

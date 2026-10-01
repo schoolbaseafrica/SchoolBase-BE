@@ -33,7 +33,7 @@ export class TermController {
 
   @Get('session/:sessionId')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.PARENT, UserRole.STUDENT)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get all terms for a specific academic session' })
@@ -84,7 +84,7 @@ export class TermController {
   }
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.PARENT, UserRole.STUDENT)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Get a term by ID' })

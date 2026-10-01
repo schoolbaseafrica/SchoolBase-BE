@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
+import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
@@ -37,6 +38,7 @@ describe('AuthService', () => {
 
   const mockUserService = {
     findByEmail: jest.fn(),
+    findByLoginIdentifier: jest.fn(),
     create: jest.fn(),
     findOne: jest.fn(),
     updateUser: jest.fn(),
@@ -117,6 +119,58 @@ describe('AuthService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('login', () => {
+    const activeStudent = {
+      id: 'student-user-id',
+      email: 'student@example.com',
+      first_name: 'Student',
+      last_name: 'One',
+      role: ['STUDENT'],
+      is_active: true,
+      password: 'stored-hash',
+    };
+
+    it('accepts a student registration number as the login identifier', async () => {
+      mockUserService.findByLoginIdentifier.mockResolvedValue(activeStudent);
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+      mockJwtService.signAsync.mockResolvedValue('token');
+      mockSessionService.createSession.mockResolvedValue({
+        session_id: 'session-id',
+        expires_at: new Date('2026-09-15T12:00:00Z'),
+      });
+
+      const result = await service.login({
+        email: 'SB/2026/0001',
+        password: 'password',
+      });
+
+      expect(mockUserService.findByLoginIdentifier).toHaveBeenCalledWith(
+        'SB/2026/0001',
+      );
+      expect(result.user.role).toEqual(['STUDENT']);
+      expect(result.access_token).toBe('token');
+    });
+
+    it('keeps email login on the same identifier path', async () => {
+      mockUserService.findByLoginIdentifier.mockResolvedValue(activeStudent);
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+      mockJwtService.signAsync.mockResolvedValue('token');
+      mockSessionService.createSession.mockResolvedValue({
+        session_id: 'session-id',
+        expires_at: new Date('2026-09-15T12:00:00Z'),
+      });
+
+      await service.login({
+        email: 'student@example.com',
+        password: 'password',
+      });
+
+      expect(mockUserService.findByLoginIdentifier).toHaveBeenCalledWith(
+        'student@example.com',
+      );
+    });
   });
 
   describe('logout', () => {

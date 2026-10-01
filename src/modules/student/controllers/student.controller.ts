@@ -38,6 +38,7 @@ import {
   PatchStudentDto,
   StudentProfileResponseDto,
 } from '../dto';
+import { StudentGrowthQueryDto } from '../dto/student.growth.dto';
 import { StudentService } from '../services';
 
 @ApiTags(StudentSwagger.tags[0])
@@ -70,8 +71,8 @@ export class StudentController {
   @Roles(UserRole.ADMIN)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Get('student-growth-report')
-  async getStudentGrowthReport(@Query('academic_year') academicYear: string) {
-    return this.studentService.getStudentGrowthReport(academicYear);
+  async getStudentGrowthReport(@Query() query: StudentGrowthQueryDto) {
+    return this.studentService.getStudentGrowthReport(query);
   }
 
   // --- GET: GET LOGGED-IN STUDENT'S PROFILE ---
@@ -91,6 +92,26 @@ export class StudentController {
     const data = await this.studentService.getMyProfile(studentId, user);
     return {
       message: sysMsg.PROFILE_RETRIEVED,
+      status_code: HttpStatus.OK,
+      data,
+    };
+  }
+
+  @Get('/profile/:studentId/academic-context')
+  @Roles(UserRole.ADMIN, UserRole.STUDENT)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getAcademicContext(
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Query('session_id', ParseUUIDPipe) sessionId: string,
+    @CurrentUser() user: IUserPayload,
+  ) {
+    const data = await this.studentService.getAcademicContext(
+      studentId,
+      sessionId,
+      user,
+    );
+    return {
+      message: 'Student academic context retrieved successfully',
       status_code: HttpStatus.OK,
       data,
     };

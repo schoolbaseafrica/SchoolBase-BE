@@ -45,6 +45,8 @@ export class InvitesController {
 
   // --- GET: LIST ALL INVITES (ADMIN ONLY) ---
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
   @Roles(UserRole.ADMIN)
   @ApiListInvites()
   async listInvites(@Query() query: InviteQueryDto) {

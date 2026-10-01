@@ -33,8 +33,12 @@ import {
   StudentAssignmentResponseDto,
   TeacherAssignmentResponseDto,
   UpdateClassDto,
+  PromoteStudentsDto,
+  PromotionPreview,
 } from '../dto';
 import { ClassStudent } from '../entities/class-student.entity';
+import { ClassTeacher } from '../entities/class-teacher.entity';
+import { Class } from '../entities/class.entity';
 import { ClassStudentModelAction } from '../model-actions/class-student.action';
 import { ClassTeacherModelAction } from '../model-actions/class-teacher.action';
 import { ClassModelAction } from '../model-actions/class.actions';
@@ -213,6 +217,114 @@ export class ClassService {
     return payload[0];
   }
 
+  async assignTeacherToClass(
+    teacherId: string,
+    classId: string,
+    sessionId?: string,
+  ) {
+    const [teacher, classEntity] = await Promise.all([
+      this.teacherModelAction.get({ identifierOptions: { id: teacherId } }),
+      this.classModelAction.get({
+        identifierOptions: { id: classId },
+        relations: { academicSession: true },
+      }),
+    ]);
+
+    if (!teacher || !teacher.is_active) {
+      throw new NotFoundException(
+        'The selected teacher was not found or is inactive.',
+      );
+    }
+    if (!classEntity || classEntity.is_deleted) {
+      throw new NotFoundException(
+        'The selected class was not found or has been archived.',
+      );
+    }
+
+    const classSessionId = classEntity.academicSession?.id;
+    if (!classSessionId) {
+      throw new BadRequestException(
+        'The selected class is not linked to an academic session.',
+      );
+    }
+    if (sessionId && sessionId !== classSessionId) {
+      throw new BadRequestException(
+        `This class belongs to ${classEntity.academicSession.name}. Select a class from the intended session and try again.`,
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(ClassTeacher);
+      const existing = await repository.findOne({
+        where: {
+          teacher: { id: teacherId },
+          class: { id: classId },
+          session_id: classSessionId,
+        },
+      });
+
+      if (existing) {
+        if (existing.is_active) return { assignment: existing, created: false };
+        existing.is_active = true;
+        existing.assignment_date = new Date();
+        return { assignment: await repository.save(existing), created: true };
+      }
+
+      const assignment = repository.create({
+        teacher: { id: teacherId },
+        class: { id: classId },
+        session_id: classSessionId,
+        assignment_date: new Date(),
+        is_active: true,
+      });
+      return { assignment: await repository.save(assignment), created: true };
+    });
+
+    return {
+      message: result.created
+        ? `Teacher assigned to ${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''} successfully.`
+        : `Teacher is already assigned to ${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''}.`,
+      teacher_id: teacherId,
+      class_id: classId,
+      class_name: `${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''}`,
+      assignment_date: result.assignment.assignment_date,
+    };
+  }
+
+  async unassignTeacherFromClass(
+    teacherId: string,
+    classId: string,
+    sessionId?: string,
+  ) {
+    const classEntity = await this.classModelAction.get({
+      identifierOptions: { id: classId },
+      relations: { academicSession: true },
+    });
+    if (!classEntity || classEntity.is_deleted) {
+      throw new NotFoundException('The selected class was not found.');
+    }
+
+    const targetSessionId = sessionId || classEntity.academicSession?.id;
+    const repository = this.dataSource.getRepository(ClassTeacher);
+    const assignment = await repository.findOne({
+      where: {
+        teacher: { id: teacherId },
+        class: { id: classId },
+        session_id: targetSessionId,
+        is_active: true,
+      },
+    });
+    if (!assignment) {
+      throw new NotFoundException(
+        'This teacher is not assigned to the selected class for that session.',
+      );
+    }
+
+    assignment.is_active = false;
+    await repository.save(assignment);
+    return { message: 'Teacher unassigned from class successfully.' };
+  }
+
   /**
    * Updates the name and/or arm of an existing class, ensuring uniqueness within the session.
    */
@@ -279,11 +391,25 @@ export class ClassService {
   /**
    * Fetches all classes grouped by name and academic session, including arm.
    */
-  async getGroupedClasses(page = 1, limit = 20) {
+  async getGroupedClasses(
+    page = 1,
+    limit = 20,
+    includeArchived = false,
+    sessionId?: string,
+    includeAllSessions = false,
+  ) {
+    const targetSessionId = includeAllSessions
+      ? undefined
+      : sessionId || (await this.getActiveSession()).id;
     // Use generic list method from AbstractModelAction
     const { payload: classesRaw, paginationMeta } =
       await this.classModelAction.list({
-        filterRecordOptions: { is_deleted: false },
+        filterRecordOptions: {
+          ...(includeArchived ? {} : { is_deleted: false }),
+          ...(targetSessionId
+            ? { academicSession: { id: targetSessionId } }
+            : {}),
+        },
         relations: { academicSession: true },
         order: { name: 'ASC', arm: 'ASC' },
         paginationPayload: { page, limit },
@@ -937,6 +1063,188 @@ export class ClassService {
     });
 
     return Array.from(uniqueClasses.values());
+  }
+
+  async previewPromotion(dto: PromoteStudentsDto): Promise<PromotionPreview> {
+    if (dto.sourceSessionId === dto.targetSessionId) {
+      throw new BadRequestException(
+        'Source and target academic sessions must be different.',
+      );
+    }
+
+    const sourceSession = await this.academicSessionModelAction.get({
+      identifierOptions: { id: dto.sourceSessionId },
+    });
+    const targetSession = await this.academicSessionModelAction.get({
+      identifierOptions: { id: dto.targetSessionId },
+    });
+    if (!sourceSession || !targetSession) {
+      throw new NotFoundException(
+        'Source or target academic session not found.',
+      );
+    }
+
+    const duplicateSourceIds = dto.armMappings
+      .map((mapping) => mapping.sourceClassId)
+      .filter((id, index, values) => values.indexOf(id) !== index);
+    if (duplicateSourceIds.length > 0) {
+      throw new BadRequestException(
+        'Each source class can only appear once in a promotion.',
+      );
+    }
+
+    const targetAssignments = await this.classStudentModelAction.list({
+      filterRecordOptions: {
+        session_id: dto.targetSessionId,
+        is_active: true,
+      },
+      relations: { student: true, class: true },
+    });
+    const studentsAlreadyInTarget = new Set(
+      targetAssignments.payload.map((assignment) => assignment.student.id),
+    );
+
+    const mappings = [];
+    for (const mapping of dto.armMappings) {
+      const sourceClass = await this.classModelAction.get({
+        identifierOptions: { id: mapping.sourceClassId },
+        relations: { academicSession: true },
+      });
+      const targetClass = await this.classModelAction.get({
+        identifierOptions: { id: mapping.targetClassId },
+        relations: { academicSession: true },
+      });
+      const errors: string[] = [];
+
+      if (!sourceClass || sourceClass.is_deleted) {
+        errors.push('Source class does not exist or is archived.');
+      } else if (sourceClass.academicSession.id !== dto.sourceSessionId) {
+        errors.push('Source class does not belong to the source session.');
+      }
+      if (!targetClass || targetClass.is_deleted) {
+        errors.push('Target class does not exist or is archived.');
+      } else if (targetClass.academicSession.id !== dto.targetSessionId) {
+        errors.push('Target class does not belong to the target session.');
+      }
+
+      const sourceAssignments = sourceClass
+        ? await this.classStudentModelAction.list({
+            filterRecordOptions: {
+              class: { id: sourceClass.id },
+              session_id: dto.sourceSessionId,
+              is_active: true,
+              student: { is_deleted: false },
+            },
+            relations: { student: true },
+          })
+        : { payload: [] };
+      const studentIds = sourceAssignments.payload.map(
+        (assignment) => assignment.student.id,
+      );
+      const alreadyInTargetStudentIds = studentIds.filter((id) =>
+        studentsAlreadyInTarget.has(id),
+      );
+      const toPromoteStudentIds = studentIds.filter(
+        (id) => !studentsAlreadyInTarget.has(id),
+      );
+
+      mappings.push({
+        sourceClassId: mapping.sourceClassId,
+        targetClassId: mapping.targetClassId,
+        sourceClassName: sourceClass
+          ? `${sourceClass.name}${sourceClass.arm ? ` ${sourceClass.arm}` : ''}`
+          : 'Unknown class',
+        targetClassName: targetClass
+          ? `${targetClass.name}${targetClass.arm ? ` ${targetClass.arm}` : ''}`
+          : 'Unknown class',
+        toPromote: toPromoteStudentIds.length,
+        toPromoteStudentIds,
+        alreadyInTarget: alreadyInTargetStudentIds.length,
+        alreadyInTargetStudentIds,
+        errors,
+      });
+    }
+
+    return {
+      sourceSessionId: dto.sourceSessionId,
+      targetSessionId: dto.targetSessionId,
+      mappings,
+      errors: mappings.flatMap((mapping) => mapping.errors),
+    };
+  }
+
+  async executePromotion(dto: PromoteStudentsDto) {
+    const preview = await this.previewPromotion(dto);
+    if (preview.errors.length > 0) {
+      throw new BadRequestException({
+        message: 'Promotion validation failed.',
+        errors: preview.errors,
+      });
+    }
+
+    const details = preview.mappings.map((mapping) => ({
+      sourceClassId: mapping.sourceClassId,
+      targetClassId: mapping.targetClassId,
+      promoted: 0,
+      skipped: mapping.alreadyInTarget,
+      failed: 0,
+    }));
+
+    await this.dataSource.transaction(async (manager) => {
+      for (const [mappingIndex, mapping] of preview.mappings.entries()) {
+        for (const studentId of mapping.toPromoteStudentIds) {
+          const existingTargetAssignment = await manager.findOne(ClassStudent, {
+            where: {
+              student: { id: studentId },
+              session_id: dto.targetSessionId,
+            },
+            relations: { class: true },
+          });
+
+          if (existingTargetAssignment?.is_active) {
+            details[mappingIndex].skipped++;
+            continue;
+          }
+
+          if (existingTargetAssignment) {
+            existingTargetAssignment.class = {
+              id: mapping.targetClassId,
+            } as Class;
+            existingTargetAssignment.is_active = true;
+            existingTargetAssignment.enrollment_date = new Date();
+            await manager.save(ClassStudent, existingTargetAssignment);
+          } else {
+            await manager.save(
+              ClassStudent,
+              manager.create(ClassStudent, {
+                class: { id: mapping.targetClassId } as Class,
+                student: { id: studentId },
+                session_id: dto.targetSessionId,
+                is_active: true,
+                enrollment_date: new Date(),
+              }),
+            );
+          }
+
+          await this.studentModelAction.update({
+            identifierOptions: { id: studentId },
+            updatePayload: { current_class_id: mapping.targetClassId },
+            transactionOptions: {
+              useTransaction: true,
+              transaction: manager,
+            },
+          });
+          details[mappingIndex].promoted++;
+        }
+      }
+    });
+
+    return {
+      promoted: details.reduce((total, item) => total + item.promoted, 0),
+      skipped: details.reduce((total, item) => total + item.skipped, 0),
+      failed: 0,
+      details,
+    };
   }
 
   protected async notifyClassUsers(

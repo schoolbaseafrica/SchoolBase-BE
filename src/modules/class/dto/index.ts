@@ -16,3 +16,5 @@ export * from './assign-teacher-to-class-subject.dto';
 export * from './class-subjects.dto';
 export * from './list-class-subject.dto';
 export * from './bulk-create-class-subject.dto';
+export * from './promote-students.dto';
+export * from './assign-teacher-to-class.dto';

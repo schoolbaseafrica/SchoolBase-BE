@@ -39,6 +39,7 @@ describe('InviteService', () => {
   let emailService: { sendMail: jest.Mock };
   let configService: { get: jest.Mock };
   let dataSource: { transaction: jest.Mock };
+  let inviteRepository: { createQueryBuilder: jest.Mock };
 
   const mockInvite = {
     id: 'invite-uuid',
@@ -82,12 +83,9 @@ describe('InviteService', () => {
       child: jest.fn().mockReturnThis(),
     };
 
-    const inviteRepository = {
-      create: jest.fn(),
-      save: jest.fn(),
-      findOne: jest.fn(),
+    inviteRepository = {
       createQueryBuilder: jest.fn(),
-    } as unknown as jest.Mocked<Repository<Invite>>;
+    };
 
     const mockDataSource = {
       transaction: jest.fn((cb) => cb({})),
@@ -99,7 +97,12 @@ describe('InviteService', () => {
         { provide: InviteModelAction, useValue: createMockAction() }, // Isolated Mock
         { provide: UserModelAction, useValue: createMockAction() }, // Isolated Mock
         { provide: SchoolModelAction, useValue: createMockAction() }, // Isolated Mock
-        { provide: getRepositoryToken(Invite), useValue: inviteRepository },
+        {
+          provide: getRepositoryToken(Invite),
+          useValue: inviteRepository as unknown as jest.Mocked<
+            Repository<Invite>
+          >,
+        },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: EmailService, useValue: { sendMail: jest.fn() } },
         { provide: WINSTON_MODULE_PROVIDER, useValue: mockLoggerObj },
@@ -198,6 +201,10 @@ describe('InviteService', () => {
       expect(inviteModelAction.update).toHaveBeenCalledWith(
         expect.objectContaining({
           identifierOptions: { id: existingInvite.id },
+          updatePayload: expect.objectContaining({
+            accepted: false,
+            status: InviteStatus.PENDING,
+          }),
         }),
       );
 
@@ -230,6 +237,35 @@ describe('InviteService', () => {
     });
   });
 
+  describe('findAll', () => {
+    it('returns only unaccepted records for the pending filter', async () => {
+      const queryBuilder = {
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(1),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([mockInvite]),
+      };
+      inviteRepository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+      const result = await service.findAll({
+        status: InviteStatus.PENDING,
+        page: 1,
+        limit: 100,
+      });
+
+      expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+        'invite.status = :status',
+        { status: InviteStatus.PENDING },
+      );
+      expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+        'invite.accepted = false',
+      );
+      expect(result.data).toHaveLength(1);
+    });
+  });
+
   describe('acceptInvite', () => {
     const dto: AcceptInviteDto = {
       token: 'valid-token',
@@ -257,7 +293,12 @@ describe('InviteService', () => {
 
       expect(userModelAction.create).toHaveBeenCalled();
       expect(inviteModelAction.update).toHaveBeenCalledWith(
-        expect.objectContaining({ updatePayload: { accepted: true } }),
+        expect.objectContaining({
+          updatePayload: {
+            accepted: true,
+            status: InviteStatus.USED,
+          },
+        }),
       );
       expect(result.status_code).toBe(HttpStatus.CREATED);
     });

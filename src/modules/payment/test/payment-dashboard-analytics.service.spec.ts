@@ -108,6 +108,7 @@ describe('DashboardAnalyticsService', () => {
       // Check Calls
       expect(feesModelAction.getTotalExpectedFees).toHaveBeenCalledWith(
         mockDto.term_id,
+        mockDto.session_id,
       );
       expect(paymentModelAction.getTotalCollected).toHaveBeenCalledWith(
         mockDto.term_id,
