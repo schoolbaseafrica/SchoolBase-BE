@@ -13,7 +13,7 @@ import { Term } from '../academic-term/entities/term.entity';
 import { ClassStudent } from '../class/entities/class-student.entity';
 import { ClassSubject } from '../class/entities/class-subject.entity';
 import { Class } from '../class/entities/class.entity';
-import { NotificationService } from '../notification/services/notification.service';
+import { Notification } from '../notification/entities/notification.entity';
 import { NotificationType } from '../notification/types/notification.types';
 import { Student } from '../student/entities/student.entity';
 import { Subject } from '../subject/entities/subject.entity';
@@ -66,9 +66,28 @@ export class AssignmentService {
     private readonly schedules: Repository<Schedule>,
     @InjectRepository(AssignmentAttachment)
     private readonly attachments: Repository<AssignmentAttachment>,
+    @InjectRepository(Notification)
+    private readonly notifications: Repository<Notification>,
     private readonly minio: MinioService,
-    private readonly notifications: NotificationService,
   ) {}
+
+  private createNotification(
+    recipientId: string,
+    title: string,
+    message: string,
+    metadata: Record<string, string>,
+  ) {
+    return this.notifications.save(
+      this.notifications.create({
+        recipient_id: recipientId,
+        title,
+        message,
+        type: NotificationType.ASSIGNMENT,
+        metadata,
+        is_read: false,
+      }),
+    );
+  }
 
   private isAdmin(roles: string[]) {
     return roles.includes('admin');
@@ -247,11 +266,10 @@ export class AssignmentService {
       enrolments.flatMap((item) =>
         item.student?.user?.id
           ? [
-              this.notifications.createNotification(
+              this.createNotification(
                 item.student.user.id,
                 'New assignment',
                 `${assignment.subject.name}: ${assignment.title}`,
-                NotificationType.ASSIGNMENT,
                 {
                   assignment_id: assignment.id,
                   deep_link: '/student/assignments',
@@ -519,11 +537,10 @@ export class AssignmentService {
       requestedStatus === AssignmentSubmissionStatus.SUBMITTED &&
       assignment.teacher.user?.id
     ) {
-      await this.notifications.createNotification(
+      await this.createNotification(
         assignment.teacher.user.id,
         'Assignment submitted',
         `${student.user?.first_name ?? student.registration_number} submitted ${assignment.title}`,
-        NotificationType.ASSIGNMENT,
         { assignment_id: assignment.id, deep_link: '/teacher/assignments' },
       );
     }
@@ -553,11 +570,10 @@ export class AssignmentService {
     submission.gradedAt = new Date();
     const saved = await this.submissions.save(submission);
     if (submission.student.user?.id) {
-      await this.notifications.createNotification(
+      await this.createNotification(
         submission.student.user.id,
         'Assignment graded',
         `${assignment.title} has been graded`,
-        NotificationType.ASSIGNMENT,
         { assignment_id: assignment.id, deep_link: '/student/assignments' },
       );
     }

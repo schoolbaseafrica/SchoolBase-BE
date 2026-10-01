@@ -6,7 +6,7 @@ import { Term } from '../academic-term/entities/term.entity';
 import { ClassStudent } from '../class/entities/class-student.entity';
 import { ClassSubject } from '../class/entities/class-subject.entity';
 import { Class } from '../class/entities/class.entity';
-import { NotificationModule } from '../notification/notification.module';
+import { Notification } from '../notification/entities/notification.entity';
 import { Student } from '../student/entities/student.entity';
 import { Subject } from '../subject/entities/subject.entity';
 import { Teacher } from '../teacher/entities/teacher.entity';
@@ -21,7 +21,6 @@ import { Assignment, AssignmentSubmission } from './entities/assignment.entity';
 @Module({
   imports: [
     UploadModule,
-    NotificationModule,
     TypeOrmModule.forFeature([
       Assignment,
       AssignmentSubmission,
@@ -35,6 +34,7 @@ import { Assignment, AssignmentSubmission } from './entities/assignment.entity';
       Teacher,
       Schedule,
       AssignmentAttachment,
+      Notification,
     ]),
   ],
   controllers: [AssignmentController],
