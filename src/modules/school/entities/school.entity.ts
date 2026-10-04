@@ -65,6 +65,12 @@ export class School extends BaseEntity {
   @Column({ type: 'jsonb', nullable: true })
   marketing_site_config?: Record<string, unknown> | null;
 
+  @Column({ type: 'jsonb', default: () => `'["NFC"]'::jsonb` })
+  attendance_enabled_methods: string[];
+
+  @Column({ type: 'varchar', length: 40, default: 'secugen' })
+  fingerprint_provider: string;
+
   @Column({ comment: 'Dedicated DB connection', type: 'text', nullable: true })
   @IsOptional()
   @IsString()

@@ -5,11 +5,13 @@ import { AcademicSessionModule } from '../academic-session/academic-session.modu
 import { TermModule } from '../academic-term/term.module';
 import { TeachersModule } from '../teacher/teacher.module';
 
+import { AttendanceMethodPolicyService } from './attendance-method-policy.service';
 import {
   ScheduleBasedAttendanceController,
   StudentDailyAttendanceController,
   TeachersAttendanceController,
 } from './controllers';
+import { MobileAttendanceController } from './controllers/mobile-attendance.controller';
 import {
   ScheduleBasedAttendance,
   StudentDailyAttendance,
@@ -17,6 +19,7 @@ import {
   TeacherManualCheckin,
 } from './entities';
 import { AttendanceEditRequest } from './entities/student-daily-attendance.entity';
+import { MobileAttendanceService } from './mobile-attendance.service';
 import {
   AttendanceModelAction,
   StudentDailyAttendanceModelAction,
@@ -43,6 +46,7 @@ import { AttendanceService, TeachersAttendanceService } from './services';
     ScheduleBasedAttendanceController,
     StudentDailyAttendanceController,
     TeachersAttendanceController,
+    MobileAttendanceController,
   ],
   providers: [
     AttendanceService,
@@ -52,6 +56,8 @@ import { AttendanceService, TeachersAttendanceService } from './services';
     TeacherManualCheckinModelAction,
     TeacherDailyAttendanceModelAction,
     AttendanceEditRequestModelAction,
+    MobileAttendanceService,
+    AttendanceMethodPolicyService,
   ],
   exports: [AttendanceService, TeachersAttendanceService],
 })

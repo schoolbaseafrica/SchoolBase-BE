@@ -23,6 +23,13 @@ export class Student extends BaseEntity {
   @Column({ name: 'photo_url', nullable: true })
   photo_url: string;
 
+  @Index('IDX_schoolbase_students_nfc_card_id', {
+    unique: true,
+    where: '"nfc_card_id" IS NOT NULL',
+  })
+  @Column({ name: 'nfc_card_id', type: 'varchar', nullable: true })
+  nfc_card_id?: string | null;
+
   @OneToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
