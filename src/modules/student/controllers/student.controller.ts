@@ -11,9 +11,15 @@ import {
   HttpStatus,
   Query,
   ParseUUIDPipe,
+  UploadedFile,
+  Headers,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOkResponse } from '@nestjs/swagger';
 
+import { IMulterFile } from '../../../common/types/multer.types';
+import { pictureUploadConfig } from '../../../config/multer.config';
 import * as sysMsg from '../../../constants/system.messages';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { Roles } from '../../auth/decorators/roles.decorator';
@@ -39,12 +45,45 @@ import {
   StudentProfileResponseDto,
 } from '../dto';
 import { StudentGrowthQueryDto } from '../dto/student.growth.dto';
+import { PhotoCaptureTokenGuard } from '../guards/photo-capture-token.guard';
 import { StudentService } from '../services';
+import { StudentPhotoCaptureService } from '../services/student-photo-capture.service';
 
 @ApiTags(StudentSwagger.tags[0])
 @Controller('students')
 export class StudentController {
-  constructor(private readonly studentService: StudentService) {}
+  constructor(
+    private readonly studentService: StudentService,
+    private readonly photos: StudentPhotoCaptureService,
+  ) {}
+
+  @Post('me/photo-capture-links')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.STUDENT)
+  createPhotoCaptureLink(@CurrentUser() user: { id: string }) {
+    return this.photos.createLink(user.id);
+  }
+
+  @Get('me/photo-capture-links/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.STUDENT)
+  photoCaptureLinkStatus(
+    @CurrentUser() user: { id: string },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.photos.status(user.id, id);
+  }
+
+  @Post('photo-capture')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(PhotoCaptureTokenGuard)
+  @UseInterceptors(FileInterceptor('file', pictureUploadConfig))
+  captureStudentPhoto(
+    @Headers('x-capture-token') token: string,
+    @UploadedFile() file: IMulterFile,
+  ) {
+    return this.photos.capture(token, file);
+  }
 
   @Post()
   @CreateStudentDocs()

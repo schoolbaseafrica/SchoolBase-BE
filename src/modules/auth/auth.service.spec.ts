@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMSG from '../../constants/system.messages';
@@ -77,6 +78,10 @@ describe('AuthService', () => {
     update: jest.fn(),
   };
 
+  const mockDataSource = {
+    getRepository: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -109,6 +114,7 @@ describe('AuthService', () => {
           provide: InviteModelAction,
           useValue: mockInviteModelAction,
         },
+        { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
 
@@ -119,6 +125,30 @@ describe('AuthService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('includes the saved student photo in their profile', async () => {
+    mockUserService.findOne.mockResolvedValue({
+      id: 'user-1',
+      email: 'student@example.com',
+      first_name: 'Student',
+      last_name: 'One',
+      role: ['STUDENT'],
+    });
+    const findOne = jest
+      .fn()
+      .mockResolvedValue({ photo_url: 'https://images.example/student.jpg' });
+    mockDataSource.getRepository.mockReturnValue({ findOne });
+
+    const profile = await service.getProfile({
+      user: { id: 'user-1', student_id: 'student-1' },
+    } as never);
+
+    expect(profile.photo_url).toBe('https://images.example/student.jpg');
+    expect(findOne).toHaveBeenCalledWith({
+      where: { id: 'student-1', is_deleted: false },
+      select: ['photo_url'],
+    });
   });
 
   describe('login', () => {
@@ -232,6 +262,7 @@ describe('AuthService', () => {
               provide: InviteModelAction,
               useValue: mockInviteModelAction,
             },
+            { provide: DataSource, useValue: mockDataSource },
           ],
         }).compile();
 
@@ -410,6 +441,7 @@ describe('AuthService', () => {
               provide: InviteModelAction,
               useValue: mockInviteModelAction,
             },
+            { provide: DataSource, useValue: mockDataSource },
           ],
         }).compile();
 

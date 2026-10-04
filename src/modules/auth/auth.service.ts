@@ -14,6 +14,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { IRequestWithUser } from '../../common/types';
@@ -25,6 +26,7 @@ import { EmailPayload } from '../email/email.types';
 import { InviteStatus } from '../invites/entities/invites.entity';
 import { InviteModelAction } from '../invites/invite.model-action';
 import { SessionService } from '../session/session.service';
+import { Student } from '../student/entities/student.entity';
 import { UserService } from '../user/user.service';
 
 import {
@@ -48,6 +50,7 @@ export class AuthService {
     private readonly sessionService: SessionService,
     private readonly configService: ConfigService,
     private readonly inviteModelAction: InviteModelAction,
+    private readonly dataSource: DataSource,
   ) {
     this.logger = logger.child({ context: AuthService.name });
   }
@@ -348,6 +351,13 @@ export class AuthService {
       throw new UnauthorizedException(sysMsg.USER_NOT_FOUND);
     }
 
+    const student = student_id
+      ? await this.dataSource.getRepository(Student).findOne({
+          where: { id: student_id, is_deleted: false },
+          select: ['photo_url'],
+        })
+      : null;
+
     return {
       id: user.id,
       email: user.email,
@@ -361,6 +371,7 @@ export class AuthService {
       parent_id,
       student_id,
       teacher_id,
+      photo_url: student?.photo_url ?? null,
       is_active: user.is_active,
       created_at: user.createdAt,
       updated_at: user.updatedAt,
