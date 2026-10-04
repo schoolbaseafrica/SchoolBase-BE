@@ -161,6 +161,9 @@ export class StudentPhotoCaptureService {
         );
         uploadedId = uploaded.publicId;
         student.photo_url = uploaded.url;
+        student.face_photo_object_key = uploaded.publicId;
+        student.face_photo_approved_at = null;
+        student.face_photo_approved_by = null;
         await manager.save(student);
         await manager.query(
           `UPDATE "student_photo_capture_links" SET "state" = 'complete', "used_at" = now()

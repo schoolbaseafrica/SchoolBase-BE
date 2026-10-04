@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AcademicSessionModule } from '../academic-session/academic-session.module';
 import { TermModule } from '../academic-term/term.module';
 import { TeachersModule } from '../teacher/teacher.module';
+import { UploadModule } from '../upload/upload.module';
 
 import { AttendanceMethodPolicyService } from './attendance-method-policy.service';
 import {
@@ -19,6 +20,8 @@ import {
   TeacherManualCheckin,
 } from './entities';
 import { AttendanceEditRequest } from './entities/student-daily-attendance.entity';
+import { FaceAttendanceService } from './face-attendance.service';
+import { FaceVerificationService } from './face-verification.service';
 import { MobileAttendanceService } from './mobile-attendance.service';
 import {
   AttendanceModelAction,
@@ -41,6 +44,7 @@ import { AttendanceService, TeachersAttendanceService } from './services';
     AcademicSessionModule,
     TermModule,
     TeachersModule,
+    UploadModule,
   ],
   controllers: [
     ScheduleBasedAttendanceController,
@@ -58,6 +62,8 @@ import { AttendanceService, TeachersAttendanceService } from './services';
     AttendanceEditRequestModelAction,
     MobileAttendanceService,
     AttendanceMethodPolicyService,
+    FaceVerificationService,
+    FaceAttendanceService,
   ],
   exports: [AttendanceService, TeachersAttendanceService],
 })

@@ -12,7 +12,11 @@ describe('AttendanceMethodPolicyService', () => {
     findOne: jest.fn(async () => school),
     save: jest.fn(async (value: unknown) => value),
   };
-  const policy = new AttendanceMethodPolicyService({ manager } as never);
+  const faceVerification = { available: false };
+  const policy = new AttendanceMethodPolicyService(
+    { manager } as never,
+    faceVerification as never,
+  );
 
   it('exposes the default provider and only ready methods', async () => {
     const result = await policy.get();
@@ -26,5 +30,21 @@ describe('AttendanceMethodPolicyService', () => {
       BadRequestException,
     );
     expect(manager.save).not.toHaveBeenCalled();
+  });
+
+  it('allows Face when a provider is configured', async () => {
+    faceVerification.available = true;
+    await expect(policy.update(['NFC', 'FACE'])).resolves.toMatchObject({
+      enabledMethods: ['NFC', 'FACE'],
+    });
+    faceVerification.available = false;
+  });
+
+  it('does not offer Face to teachers after its provider is removed', async () => {
+    school.attendance_enabled_methods = ['NFC', 'FACE'];
+    faceVerification.available = false;
+    await expect(policy.get()).resolves.toMatchObject({
+      enabledMethods: ['NFC'],
+    });
   });
 });

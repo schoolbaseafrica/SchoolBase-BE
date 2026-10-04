@@ -8,12 +8,17 @@ import { DataSource } from 'typeorm';
 
 import { School } from '../school/entities/school.entity';
 
+import { FaceVerificationService } from './face-verification.service';
+
 export const attendanceMethods = ['NFC', 'FACE', 'FINGERPRINT'] as const;
 export type AttendanceMethod = (typeof attendanceMethods)[number];
 
 @Injectable()
 export class AttendanceMethodPolicyService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly faceVerification: FaceVerificationService,
+  ) {}
 
   private async school() {
     const school = await this.dataSource.manager.findOne(School, {
@@ -28,8 +33,11 @@ export class AttendanceMethodPolicyService {
     const school = await this.school();
     const enabledMethods = (
       school.attendance_enabled_methods ?? ['NFC']
-    ).filter((method): method is AttendanceMethod =>
-      attendanceMethods.includes(method as AttendanceMethod),
+    ).filter(
+      (method): method is AttendanceMethod =>
+        attendanceMethods.includes(method as AttendanceMethod) &&
+        (method === 'NFC' ||
+          (method === 'FACE' && this.faceVerification.available)),
     );
     return {
       enabledMethods,
@@ -37,8 +45,10 @@ export class AttendanceMethodPolicyService {
       capabilities: {
         NFC: { available: true },
         FACE: {
-          available: false,
-          reason: 'Face recognition provider is not configured',
+          available: this.faceVerification.available,
+          ...(!this.faceVerification.available && {
+            reason: 'Face verification provider is not configured',
+          }),
         },
         FINGERPRINT: {
           available: false,
@@ -55,9 +65,14 @@ export class AttendanceMethodPolicyService {
     ) {
       throw new BadRequestException('Select distinct attendance methods');
     }
-    if (enabledMethods.some((method) => method !== 'NFC')) {
+    if (enabledMethods.includes('FACE') && !this.faceVerification.available) {
       throw new BadRequestException(
-        'Face and fingerprint require a configured recognition provider',
+        'Face verification provider is not configured',
+      );
+    }
+    if (enabledMethods.includes('FINGERPRINT')) {
+      throw new BadRequestException(
+        'Fingerprint reader provider is not configured',
       );
     }
     const school = await this.school();

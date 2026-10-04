@@ -289,6 +289,9 @@ export class StudentService {
           identifierOptions: { id },
           updatePayload: {
             photo_url: photo_url,
+            face_photo_object_key: null,
+            face_photo_approved_at: null,
+            face_photo_approved_by: null,
           },
           transactionOptions: {
             useTransaction: true,

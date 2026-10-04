@@ -32,7 +32,13 @@ describe('StudentPhotoCaptureService', () => {
   });
 
   it('saves one camera photo and refuses a replay of the link', async () => {
-    const student = { id: 'student-1', photo_url: null };
+    const student = {
+      id: 'student-1',
+      photo_url: null,
+      face_photo_object_key: 'schoolbase-users/student-1/old.jpg',
+      face_photo_approved_at: new Date(),
+      face_photo_approved_by: 'admin-1',
+    };
     let state = 'pending';
     const managerMock = {
       query: jest.fn(async (sql: string) => {
@@ -84,6 +90,9 @@ describe('StudentPhotoCaptureService', () => {
       photoUrl: 'https://images.example/student.jpg',
     });
     expect(student.photo_url).toBe('https://images.example/student.jpg');
+    expect(student.face_photo_object_key).toBe('student.jpg');
+    expect(student.face_photo_approved_at).toBeNull();
+    expect(student.face_photo_approved_by).toBeNull();
     await expect(service.capture(token, file)).rejects.toBeInstanceOf(
       GoneException,
     );

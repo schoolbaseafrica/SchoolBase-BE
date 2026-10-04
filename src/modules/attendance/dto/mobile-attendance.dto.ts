@@ -47,6 +47,17 @@ export class MobileNfcTapDto {
   cardId: string;
 }
 
+export class MobileFaceCheckInDto {
+  @IsUUID()
+  classId: string;
+
+  @IsUUID()
+  studentId: string;
+
+  @IsUUID()
+  clientEventId: string;
+}
+
 class BulkCardItemDto {
   @IsString()
   @IsNotEmpty()

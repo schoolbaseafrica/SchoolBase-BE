@@ -9,12 +9,17 @@ import {
   Post,
   Req,
   Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 
+import { IMulterFile } from '../../../common/types/multer.types';
 import { IRequestWithUser } from '../../../common/types/request-with-user.interface';
+import { pictureUploadConfig } from '../../../config/multer.config';
 import { Roles } from '../../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../auth/guards/roles.guard';
@@ -23,9 +28,11 @@ import { AttendanceMethodPolicyService } from '../attendance-method-policy.servi
 import {
   AssignStudentCardDto,
   BulkAssignCardsDto,
+  MobileFaceCheckInDto,
   MobileNfcTapDto,
   UpdateAttendanceMethodsDto,
 } from '../dto/mobile-attendance.dto';
+import { FaceAttendanceService } from '../face-attendance.service';
 import { MobileAttendanceService } from '../mobile-attendance.service';
 
 @Controller('attendance/mobile')
@@ -36,6 +43,7 @@ export class MobileAttendanceController {
   constructor(
     private readonly mobile: MobileAttendanceService,
     private readonly policy: AttendanceMethodPolicyService,
+    private readonly face: FaceAttendanceService,
   ) {}
 
   @Get('methods')
@@ -54,6 +62,53 @@ export class MobileAttendanceController {
   @Roles(UserRole.TEACHER)
   teacherClasses(@Req() req: IRequestWithUser) {
     return this.mobile.teacherClasses(req.user.userId);
+  }
+
+  @Get('classes/:classId/students')
+  @Roles(UserRole.TEACHER)
+  classStudents(
+    @Req() req: IRequestWithUser,
+    @Param('classId', ParseUUIDPipe) classId: string,
+  ) {
+    return this.face.classStudents(req.user.userId, classId);
+  }
+
+  @Post('face-check-in')
+  @Roles(UserRole.TEACHER)
+  @UseInterceptors(FileInterceptor('file', pictureUploadConfig))
+  recordFace(
+    @Req() req: IRequestWithUser,
+    @Body() dto: MobileFaceCheckInDto,
+    @UploadedFile() file: IMulterFile,
+  ) {
+    return this.face.recordFace(
+      req.user.userId,
+      dto.classId,
+      dto.studentId,
+      dto.clientEventId,
+      file,
+    );
+  }
+
+  @Get('students/:studentId/face-reference')
+  @Roles(UserRole.ADMIN)
+  faceReference(@Param('studentId', ParseUUIDPipe) studentId: string) {
+    return this.face.faceReference(studentId);
+  }
+
+  @Post('students/:studentId/face-reference/approve')
+  @Roles(UserRole.ADMIN)
+  approveFaceReference(
+    @Req() req: IRequestWithUser,
+    @Param('studentId', ParseUUIDPipe) studentId: string,
+  ) {
+    return this.face.approveFaceReference(studentId, req.user.userId);
+  }
+
+  @Delete('students/:studentId/face-reference/approval')
+  @Roles(UserRole.ADMIN)
+  revokeFaceReference(@Param('studentId', ParseUUIDPipe) studentId: string) {
+    return this.face.revokeFaceReference(studentId);
   }
 
   @Post('nfc-tap')

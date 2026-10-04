@@ -61,6 +61,12 @@ export default () => ({
     publicUrl: process.env.MINIO_PUBLIC_URL,
   },
 
+  face: {
+    verifyUrl: process.env.FACE_VERIFY_URL,
+    apiKey: process.env.FACE_VERIFY_API_KEY,
+    matchThreshold: process.env.FACE_MATCH_THRESHOLD,
+  },
+
   livekit: {
     url: process.env.LIVEKIT_URL,
     apiUrl: process.env.LIVEKIT_API_URL || process.env.LIVEKIT_URL,
