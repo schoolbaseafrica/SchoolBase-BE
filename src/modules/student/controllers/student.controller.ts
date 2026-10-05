@@ -85,6 +85,12 @@ export class StudentController {
     return this.photos.capture(token, file);
   }
 
+  @Get('photo-capture/status')
+  @UseGuards(PhotoCaptureTokenGuard)
+  photoCaptureTokenStatus() {
+    return { valid: true };
+  }
+
   @Post()
   @CreateStudentDocs()
   @Roles(UserRole.ADMIN)
