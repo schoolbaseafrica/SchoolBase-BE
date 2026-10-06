@@ -10,6 +10,7 @@ import { UserRole } from '../../shared/enums';
 import { StudentProfileResponseDto } from '../dto';
 import { PhotoCaptureTokenGuard } from '../guards/photo-capture-token.guard';
 import { StudentService } from '../services';
+import { StudentBulkImportService } from '../services/student-bulk-import.service';
 import { StudentPhotoCaptureService } from '../services/student-photo-capture.service';
 
 import { StudentController } from './student.controller';
@@ -44,6 +45,10 @@ describe('StudentController', () => {
             status: jest.fn(),
             capture: jest.fn(),
           },
+        },
+        {
+          provide: StudentBulkImportService,
+          useValue: { validateClasses: jest.fn(), import: jest.fn() },
         },
         {
           provide: PhotoCaptureTokenGuard,

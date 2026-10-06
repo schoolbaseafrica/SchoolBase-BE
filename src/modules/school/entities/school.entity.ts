@@ -65,6 +65,56 @@ export class School extends BaseEntity {
   @Column({ type: 'jsonb', nullable: true })
   marketing_site_config?: Record<string, unknown> | null;
 
+  @Column({ type: 'integer', nullable: true })
+  activity_log_retention_days?: number | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  school_code?: string | null;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  student_id_format?: string | null;
+
+  @Column({ type: 'varchar', length: 20, default: 'STU' })
+  student_id_prefix: string;
+
+  @Column({ type: 'boolean', default: true })
+  allow_manual_student_ids: boolean;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  teacher_id_format?: string | null;
+
+  @Column({ type: 'varchar', length: 20, default: 'EMP' })
+  teacher_id_prefix: string;
+
+  @Column({ type: 'boolean', default: true })
+  allow_manual_teacher_ids: boolean;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  parent_id_format?: string | null;
+
+  @Column({ type: 'varchar', length: 20, default: 'PAR' })
+  parent_id_prefix: string;
+
+  @Column({ type: 'boolean', default: true })
+  allow_manual_parent_ids: boolean;
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  staff_id_format?: string | null;
+
+  @Column({ type: 'varchar', length: 20, default: 'STF' })
+  staff_id_prefix: string;
+
+  @Column({ type: 'boolean', default: true })
+  allow_manual_staff_ids: boolean;
+
+  @Column({
+    type: 'jsonb',
+    nullable: true,
+    default: () =>
+      '\'{"hero_images":[],"gallery_images":[],"testimonials":[]}\'::jsonb',
+  })
+  landing_page_config?: Record<string, unknown> | null;
+
   @Column({ type: 'jsonb', default: () => `'["NFC"]'::jsonb` })
   attendance_enabled_methods: string[];
 

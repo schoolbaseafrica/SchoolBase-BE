@@ -352,12 +352,16 @@ describe('SchoolService', () => {
 
       const result = await service.getSchoolDetails();
 
-      expect(result).toEqual({
-        ...mockSchool,
-        website_layout: WebsiteLayout.ONE_PAGE,
-        use_marketing_site: false,
-        marketing_site_config: null,
-      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          ...mockSchool,
+          website_layout: WebsiteLayout.ONE_PAGE,
+          use_marketing_site: false,
+          marketing_site_config: null,
+        }),
+      );
+      expect(result.student_id_prefix).toBe('STU');
+      expect(result.allow_manual_parent_ids).toBe(true);
       expect(schoolModelAction.list).toHaveBeenCalledWith({
         filterRecordOptions: { installation_completed: true },
       });

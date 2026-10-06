@@ -9,11 +9,18 @@ import {
   Get,
   Query,
   HttpStatus,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Res,
+  StreamableFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { plainToInstance } from 'class-transformer';
+import { Response } from 'express';
 
+import { SkipWrap } from '../../../common/decorators/skip-wrap.decorator';
 import * as sysMsg from '../../../constants/system.messages';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { Roles } from '../../auth/decorators/roles.decorator';
@@ -50,7 +57,11 @@ export class PaymentController {
     FileInterceptor('receipt_file', {
       limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
-        if (!file.mimetype.match(/\/(jpg|jpeg|png|pdf)$/)) {
+        if (
+          !['image/jpeg', 'image/png', 'application/pdf'].includes(
+            file.mimetype,
+          )
+        ) {
           return cb(
             new BadRequestException('Only JPG, PNG, and PDF files are allowed'),
             false,
@@ -66,18 +77,35 @@ export class PaymentController {
     @UploadedFile() receiptFile?: Express.Multer.File,
   ) {
     let receipt_url: string | undefined;
+    let uploadedReceiptKey: string | undefined;
 
-    if (receiptFile) {
-      const uploadedResult =
-        await this.uploadService.uploadPicture(receiptFile);
-      receipt_url = this.fileService.validatePhotoUrl(uploadedResult.url);
+    let payment;
+    try {
+      if (receiptFile) {
+        const uploadedResult =
+          await this.uploadService.uploadReceipt(receiptFile);
+        uploadedReceiptKey = uploadedResult.publicId;
+        const parsedUrl = new URL(uploadedResult.url);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+          throw new BadRequestException('Invalid receipt URL');
+        }
+        receipt_url =
+          receiptFile.mimetype === 'application/pdf'
+            ? uploadedResult.url
+            : this.fileService.validatePhotoUrl(uploadedResult.url);
+      }
+      payment = await this.paymentService.recordPayment(
+        dto,
+        userId,
+        receipt_url,
+      );
+    } catch (error) {
+      if (uploadedReceiptKey)
+        await this.uploadService
+          .deletePicture(uploadedReceiptKey)
+          .catch(() => undefined);
+      throw error;
     }
-
-    const payment = await this.paymentService.recordPayment(
-      dto,
-      userId,
-      receipt_url,
-    );
 
     const response = plainToInstance(PaymentResponseDto, payment, {
       excludeExtraneousValues: true,
@@ -88,6 +116,23 @@ export class PaymentController {
       message: sysMsg.PAYMENT_SUCCESS,
       response,
     };
+  }
+
+  @Get(':id/receipt')
+  @Roles(UserRole.ADMIN)
+  @SkipWrap()
+  async downloadReceipt(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const receiptUrl = await this.paymentService.receiptUrl(id);
+    if (!receiptUrl) throw new NotFoundException('Receipt not found');
+    const { buffer, mimeType } =
+      await this.uploadService.downloadReceipt(receiptUrl);
+    response.setHeader('Content-Type', mimeType);
+    response.setHeader('Content-Disposition', 'attachment; filename="receipt"');
+    response.setHeader('Cache-Control', 'private, no-store');
+    return new StreamableFile(buffer);
   }
 
   @Get()

@@ -1,11 +1,54 @@
-import { Injectable } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 import { ListActivityLogsQueryDto } from './dto/list-activity-logs-query.dto';
 
 @Injectable()
-export class ActivityLogService {
+export class ActivityLogService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(ActivityLogService.name);
+  private cleanupTimer?: NodeJS.Timeout;
   constructor(private readonly dataSource: DataSource) {}
+
+  onModuleInit() {
+    void this.purgeExpired().catch((error) =>
+      this.logger.error('Activity log retention cleanup failed', error),
+    );
+    this.cleanupTimer = setInterval(
+      () => {
+        void this.purgeExpired().catch((error) =>
+          this.logger.error('Activity log retention cleanup failed', error),
+        );
+      },
+      24 * 60 * 60 * 1000,
+    );
+    this.cleanupTimer.unref();
+  }
+
+  onModuleDestroy() {
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+  }
+
+  async purgeExpired() {
+    const rows = (await this.dataSource.query(
+      `SELECT "activity_log_retention_days" AS days FROM "schools" WHERE "installation_completed" = true LIMIT 1`,
+    )) as { days: number | null }[];
+    const days = rows[0]?.days;
+    if (days === null || days === undefined) return 0;
+    if (!Number.isInteger(days) || days < 0)
+      throw new Error('Invalid activity log retention setting');
+    const removed = (await this.dataSource.query(
+      `DELETE FROM "activity_logs" WHERE "created_at" < now() - ($1 * interval '1 day')`,
+      [days],
+    )) as [unknown[], number] | unknown;
+    return Array.isArray(removed) && typeof removed[1] === 'number'
+      ? removed[1]
+      : 0;
+  }
 
   async findAll(query: ListActivityLogsQueryDto) {
     const { page = 1, limit = 20 } = query;

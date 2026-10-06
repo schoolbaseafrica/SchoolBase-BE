@@ -19,6 +19,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiOkResponse } from '@nestjs/swagger';
 
 import { IMulterFile } from '../../../common/types/multer.types';
+import { parseBulkCsv } from '../../../common/utils/parse-bulk-csv';
 import { pictureUploadConfig } from '../../../config/multer.config';
 import * as sysMsg from '../../../constants/system.messages';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -47,6 +48,7 @@ import {
 import { StudentGrowthQueryDto } from '../dto/student.growth.dto';
 import { PhotoCaptureTokenGuard } from '../guards/photo-capture-token.guard';
 import { StudentService } from '../services';
+import { StudentBulkImportService } from '../services/student-bulk-import.service';
 import { StudentPhotoCaptureService } from '../services/student-photo-capture.service';
 
 @ApiTags(StudentSwagger.tags[0])
@@ -55,7 +57,28 @@ export class StudentController {
   constructor(
     private readonly studentService: StudentService,
     private readonly photos: StudentPhotoCaptureService,
+    private readonly bulkImport: StudentBulkImportService,
   ) {}
+
+  @Post('bulk-upload/validate')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  async validateBulkUpload(@UploadedFile() file: Express.Multer.File) {
+    return this.bulkImport.validateClasses(await parseBulkCsv(file));
+  }
+
+  @Post('bulk-upload')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  async bulkUpload(@UploadedFile() file: Express.Multer.File) {
+    return this.bulkImport.import(await parseBulkCsv(file));
+  }
 
   @Post('me/photo-capture-links')
   @UseGuards(JwtAuthGuard, RolesGuard)

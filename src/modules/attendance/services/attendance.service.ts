@@ -979,10 +979,10 @@ export class AttendanceService {
         attendance_id: attendance?.id,
         status: attendance?.status,
         check_in_time: attendance?.check_in_time
-          ? attendance.check_in_time.toString()
+          ? attendance.check_in_time.toISOString()
           : undefined,
         check_out_time: attendance?.check_out_time
-          ? attendance.check_out_time.toString()
+          ? attendance.check_out_time.toISOString()
           : undefined,
         notes: attendance?.notes,
       };

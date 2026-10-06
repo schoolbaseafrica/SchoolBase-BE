@@ -13,9 +13,13 @@ import {
   HttpStatus,
   ParseUUIDPipe,
   Request,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiOperation } from '@nestjs/swagger';
 
+import { parseBulkCsv } from '../../common/utils/parse-bulk-csv';
 import * as sysMsg from '../../constants/system.messages';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -56,6 +60,16 @@ import { ParentService, IUserPayload } from './parent.service';
 @ApiParentBearerAuth()
 export class ParentController {
   constructor(private readonly parentService: ParentService) {}
+
+  @Post('bulk-upload')
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  async bulkUpload(@UploadedFile() file: Express.Multer.File) {
+    const rows = await parseBulkCsv(file);
+    return this.parentService.bulkCreate(rows);
+  }
 
   // --- POST: CREATE PARENT (ADMIN ONLY) ---
   @Post()

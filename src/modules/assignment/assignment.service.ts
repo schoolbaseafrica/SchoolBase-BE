@@ -228,17 +228,22 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
       file,
       `assignments/${assignmentId}/${student?.id ?? 'teacher'}`,
     );
-    return this.attachments.save(
-      this.attachments.create({
-        assignment,
-        student,
-        objectKey: uploaded.publicId,
-        originalName: file.originalname.slice(0, 255),
-        mimeType: file.mimetype,
-        size: file.size,
-        uploadedBy: userId,
-      }),
-    );
+    try {
+      return await this.attachments.save(
+        this.attachments.create({
+          assignment,
+          student,
+          objectKey: uploaded.publicId,
+          originalName: file.originalname.slice(0, 255),
+          mimeType: file.mimetype,
+          size: file.size,
+          uploadedBy: userId,
+        }),
+      );
+    } catch (error) {
+      await this.minio.deleteImage(uploaded.publicId).catch(() => undefined);
+      throw error;
+    }
   }
 
   async listAttachments(

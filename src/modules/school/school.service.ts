@@ -184,6 +184,20 @@ export class SchoolService {
         : WebsiteLayout.ONE_PAGE,
       use_marketing_site: school.use_marketing_site ?? false,
       marketing_site_config: school.marketing_site_config ?? null,
+      activity_log_retention_days: school.activity_log_retention_days ?? null,
+      school_code: school.school_code ?? null,
+      student_id_format: school.student_id_format ?? null,
+      student_id_prefix: school.student_id_prefix ?? 'STU',
+      allow_manual_student_ids: school.allow_manual_student_ids ?? true,
+      teacher_id_format: school.teacher_id_format ?? null,
+      teacher_id_prefix: school.teacher_id_prefix ?? 'EMP',
+      allow_manual_teacher_ids: school.allow_manual_teacher_ids ?? true,
+      parent_id_format: school.parent_id_format ?? null,
+      parent_id_prefix: school.parent_id_prefix ?? 'PAR',
+      allow_manual_parent_ids: school.allow_manual_parent_ids ?? true,
+      staff_id_format: school.staff_id_format ?? null,
+      staff_id_prefix: school.staff_id_prefix ?? 'STF',
+      allow_manual_staff_ids: school.allow_manual_staff_ids ?? true,
     };
   }
 

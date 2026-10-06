@@ -27,6 +27,7 @@ import { InviteStatus } from '../invites/entities/invites.entity';
 import { InviteModelAction } from '../invites/invite.model-action';
 import { SessionService } from '../session/session.service';
 import { Student } from '../student/entities/student.entity';
+import { User, UserRole as AccountRole } from '../user/entities/user.entity';
 import { UserService } from '../user/user.service';
 
 import {
@@ -396,6 +397,30 @@ export class AuthService {
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
+    };
+  }
+
+  async createParentLinkSession(user: User) {
+    if (!user.is_active || !user.role.includes(AccountRole.PARENT)) {
+      throw new UnauthorizedException('Parent account is not active');
+    }
+    const tokens = await this.generateTokens(user.id, user.email, user.role);
+    const session = await this.sessionService.createSession(
+      user.id,
+      tokens.refresh_token,
+    );
+    return {
+      ...tokens,
+      session_id: session.session_id,
+      session_expires_at: session.expires_at,
+      user: {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        role: user.role,
+      },
+      requires_password_reset: false,
     };
   }
 

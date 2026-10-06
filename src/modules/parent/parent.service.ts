@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
@@ -61,6 +62,59 @@ export class ParentService {
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
   ) {
     this.logger = baseLogger.child({ context: ParentService.name });
+  }
+
+  async bulkCreate(rows: Record<string, string>[]) {
+    const results: Array<{
+      email: string;
+      success: boolean;
+      parent?: ParentResponseDto;
+      error?: string;
+    }> = [];
+    for (const row of rows) {
+      const dto = plainToInstance(CreateParentDto, {
+        first_name: row.first_name,
+        last_name: row.last_name,
+        middle_name: row.middle_name || undefined,
+        email: row.email,
+        phone: row.phone,
+        date_of_birth: row.date_of_birth,
+        gender: row.gender,
+        home_address: row.home_address || undefined,
+        password: row.password || undefined,
+      });
+      const errors = await validate(dto, { whitelist: true });
+      if (errors.length || row.parent_id) {
+        results.push({
+          email: row.email ?? '',
+          success: false,
+          error: row.parent_id
+            ? 'Custom Parent ID is not supported by this school installation'
+            : `Invalid parent data: ${errors.map((error) => error.property).join(', ')}`,
+        });
+        continue;
+      }
+      try {
+        results.push({
+          email: dto.email,
+          success: true,
+          parent: await this.create(dto),
+        });
+      } catch (error) {
+        results.push({
+          email: dto.email,
+          success: false,
+          error:
+            error instanceof Error ? error.message : 'Unable to create parent',
+        });
+      }
+    }
+    return {
+      total: results.length,
+      successful: results.filter((result) => result.success).length,
+      failed: results.filter((result) => !result.success).length,
+      results,
+    };
   }
 
   // --- CREATE ---

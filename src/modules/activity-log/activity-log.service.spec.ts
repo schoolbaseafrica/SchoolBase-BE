@@ -70,4 +70,29 @@ describe('ActivityLogService', () => {
       ['CREATE', '2026-09-01', '2026-09-14'],
     );
   });
+
+  it('keeps activity logs when retention is unlimited', async () => {
+    dataSource.query.mockResolvedValueOnce([{ days: null }]);
+    await expect(service.purgeExpired()).resolves.toBe(0);
+    expect(dataSource.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('deletes only logs older than the configured retention period', async () => {
+    dataSource.query
+      .mockResolvedValueOnce([{ days: 90 }])
+      .mockResolvedValueOnce([[], 3]);
+    await expect(service.purgeExpired()).resolves.toBe(3);
+    expect(dataSource.query.mock.calls[1][0]).toContain(
+      '"created_at" < now() - ($1 * interval',
+    );
+    expect(dataSource.query.mock.calls[1][1]).toEqual([90]);
+  });
+
+  it('rejects an invalid negative retention setting without deleting', async () => {
+    dataSource.query.mockResolvedValueOnce([{ days: -1 }]);
+    await expect(service.purgeExpired()).rejects.toThrow(
+      'Invalid activity log retention setting',
+    );
+    expect(dataSource.query).toHaveBeenCalledTimes(1);
+  });
 });

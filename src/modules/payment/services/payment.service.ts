@@ -63,6 +63,13 @@ export class PaymentService {
     });
   }
 
+  async receiptUrl(paymentId: string): Promise<string | null> {
+    const payment = await this.paymentModelAction.get({
+      identifierOptions: { id: paymentId },
+    });
+    return payment?.receipt_url ?? null;
+  }
+
   private generateTransactionId(): string {
     const prefix = 'HNG';
     const timestamp = Date.now().toString().slice(-6);

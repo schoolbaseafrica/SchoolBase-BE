@@ -382,5 +382,23 @@ describe('InviteService', () => {
       ]);
       expect(emailService.sendMail).toHaveBeenCalledTimes(1);
     });
+
+    it('rejects oversized invite lists before any email is sent', async () => {
+      const file = {
+        buffer: Buffer.from('email,full_name\n'),
+        mimetype: 'text/csv',
+        originalname: 'bulk.csv',
+      } as Express.Multer.File;
+      jest.spyOn(csvParser, 'parseCsv').mockResolvedValue(
+        Array.from({ length: 1001 }, (_, index) => ({
+          email: `person${index}@example.com`,
+          full_name: 'Person',
+        })),
+      );
+      await expect(
+        service.uploadCsv(file, InviteRole.ADMIN),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(emailService.sendMail).not.toHaveBeenCalled();
+    });
   });
 });

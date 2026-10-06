@@ -94,6 +94,12 @@ describe('TeacherService', () => {
     // Mock DataSource
     dataSource = {
       createQueryRunner: jest.fn().mockReturnValue(queryRunner),
+      getRepository: jest.fn().mockReturnValue({
+        findOne: jest.fn().mockResolvedValue({
+          allow_manual_teacher_ids: true,
+          teacher_id_prefix: 'EMP',
+        }),
+      }),
       transaction: jest.fn().mockImplementation(async (callback) => {
         // Simulate transaction by calling callback with queryRunner.manager
         return callback(queryRunner.manager);

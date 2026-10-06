@@ -252,6 +252,35 @@ describe('ParentService', () => {
     jest.clearAllMocks();
   });
 
+  describe('bulkCreate', () => {
+    it('creates valid rows and reports invalid rows without creating them', async () => {
+      const create = jest
+        .spyOn(service, 'create')
+        .mockResolvedValue({ id: 'parent-1' } as never);
+      const result = await service.bulkCreate([
+        {
+          first_name: 'Ada',
+          last_name: 'Okafor',
+          email: 'ada@example.com',
+          phone: '+2348012345678',
+          date_of_birth: '1985-01-01',
+          gender: 'Female',
+        },
+        {
+          first_name: 'Bad',
+          last_name: 'Row',
+          email: 'invalid',
+          phone: '+2348012345678',
+          date_of_birth: '1985-01-01',
+          gender: 'Female',
+        },
+      ]);
+      expect(result).toMatchObject({ total: 2, successful: 1, failed: 1 });
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(result.results[1].error).toContain('email');
+    });
+  });
+
   describe('create', () => {
     const createDto: CreateParentDto = {
       first_name: 'John',

@@ -1,5 +1,3 @@
-import * as path from 'path';
-
 import {
   Injectable,
   BadRequestException,
@@ -9,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as minio from 'minio';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import * as sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import { Logger } from 'winston';
 
@@ -76,26 +75,91 @@ export class MinioService implements OnModuleInit {
       throw new BadRequestException(sysMsg.FILE_REQUIRED);
     }
 
+    const requestedMimeType = file.mimetype.split(';')[0].toLowerCase();
+    const mimeType =
+      requestedMimeType === 'image/jpg' ? 'image/jpeg' : requestedMimeType;
+    const signatures = new Map<
+      string,
+      { extension: string; valid: (data: Buffer) => boolean }
+    >([
+      [
+        'image/jpeg',
+        {
+          extension: '.jpg',
+          valid: (data) =>
+            data.length >= 3 &&
+            data[0] === 0xff &&
+            data[1] === 0xd8 &&
+            data[2] === 0xff,
+        },
+      ],
+      [
+        'image/png',
+        {
+          extension: '.png',
+          valid: (data) =>
+            data
+              .subarray(0, 8)
+              .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+        },
+      ],
+      [
+        'image/webp',
+        {
+          extension: '.webp',
+          valid: (data) =>
+            data.toString('ascii', 0, 4) === 'RIFF' &&
+            data.toString('ascii', 8, 12) === 'WEBP',
+        },
+      ],
+      [
+        'application/pdf',
+        {
+          extension: '.pdf',
+          valid: (data) => data.toString('ascii', 0, 5) === '%PDF-',
+        },
+      ],
+    ]);
+    const signature = signatures.get(mimeType);
+    if (!signature?.valid(file.buffer)) {
+      throw new BadRequestException(
+        'File contents do not match a supported image or PDF',
+      );
+    }
+    if (mimeType.startsWith('image/')) {
+      try {
+        const metadata = await sharp(file.buffer, {
+          limitInputPixels: 25_000_000,
+        }).metadata();
+        const expected =
+          mimeType === 'image/jpeg' ? 'jpeg' : mimeType.slice('image/'.length);
+        if (metadata.format !== expected)
+          throw new Error('Image format mismatch');
+      } catch {
+        throw new BadRequestException(
+          'Image is corrupt or does not match its file type',
+        );
+      }
+    }
+
     try {
       // Generate a unique filename
-      const filename = `${uuidv4()}${path.extname(file.originalname)}`;
+      const filename = `${uuidv4()}${signature.extension}`;
 
       // Construct the object path (folder/filename)
       // If folder is provided, use it as a prefix.
       const objectName = folder ? `${folder}/${filename}` : filename;
 
       // Define metadata
-      const metaData = {
-        contentType: file.mimetype,
-        originalName: file.originalname,
-      };
+      const metaData: Record<string, string> = {};
+      metaData['Content-Type'] = mimeType;
 
       // Upload to Minio
       await this.minioClient.putObject(
         this.bucketName,
         objectName,
         file.buffer,
-        file.size,
+        file.buffer.length,
         metaData,
       );
 
@@ -137,18 +201,21 @@ export class MinioService implements OnModuleInit {
   ): Promise<{ publicId: string }> {
     if (!file?.buffer) throw new BadRequestException(sysMsg.FILE_REQUIRED);
     const contentType = file.mimetype.split(';')[0].trim().toLowerCase();
-    const extension =
-      path.extname(file.originalname) || this.extensionFor(contentType);
+    const extension = this.extensionFor(contentType);
     const objectName = `${folder}/${uuidv4()}${extension}`;
     this.logger.info(
       `Uploading file to Minio (${this.storageTarget()}, object=${objectName}, contentType=${contentType}, bytes=${file.size})`,
     );
     try {
+      const metadata: Record<string, string> = {};
+      metadata['Content-Type'] = contentType;
+      metadata['Content-Disposition'] = 'attachment';
       await this.minioClient.putObject(
         this.bucketName,
         objectName,
         file.buffer,
-        file.size,
+        file.buffer.length,
+        metadata,
       );
       this.logger.info(
         `File uploaded successfully to Minio (bucket=${this.bucketName}, object=${objectName})`,

@@ -89,7 +89,9 @@ export class InvitesController {
   @Roles(UserRole.ADMIN)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
   @HttpCode(HttpStatus.OK)
   @csvUploadDocs()
   async uploadCsv(

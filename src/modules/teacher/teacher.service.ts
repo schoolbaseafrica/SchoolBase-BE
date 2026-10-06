@@ -13,6 +13,7 @@ import { Logger } from 'winston';
 
 import * as sysMsg from '../../constants/system.messages';
 import { AccountCreationService } from '../email/account-creation.service';
+import { School } from '../school/entities/school.entity';
 import { UserRole } from '../shared/enums';
 import { FileService } from '../shared/file/file.service';
 import {
@@ -91,9 +92,22 @@ export class TeacherService {
     }
 
     // 2. Generate Employment ID
+    const school = await this.dataSource
+      .getRepository(School)
+      .findOne({ where: { installation_completed: true } });
+    if (createDto.employment_id && !school?.allow_manual_teacher_ids) {
+      throw new BadRequestException(
+        'Manual teacher IDs are disabled in school settings',
+      );
+    }
     const employment_id =
       createDto.employment_id ||
-      (await generateEmploymentId(this.teacherRepository));
+      (await generateEmploymentId(
+        this.teacherRepository,
+        school?.teacher_id_format,
+        school?.teacher_id_prefix ?? 'EMP',
+        school?.school_code ?? '',
+      ));
     const existingTeacher = await this.teacherModelAction.get({
       identifierOptions: { employment_id },
     });

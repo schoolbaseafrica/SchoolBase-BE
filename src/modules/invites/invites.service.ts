@@ -370,6 +370,9 @@ export class InviteService {
     const rows = await parseCsv<{ email: string; full_name: string }>(
       file.buffer,
     );
+    if (rows.length > 1000) {
+      throw new BadRequestException('CSV files are limited to 1000 rows');
+    }
 
     const filteredRows = rows.filter((row) => row.email?.trim());
     const emails = filteredRows.map((row) => row.email.trim().toLowerCase());

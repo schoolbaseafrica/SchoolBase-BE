@@ -18,6 +18,7 @@ jest.mock('./decorators/installation-api.decorator', () => ({
 
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { SchoolSettingsService } from './school-settings.service';
 import { SchoolController } from './school.controller';
 import { SchoolService } from './school.service';
 
@@ -38,6 +39,14 @@ describe('SchoolController', () => {
         {
           provide: SchoolService,
           useValue: mockSchoolService,
+        },
+        {
+          provide: SchoolSettingsService,
+          useValue: {
+            updateSchool: jest.fn(),
+            getLandingPageConfig: jest.fn(),
+            updateLandingPageConfig: jest.fn(),
+          },
         },
       ],
     }).compile();

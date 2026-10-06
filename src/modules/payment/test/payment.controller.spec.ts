@@ -82,6 +82,7 @@ describe('PaymentController', () => {
   const mockPaymentServiceValue = {
     recordPayment: jest.fn(),
     fetchAllPayments: jest.fn(),
+    receiptUrl: jest.fn(),
   };
 
   const mockFileServiceValue = {
@@ -89,7 +90,9 @@ describe('PaymentController', () => {
   };
 
   const mockUploadServiceValue = {
-    uploadPicture: jest.fn(),
+    uploadReceipt: jest.fn(),
+    deletePicture: jest.fn(),
+    downloadReceipt: jest.fn(),
   };
 
   const mockDashboardAnalyticsServiceValue = {
@@ -119,6 +122,30 @@ describe('PaymentController', () => {
 
   afterEach(() => jest.clearAllMocks());
 
+  it('streams a saved private receipt through the authenticated route', async () => {
+    const buffer = Buffer.from('%PDF-1.7');
+    const response = { setHeader: jest.fn() };
+    mockPaymentServiceValue.receiptUrl.mockResolvedValue(
+      'https://files.example/demo/receipts/id.pdf',
+    );
+    mockUploadServiceValue.downloadReceipt.mockResolvedValue({
+      buffer,
+      mimeType: 'application/pdf',
+    });
+    const file = await controller.downloadReceipt(
+      'payment-id',
+      response as never,
+    );
+    expect(file.getStream().read()).toEqual(buffer);
+    expect(uploadService.downloadReceipt).toHaveBeenCalledWith(
+      'https://files.example/demo/receipts/id.pdf',
+    );
+    expect(response.setHeader).toHaveBeenCalledWith(
+      'Content-Type',
+      'application/pdf',
+    );
+  });
+
   describe('recordPayment', () => {
     it('should record payment WITH file upload successfully', async () => {
       const mockUploadResult = {
@@ -128,7 +155,7 @@ describe('PaymentController', () => {
       const validatedUrl =
         'https://minio.deenai.app/schoolbase-uploads/receipt.jpg';
 
-      mockUploadServiceValue.uploadPicture.mockResolvedValue(mockUploadResult);
+      mockUploadServiceValue.uploadReceipt.mockResolvedValue(mockUploadResult);
       mockFileServiceValue.validatePhotoUrl.mockReturnValue(validatedUrl);
       mockPaymentServiceValue.recordPayment.mockResolvedValue(
         mockPaymentEntity,
@@ -140,7 +167,7 @@ describe('PaymentController', () => {
         mockFile,
       );
 
-      expect(uploadService.uploadPicture).toHaveBeenCalledWith(mockFile);
+      expect(uploadService.uploadReceipt).toHaveBeenCalledWith(mockFile);
       expect(fileService.validatePhotoUrl).toHaveBeenCalledWith(
         mockUploadResult.url,
       );
@@ -168,7 +195,7 @@ describe('PaymentController', () => {
         undefined,
       );
 
-      expect(uploadService.uploadPicture).not.toHaveBeenCalled();
+      expect(uploadService.uploadReceipt).not.toHaveBeenCalled();
       expect(fileService.validatePhotoUrl).not.toHaveBeenCalled();
 
       expect(paymentService.recordPayment).toHaveBeenCalledWith(
@@ -182,9 +209,34 @@ describe('PaymentController', () => {
       expect(result.response).toBeInstanceOf(PaymentResponseDto);
     });
 
+    it('accepts a PDF receipt URL without treating it as a photo', async () => {
+      const pdfFile = {
+        ...mockFile,
+        originalname: 'receipt.pdf',
+        mimetype: 'application/pdf',
+      };
+      const pdfUrl = 'https://minio.example/schoolbase-uploads/receipt.pdf';
+      mockUploadServiceValue.uploadReceipt.mockResolvedValue({
+        url: pdfUrl,
+        publicId: 'receipt-key',
+      });
+      mockPaymentServiceValue.recordPayment.mockResolvedValue(
+        mockPaymentEntity,
+      );
+
+      await controller.recordPayment(mockDto, mockUserId, pdfFile);
+
+      expect(fileService.validatePhotoUrl).not.toHaveBeenCalled();
+      expect(paymentService.recordPayment).toHaveBeenCalledWith(
+        mockDto,
+        mockUserId,
+        pdfUrl,
+      );
+    });
+
     it('should throw error if upload fails', async () => {
       const uploadError = new BadRequestException('Upload failed');
-      mockUploadServiceValue.uploadPicture.mockRejectedValue(uploadError);
+      mockUploadServiceValue.uploadReceipt.mockRejectedValue(uploadError);
 
       await expect(
         controller.recordPayment(mockDto, mockUserId, mockFile),
@@ -200,6 +252,35 @@ describe('PaymentController', () => {
       await expect(
         controller.recordPayment(mockDto, mockUserId, undefined),
       ).rejects.toThrow(serviceError);
+    });
+
+    it('removes an uploaded receipt when recording the payment fails', async () => {
+      const error = new Error('Database error');
+      mockUploadServiceValue.uploadReceipt.mockResolvedValue({
+        url: 'https://files.example/receipt.jpg',
+        publicId: 'receipt-key',
+      });
+      mockUploadServiceValue.deletePicture.mockResolvedValue(undefined);
+      mockFileServiceValue.validatePhotoUrl.mockReturnValue(
+        'https://files.example/receipt.jpg',
+      );
+      mockPaymentServiceValue.recordPayment.mockRejectedValue(error);
+      await expect(
+        controller.recordPayment(mockDto, mockUserId, mockFile),
+      ).rejects.toThrow(error);
+      expect(uploadService.deletePicture).toHaveBeenCalledWith('receipt-key');
+    });
+
+    it('removes an uploaded receipt when its returned URL is invalid', async () => {
+      mockUploadServiceValue.uploadReceipt.mockResolvedValue({
+        url: 'not-a-url',
+        publicId: 'receipt-key',
+      });
+      await expect(
+        controller.recordPayment(mockDto, mockUserId, mockFile),
+      ).rejects.toThrow();
+      expect(uploadService.deletePicture).toHaveBeenCalledWith('receipt-key');
+      expect(paymentService.recordPayment).not.toHaveBeenCalled();
     });
   });
 

@@ -164,6 +164,42 @@ describe('AttendanceService', () => {
     expect(service).toBeDefined();
   });
 
+  it('returns class check-in times as ISO timestamps for local display', async () => {
+    mockFind.mockResolvedValueOnce([
+      {
+        student: {
+          id: 'student-1',
+          user: { first_name: 'Ada', middle_name: '', last_name: 'Okafor' },
+        },
+      },
+    ]);
+    const records = [
+      {
+        student_id: 'student-1',
+        check_in_time: new Date('2026-10-05T08:30:00.000Z'),
+        check_out_time: new Date('2026-10-05T14:00:00.000Z'),
+        status: DailyAttendanceStatus.PRESENT,
+      },
+    ];
+    const dataSource = module.get<DataSource>(DataSource);
+    jest.spyOn(dataSource.manager, 'createQueryBuilder').mockReturnValueOnce({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(records),
+    } as never);
+
+    const result = await service.getClassDailyAttendance(
+      'class-1',
+      '2026-10-05',
+    );
+    expect(result.students[0]).toEqual(
+      expect.objectContaining({
+        check_in_time: '2026-10-05T08:30:00.000Z',
+        check_out_time: '2026-10-05T14:00:00.000Z',
+      }),
+    );
+  });
+
   describe('getScheduleAttendance', () => {
     it('should retrieve attendance records for a schedule and date', async () => {
       const scheduleId = 'schedule-123';

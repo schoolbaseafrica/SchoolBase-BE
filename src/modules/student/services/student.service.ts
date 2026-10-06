@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { DataSource, Like } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { SessionStatus } from 'src/modules/academic-session/entities/academic-session.entity';
@@ -19,6 +19,8 @@ import { ClassModelAction } from 'src/modules/class/model-actions/class.actions'
 import * as sysMsg from '../../../constants/system.messages';
 import { AccountCreationService } from '../../email/account-creation.service';
 import { IUserPayload } from '../../parent/parent.service';
+import { School } from '../../school/entities/school.entity';
+import { schoolIdPattern } from '../../school/utils/school-id-format';
 import { UserRole } from '../../shared/enums';
 import { FileService } from '../../shared/file/file.service';
 import { generateResetToken, hashPassword } from '../../shared/utils';
@@ -68,7 +70,19 @@ export class StudentService {
       );
       throw new ConflictException(sysMsg.STUDENT_EMAIL_CONFLICT);
     }
-    const registration_number = await this.generateStudentNumber();
+    let registration_number = createStudentDto.registration_number?.trim();
+    if (registration_number) {
+      const school = await this.dataSource
+        .getRepository(School)
+        .findOne({ where: { installation_completed: true } });
+      if (!school?.allow_manual_student_ids) {
+        throw new ForbiddenException(
+          'Manual student IDs are disabled in school settings',
+        );
+      }
+    } else {
+      registration_number = await this.generateStudentNumber();
+    }
 
     const existingStudent = await this.studentModelAction.get({
       identifierOptions: { registration_number },
@@ -452,37 +466,24 @@ export class StudentService {
    * where YYYY is the current year and XXXX is a 4-digit sequential number.
    */
   private async generateStudentNumber(): Promise<string> {
-    const currentYear = new Date().getFullYear();
-    const yearPrefix = `STU-${currentYear}-`;
-
-    // Fetch the last student number for this year
-    const lastRecord = await this.studentModelAction.find({
-      findOptions: {
-        registration_number: Like(`${yearPrefix}%`),
-      },
-      transactionOptions: { useTransaction: false },
-      paginationPayload: { limit: 1, page: 1 },
-      order: { registration_number: 'DESC' },
-    });
-
-    let nextSequence = 1;
-
-    if (lastRecord?.payload?.length > 0) {
-      const lastStudentNumber = lastRecord.payload[0].registration_number;
-
-      if (lastStudentNumber) {
-        const parts = lastStudentNumber.split('-');
-        if (parts.length === 3) {
-          const lastSeq = parseInt(parts[2], 10);
-          if (!isNaN(lastSeq)) {
-            nextSequence = lastSeq + 1;
-          }
-        }
-      }
-    }
-
-    const sequenceStr = String(nextSequence).padStart(4, '0');
-    return `${yearPrefix}${sequenceStr}`;
+    const school = await this.dataSource
+      .getRepository(School)
+      .findOne({ where: { installation_completed: true } });
+    const pattern = schoolIdPattern(
+      school?.student_id_format,
+      school?.student_id_prefix ?? 'STU',
+      school?.school_code ?? '',
+      4,
+    );
+    const rows = (await this.dataSource.query(
+      `SELECT COALESCE(MAX((regexp_match("registration_number", $1))[1]::bigint), 0) AS last
+       FROM "students" WHERE "registration_number" ~ $1`,
+      [pattern.regex],
+    )) as { last: string | number }[];
+    const last = Number(rows[0]?.last ?? 0);
+    if (!Number.isSafeInteger(last))
+      throw new ConflictException('Student ID sequence is exhausted');
+    return pattern.next(last + 1);
   }
 
   //student growth api

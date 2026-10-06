@@ -15,6 +15,14 @@ import { Gender } from '../../shared/enums';
 
 export class CreateStudentDto {
   @ApiProperty({
+    required: false,
+    description: 'Custom registration number when manual IDs are enabled',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  registration_number?: string;
+  @ApiProperty({
     description: 'First name',
     example: 'Favour',
     minLength: 2,

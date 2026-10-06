@@ -24,7 +24,7 @@ import { ClassService } from './services/class.service';
   imports: [
     TypeOrmModule.forFeature([Class, ClassTeacher, ClassSubject, ClassStudent]),
     AcademicSessionModule,
-    StudentModule,
+    forwardRef(() => StudentModule),
     TeachersModule,
     NotificationModule,
     forwardRef(() => SubjectModule),
@@ -40,6 +40,7 @@ import { ClassService } from './services/class.service';
     ClassSubjectService,
   ],
   exports: [
+    ClassService,
     ClassModelAction,
     ClassTeacherModelAction,
     ClassStudentModelAction,
