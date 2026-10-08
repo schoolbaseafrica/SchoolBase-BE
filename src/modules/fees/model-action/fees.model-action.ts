@@ -150,7 +150,7 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
               INNER JOIN class_students cs
                 ON cs.class_id = fc.class_id
                 AND cs.is_active = true
-                AND cs.session_id = fee.session_id
+                AND cs.session_id = CAST(fee.session_id AS text)
               INNER JOIN students student
                 ON student.id = cs.student_id
                 AND student.is_deleted = false
