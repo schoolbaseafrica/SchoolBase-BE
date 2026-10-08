@@ -118,6 +118,7 @@ describe('ParentService', () => {
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
         save: mockSave,
+        query: jest.fn().mockResolvedValue([]),
       },
     } as unknown as jest.Mocked<QueryRunner>;
 
@@ -311,6 +312,15 @@ describe('ParentService', () => {
       expect(result).toHaveProperty('last_name', 'Doe');
       expect(result).toHaveProperty('email', 'john.doe@example.com');
       expect(dataSource.transaction).toHaveBeenCalled();
+    });
+
+    it('records creation with the acting admin in the same transaction', async () => {
+      await service.create(createDto, 'admin-id');
+
+      expect(queryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining(['admin-id', 'PARENT', mockParentId, 'CREATE']),
+      );
     });
 
     it('should hash the password before creating user', async () => {

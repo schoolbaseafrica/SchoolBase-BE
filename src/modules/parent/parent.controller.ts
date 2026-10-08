@@ -66,9 +66,12 @@ export class ParentController {
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
   )
-  async bulkUpload(@UploadedFile() file: Express.Multer.File) {
+  async bulkUpload(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() actor: { id: string },
+  ) {
     const rows = await parseBulkCsv(file);
-    return this.parentService.bulkCreate(rows);
+    return this.parentService.bulkCreate(rows, actor.id);
   }
 
   // --- POST: CREATE PARENT (ADMIN ONLY) ---
@@ -76,12 +79,15 @@ export class ParentController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
   @ApiCreateParent()
-  async create(@Body() createDto: CreateParentDto): Promise<{
+  async create(
+    @Body() createDto: CreateParentDto,
+    @CurrentUser() actor: { id: string },
+  ): Promise<{
     message: string;
     status_code: number;
     data: ParentResponseDto;
   }> {
-    const data = await this.parentService.create(createDto);
+    const data = await this.parentService.create(createDto, actor.id);
     return {
       message: sysMsg.PARENT_CREATED,
       status_code: HttpStatus.CREATED,
@@ -161,12 +167,13 @@ export class ParentController {
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateDto: UpdateParentDto,
+    @CurrentUser() actor: { id: string },
   ): Promise<{
     message: string;
     status_code: number;
     data: ParentResponseDto;
   }> {
-    const data = await this.parentService.update(id, updateDto);
+    const data = await this.parentService.update(id, updateDto, actor.id);
     return {
       message: sysMsg.PARENT_UPDATED,
       status_code: HttpStatus.OK,
@@ -179,11 +186,14 @@ export class ParentController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiDeleteParent()
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<{
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: { id: string },
+  ): Promise<{
     message: string;
     status_code: number;
   }> {
-    await this.parentService.remove(id);
+    await this.parentService.remove(id, actor.id);
     return {
       message: sysMsg.PARENT_DELETED,
       status_code: HttpStatus.OK,

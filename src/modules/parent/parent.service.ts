@@ -14,6 +14,7 @@ import { Logger } from 'winston';
 
 import { IPaginationMeta } from '../../common/types/base-response.interface';
 import * as sysMsg from '../../constants/system.messages';
+import { writeActivityLog } from '../activity-log/write-activity-log';
 import { ClassStudentModelAction } from '../class/model-actions/class-student.action';
 import { ClassSubjectModelAction } from '../class/model-actions/class-subject.action';
 import { AccountCreationService } from '../email/account-creation.service';
@@ -65,7 +66,7 @@ export class ParentService {
     this.logger = baseLogger.child({ context: ParentService.name });
   }
 
-  async bulkCreate(rows: Record<string, string>[]) {
+  async bulkCreate(rows: Record<string, string>[], actorUserId?: string) {
     const results: Array<{
       email: string;
       success: boolean;
@@ -99,7 +100,7 @@ export class ParentService {
         results.push({
           email: dto.email,
           success: true,
-          parent: await this.create(dto),
+          parent: await this.create(dto, actorUserId),
         });
       } catch (error) {
         results.push({
@@ -119,7 +120,10 @@ export class ParentService {
   }
 
   // --- CREATE ---
-  async create(createDto: CreateParentDto): Promise<ParentResponseDto> {
+  async create(
+    createDto: CreateParentDto,
+    actorUserId?: string,
+  ): Promise<ParentResponseDto> {
     // 1. Check for existing user with email
     const existingUser = await this.userModelAction.get({
       identifierOptions: { email: createDto.email },
@@ -183,6 +187,17 @@ export class ParentService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'PARENT',
+          entityId: savedParent.id,
+          action: 'CREATE',
+          description: 'Parent record created',
+          newValues: { is_active: savedParent.is_active },
+        });
+      }
 
       // 6. Return response (Transform User/Parent entities into DTO)
       return {
@@ -263,6 +278,7 @@ export class ParentService {
   async update(
     id: string,
     updateDto: UpdateParentDto,
+    actorUserId?: string,
   ): Promise<ParentResponseDto> {
     const parent = await this.parentModelAction.get({
       identifierOptions: { id },
@@ -350,6 +366,21 @@ export class ParentService {
         },
       });
 
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'PARENT',
+          entityId: id,
+          action: 'UPDATE',
+          description: 'Parent record updated',
+          oldValues: { is_active: parent.is_active },
+          newValues: {
+            changed_fields: Object.keys(updateDto),
+            is_active: updatedParent.is_active,
+          },
+        });
+      }
+
       // Return response
       const response = {
         ...updatedParent,
@@ -379,7 +410,7 @@ export class ParentService {
   }
 
   // --- DELETE (Soft Delete) ---
-  async remove(id: string): Promise<void> {
+  async remove(id: string, actorUserId?: string): Promise<void> {
     const parent = await this.parentModelAction.get({
       identifierOptions: { id },
       relations: { user: true },
@@ -418,6 +449,18 @@ export class ParentService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'PARENT',
+          entityId: id,
+          action: 'DELETE',
+          description: 'Parent record deactivated',
+          oldValues: { is_active: parent.is_active },
+          newValues: { is_active: false },
+        });
+      }
 
       this.logger.info(sysMsg.PARENT_DELETED, {
         parentId: id,
