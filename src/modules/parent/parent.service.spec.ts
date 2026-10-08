@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -337,6 +338,17 @@ describe('ParentService', () => {
       );
     });
 
+    it('marks a new parent as needing first password setup', async () => {
+      await service.create(createDto);
+      expect(userModelAction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createPayload: expect.objectContaining({
+            password_setup_required: true,
+          }),
+        }),
+      );
+    });
+
     it('should create user with is_active set to true by default', async () => {
       // Use object destructuring with eslint disable for unused variables
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -596,6 +608,16 @@ describe('ParentService', () => {
   });
 
   describe('update', () => {
+    it('cannot change account access for an admin who is also a parent', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.PARENT] },
+      } as Parent);
+      await expect(
+        service.update(mockParentId, { is_active: true }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     const updateDto: UpdateParentDto = {
       first_name: 'Updated',
       last_name: 'Name',
@@ -885,6 +907,16 @@ describe('ParentService', () => {
   });
 
   describe('remove', () => {
+    it('cannot remove an admin who is also a parent', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.PARENT] },
+      } as Parent);
+      await expect(service.remove(mockParentId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
       parentModelAction.get.mockResolvedValue(mockParent as Parent);
       parentModelAction.update.mockResolvedValue(mockParent as Parent);

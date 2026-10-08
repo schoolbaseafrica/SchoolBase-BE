@@ -1,9 +1,12 @@
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DataSource } from 'typeorm';
 
-import { ApiSuccessResponseDto } from '../../common/dto/response.dto';
 import { UserNotFoundException } from '../../common/exceptions/domain.exceptions';
-import * as sysMsg from '../../constants/system.messages';
 
 import { User } from './entities/user.entity';
 import { UserModelAction } from './model-actions/user-actions';
@@ -91,6 +94,26 @@ describe('UserService', () => {
 
       expect(result).toBeNull();
     });
+  });
+
+  it('returns an admin profile without credentials or reset tokens', async () => {
+    mockDataSource.query.mockResolvedValueOnce([
+      { id: 'admin-id', first_name: 'Ada', email: 'ada@example.com' },
+    ]);
+    const profile = await service.findAdminProfile('admin-id');
+    expect(profile).not.toHaveProperty('password');
+    expect(profile).not.toHaveProperty('reset_token');
+    expect(mockDataSource.query).toHaveBeenCalledWith(
+      expect.stringContaining(`'ADMIN' = ANY("role")`),
+      ['admin-id'],
+    );
+  });
+
+  it('does not disclose non-admin profiles through the admin endpoint', async () => {
+    mockDataSource.query.mockResolvedValueOnce([]);
+    await expect(service.findAdminProfile('student-id')).rejects.toBeInstanceOf(
+      UserNotFoundException,
+    );
   });
 
   describe('findByLoginIdentifier', () => {
@@ -198,43 +221,142 @@ describe('UserService', () => {
     });
   });
 
-  describe('remove', () => {
-    it('should remove a user and return a success response', async () => {
-      const fakeUser = {
-        id: '123',
-        email: 'test',
-      } as unknown as User;
+  describe('assignFirstOwner', () => {
+    const actor = {
+      id: '00000000-0000-4000-8000-000000000001',
+      first_name: 'Ada',
+      last_name: 'Admin',
+      email: 'ada@example.com',
+    };
+    const owner = {
+      id: '00000000-0000-4000-8000-000000000002',
+      first_name: 'Ola',
+      last_name: 'Owner',
+      email: 'ola@example.com',
+    };
+    let managerQuery: jest.Mock;
 
-      userModelAction.get.mockResolvedValue(fakeUser);
-      userModelAction.delete.mockResolvedValue(undefined);
-
-      const result = await service.remove('123');
-      expect(userModelAction.get).toHaveBeenCalledWith({
-        identifierOptions: { id: '123' },
-      });
-
-      expect(userModelAction.update).toHaveBeenCalledWith({
-        identifierOptions: { id: '123' },
-        updatePayload: { deleted_at: expect.any(Date) },
-        transactionOptions: { useTransaction: false },
-      });
-
-      expect(result).toBeInstanceOf(ApiSuccessResponseDto);
-      expect(result.message).toBe(sysMsg.ACCOUNT_DELETED);
+    beforeEach(() => {
+      managerQuery = jest.fn();
+      mockDataSource.transaction.mockImplementation((callback) =>
+        callback({ query: managerQuery }),
+      );
     });
 
-    it('should throw UserNotFoundException when user does not exist', async () => {
-      userModelAction.get.mockResolvedValue(null);
+    it('assigns one active admin and records and announces the decision', async () => {
+      managerQuery
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: null }])
+        .mockResolvedValueOnce([actor, owner])
+        .mockResolvedValue([]);
 
-      await expect(service.remove('invalid-id')).rejects.toThrow(
-        UserNotFoundException,
-      );
-
-      expect(userModelAction.get).toHaveBeenCalledWith({
-        identifierOptions: { id: 'invalid-id' },
+      await expect(
+        service.assignFirstOwner(owner.id, actor.id),
+      ).resolves.toEqual({
+        owner_user_id: owner.id,
+        first_name: owner.first_name,
+        last_name: owner.last_name,
+        email: owner.email,
       });
+      expect(managerQuery.mock.calls[0][0]).toContain('FOR UPDATE');
+      expect(managerQuery.mock.calls[2][0]).toContain('UPDATE "schools"');
+      expect(managerQuery.mock.calls[3][0]).toContain(
+        'INSERT INTO "activity_logs"',
+      );
+      expect(managerQuery.mock.calls[4][0]).toContain(
+        'INSERT INTO "notifications"',
+      );
+    });
 
-      expect(userModelAction.delete).not.toHaveBeenCalled();
+    it('refuses a second owner assignment', async () => {
+      managerQuery.mockResolvedValueOnce([
+        { id: 'school-id', owner_user_id: owner.id },
+      ]);
+      await expect(
+        service.assignFirstOwner(actor.id, actor.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(managerQuery).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects inactive or non-admin targets', async () => {
+      managerQuery
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: null }])
+        .mockResolvedValueOnce([actor]);
+      await expect(
+        service.assignFirstOwner(owner.id, actor.id),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('requires the actor to remain an active admin', async () => {
+      managerQuery
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: null }])
+        .mockResolvedValueOnce([owner]);
+      await expect(
+        service.assignFirstOwner(owner.id, actor.id),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('setAdminActive', () => {
+    const owner = { id: 'owner-id', is_active: true };
+    const admin = {
+      id: 'admin-id',
+      first_name: 'Ada',
+      last_name: 'Admin',
+      email: 'ada@example.com',
+      is_active: true,
+    };
+    let query: jest.Mock;
+
+    beforeEach(() => {
+      query = jest.fn();
+      mockDataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+    });
+
+    it('requires the current school owner', async () => {
+      query.mockResolvedValueOnce([
+        { id: 'school-id', owner_user_id: 'other-id' },
+      ]);
+      await expect(
+        service.setAdminActive(admin.id, owner.id, false),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(query).toHaveBeenCalledTimes(1);
+    });
+
+    it('deactivates an admin and revokes their sessions in the transaction', async () => {
+      query
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: owner.id }])
+        .mockResolvedValueOnce([owner, admin])
+        .mockResolvedValue([]);
+      await expect(
+        service.setAdminActive(admin.id, owner.id, false),
+      ).resolves.toMatchObject({ id: admin.id, is_active: false });
+      expect(query.mock.calls[2][0]).toContain('UPDATE "users"');
+      expect(query.mock.calls[3][0]).toContain('UPDATE "sessions"');
+      expect(query.mock.calls[4][0]).toContain('INSERT INTO "activity_logs"');
+    });
+
+    it('reactivates without reviving old sessions', async () => {
+      query
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: owner.id }])
+        .mockResolvedValueOnce([owner, { ...admin, is_active: false }])
+        .mockResolvedValue([]);
+      await expect(
+        service.setAdminActive(admin.id, owner.id, true),
+      ).resolves.toMatchObject({ id: admin.id, is_active: true });
+      expect(
+        query.mock.calls.some(([sql]) => sql.includes('UPDATE "sessions"')),
+      ).toBe(false);
+    });
+
+    it('prevents owner self-deactivation', async () => {
+      query
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: owner.id }])
+        .mockResolvedValueOnce([owner]);
+      await expect(
+        service.setAdminActive(owner.id, owner.id, false),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });

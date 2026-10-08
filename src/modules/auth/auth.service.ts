@@ -138,7 +138,7 @@ export class AuthService {
     }
 
     // Check if user is active
-    if (!user.is_active) {
+    if (!user.is_active || user.deleted_at) {
       this.logger.warn('Login attempt on inactive account');
       throw new UnauthorizedException(sysMsg.USER_INACTIVE);
     }
@@ -207,12 +207,12 @@ export class AuthService {
       }
     }
 
+    const user = await this.userService.findOne(payload.sub);
+    if (!user || !user.is_active || user.deleted_at)
+      throw new UnauthorizedException('Account is inactive or unavailable');
+
     // Generate new tokens
-    const tokens = await this.generateTokens(
-      payload.sub,
-      payload.email,
-      payload.role,
-    );
+    const tokens = await this.generateTokens(user.id, user.email, user.role);
 
     // Update session with new refresh token
     let sessionInfo = null;
@@ -314,6 +314,7 @@ export class AuthService {
         password: hashedPassword,
         reset_token: null,
         reset_token_expiry: null,
+        password_setup_required: false,
       },
       { id: user.id },
       { useTransaction: false },
@@ -322,26 +323,6 @@ export class AuthService {
     this.logger.info(`Password successfully reset for user: ${user.email}`);
 
     return { message: sysMsg.PASSWORD_RESET_SUCCESS };
-  }
-
-  async activateUserAccount(id: string) {
-    const user = await this.userService.findOne(id);
-
-    if (!user) throw new NotFoundException(sysMsg.USER_NOT_FOUND);
-
-    if (user.is_active) {
-      return sysMsg.USER_IS_ACTIVATED;
-    }
-
-    await this.userService.updateUser(
-      {
-        is_active: true,
-      },
-      { id },
-      { useTransaction: false },
-    );
-
-    return sysMsg.USER_ACTIVATED;
   }
 
   async getProfile(req: IRequestWithUser) {
@@ -458,6 +439,8 @@ export class AuthService {
     let user = await this.userService.findByEmail(email);
 
     if (user) {
+      if (!user.is_active || user.deleted_at)
+        throw new UnauthorizedException('Account is inactive or unavailable');
       // If user exists but doesn't have google_id, update it
       if (!user.google_id) {
         await this.userService.updateUser(

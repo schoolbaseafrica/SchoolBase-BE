@@ -127,6 +127,27 @@ describe('AuthService', () => {
     expect(service).toBeDefined();
   });
 
+  it('clears first password setup after using the email reset link', async () => {
+    mockUserService.findByResetToken.mockResolvedValue({
+      id: 'parent-id',
+      email: 'parent@example.com',
+      reset_token_expiry: new Date(Date.now() + 60000),
+    });
+    mockUserService.updateUser.mockResolvedValue({});
+    await service.resetPassword({
+      token: 'reset-token',
+      newPassword: 'NewPassword123',
+    });
+    expect(mockUserService.updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reset_token: null,
+        password_setup_required: false,
+      }),
+      { id: 'parent-id' },
+      { useTransaction: false },
+    );
+  });
+
   it('includes the saved student photo in their profile', async () => {
     mockUserService.findOne.mockResolvedValue({
       id: 'user-1',
@@ -345,6 +366,13 @@ describe('AuthService', () => {
 
     beforeEach(() => {
       jest.clearAllMocks();
+      mockUserService.findOne.mockResolvedValue({
+        id: mockJwtPayload.sub,
+        email: mockJwtPayload.email,
+        role: mockJwtPayload.role,
+        is_active: true,
+        deleted_at: null,
+      });
       mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
       mockJwtService.signAsync
         .mockResolvedValueOnce('new-access-token')
@@ -393,6 +421,14 @@ describe('AuthService', () => {
 
       expect(mockSessionService.validateRefreshToken).toHaveBeenCalled();
       expect(mockSessionService.revokeSession).not.toHaveBeenCalled();
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects a deactivated account even with a valid refresh token', async () => {
+      mockUserService.findOne.mockResolvedValue({ is_active: false });
+      await expect(service.refreshToken(mockRefreshTokenDto)).rejects.toThrow(
+        'Account is inactive or unavailable',
+      );
       expect(mockSessionService.createSession).not.toHaveBeenCalled();
     });
 

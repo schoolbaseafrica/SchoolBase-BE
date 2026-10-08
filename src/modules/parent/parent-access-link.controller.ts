@@ -9,7 +9,15 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsBoolean, IsInt, IsString, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsInt,
+  IsString,
+  Matches,
+  Max,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { Request } from 'express';
 
 import { IRequestWithUser } from '../../common/types';
@@ -33,6 +41,13 @@ class GenerateParentAccessLinkDto {
 class ValidateParentAccessLinkDto {
   @IsString()
   token: string;
+}
+
+class CompleteParentSetupDto extends ValidateParentAccessLinkDto {
+  @IsString()
+  @MinLength(8)
+  @Matches(/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+  newPassword: string;
 }
 
 @Controller('parents')
@@ -73,5 +88,10 @@ export class ParentAccessLinkPublicController {
   @Post('validate')
   validate(@Body() dto: ValidateParentAccessLinkDto, @Req() req: Request) {
     return this.links.validate(dto.token, req.ip);
+  }
+
+  @Post('complete-setup')
+  completeSetup(@Body() dto: CompleteParentSetupDto, @Req() req: Request) {
+    return this.links.completeSetup(dto.token, dto.newPassword, req.ip);
   }
 }

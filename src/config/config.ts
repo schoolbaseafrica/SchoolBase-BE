@@ -85,6 +85,10 @@ export default () => ({
     enabled: process.env.DATABASE_SETUP_ENABLED === 'true',
   },
 
+  initialSetup: {
+    secret: process.env.INITIAL_SETUP_SECRET,
+  },
+
   frontend: {
     url: process.env.FRONTEND_URL,
     superadmin_login_url: process.env.SUPERADMIN_LOGIN_URL,

@@ -16,7 +16,10 @@ jest.mock('./decorators/installation-api.decorator', () => ({
       descriptor,
 }));
 
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
+
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 
 import { SchoolSettingsService } from './school-settings.service';
 import { SchoolController } from './school.controller';
@@ -36,6 +39,8 @@ describe('SchoolController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [SchoolController],
       providers: [
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: InitialSetupGuard, useValue: { canActivate: () => true } },
         {
           provide: SchoolService,
           useValue: mockSchoolService,

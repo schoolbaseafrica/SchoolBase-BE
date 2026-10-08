@@ -118,6 +118,59 @@ describe('InviteService', () => {
     dataSource = moduleRef.get(DataSource);
   });
 
+  describe('bootstrapFirstAdmin', () => {
+    it('sends an acceptance link only when no admin or active admin invite exists', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'school-id' }])
+        .mockResolvedValueOnce([{ id: 'setup-admin-id' }])
+        .mockResolvedValueOnce([
+          { has_admin: false, has_invite: false, email_used: false },
+        ])
+        .mockResolvedValue([]);
+      dataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+      configService.get.mockImplementation((key) => {
+        if (key === 'invite.expiry') return '7';
+        if (key === 'frontend.url') return 'https://school.com';
+        return undefined;
+      });
+      emailService.sendMail.mockResolvedValue(undefined);
+
+      await expect(
+        service.bootstrapFirstAdmin({
+          email: 'FIRST@EXAMPLE.COM',
+          full_name: 'First Admin',
+        }),
+      ).resolves.toMatchObject({ email: 'first@example.com' });
+      expect(query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
+      expect(query.mock.calls[4][0]).toContain('INSERT INTO "invites"');
+      expect(
+        emailService.sendMail.mock.calls[0][0].templateData.invite_link,
+      ).toMatch(/^https:\/\/school\.com\/accept-invite\?token=[a-f0-9]{64}$/);
+    });
+
+    it('refuses another bootstrap invitation once an admin invite is pending', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'school-id' }])
+        .mockResolvedValueOnce([{ id: 'setup-admin-id' }])
+        .mockResolvedValueOnce([
+          { has_admin: false, has_invite: true, email_used: false },
+        ]);
+      dataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+      await expect(
+        service.bootstrapFirstAdmin({ email: 'another@example.com' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(emailService.sendMail).not.toHaveBeenCalled();
+    });
+  });
+
   describe('inviteUser', () => {
     const dto: InviteUserDto = {
       email: 'newuser@example.com',
@@ -157,7 +210,10 @@ describe('InviteService', () => {
       });
 
       expect(inviteModelAction.create).toHaveBeenCalled();
-      expect(emailService.sendMail).toHaveBeenCalled();
+      const emailPayload = emailService.sendMail.mock.calls[0][0];
+      expect(emailPayload.templateData.invite_link).toMatch(
+        /^https:\/\/example\.com\/accept-invite\?token=[a-f0-9]{64}$/,
+      );
       expect(result).toEqual({
         id: mockInvite.id,
         email: mockInvite.email,
@@ -381,6 +437,9 @@ describe('InviteService', () => {
         'existing@user.com',
       ]);
       expect(emailService.sendMail).toHaveBeenCalledTimes(1);
+      expect(
+        emailService.sendMail.mock.calls[0][0].templateData.invite_link,
+      ).toMatch(/^https:\/\/[^/]+\/accept-invite\?token=[a-f0-9]{64}$/);
     });
 
     it('rejects oversized invite lists before any email is sent', async () => {

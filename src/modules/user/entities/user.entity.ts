@@ -62,6 +62,9 @@ export class User extends BaseEntity {
   @Column({ default: true })
   is_active: boolean;
 
+  @Column({ default: false })
+  password_setup_required?: boolean;
+
   @Column({ default: true, nullable: true })
   is_verified?: boolean;
 

@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -505,6 +506,16 @@ describe('TeacherService', () => {
   });
 
   describe('update', () => {
+    it('cannot change account access for an admin who is also a teacher', async () => {
+      teacherModelAction.get.mockResolvedValue({
+        ...mockTeacher,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.TEACHER] },
+      } as Teacher);
+      await expect(
+        service.update(mockTeacherId, { is_active: true }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     const updateDto: UpdateTeacherDto = {
       first_name: 'Updated',
       last_name: 'Name',
@@ -583,6 +594,17 @@ describe('TeacherService', () => {
       teacherModelAction.get.mockResolvedValue(mockTeacher as Teacher);
       teacherModelAction.update.mockResolvedValue(mockTeacher as Teacher);
       userModelAction.update.mockResolvedValue(mockUser as User);
+    });
+
+    it('cannot remove an admin who is also a teacher', async () => {
+      teacherModelAction.get.mockResolvedValue({
+        ...mockTeacher,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.TEACHER] },
+      } as Teacher);
+      await expect(service.remove(mockTeacherId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
     });
 
     it('should deactivate teacher and user', async () => {

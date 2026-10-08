@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
 import { DataSource } from 'typeorm';
 
 import { AuthService } from '../auth/auth.service';
@@ -38,7 +39,12 @@ export class ParentAccessLinkService {
       where: { id: parentId, is_active: true },
       relations: ['user'],
     });
-    if (!parent || !parent.user?.is_active) {
+    if (
+      !parent ||
+      parent.deleted_at ||
+      !parent.user?.is_active ||
+      parent.user.deleted_at
+    ) {
       throw new NotFoundException('Active parent account not found');
     }
     return parent;
@@ -50,7 +56,7 @@ export class ParentAccessLinkService {
     expiresInHours = 24,
     isSingleUse = true,
   ) {
-    await this.activeParent(parentId);
+    const parent = await this.activeParent(parentId);
     const base = this.config.get<string>('frontend.url')?.replace(/\/+$/, '');
     if (!base || !/^https?:\/\//.test(base)) {
       throw new ForbiddenException('School frontend URL is not configured');
@@ -72,7 +78,7 @@ export class ParentAccessLinkService {
       token,
       expires_at: rows[0].expires_at,
       is_single_use: isSingleUse,
-      requires_password_reset: false,
+      requires_password_reset: Boolean(parent.user.password_setup_required),
       email_sent: false,
     };
   }
@@ -145,8 +151,23 @@ export class ParentAccessLinkService {
         where: { id: link.parent_id, is_active: true },
         relations: ['user'],
       });
-      if (!parent || !parent.user?.is_active) {
+      if (
+        !parent ||
+        parent.deleted_at ||
+        !parent.user?.is_active ||
+        parent.user.deleted_at
+      ) {
         throw new GoneException('Parent access link is invalid or expired');
+      }
+      // Keep the link usable while the parent completes first password setup.
+      if (parent.user.password_setup_required) {
+        return {
+          user: {
+            first_name: parent.user.first_name,
+            last_name: parent.user.last_name,
+          },
+          requires_password_reset: true,
+        };
       }
       const session = await this.auth.createParentLinkSession(parent.user);
       await manager.query(
@@ -158,5 +179,56 @@ export class ParentAccessLinkService {
       );
       return session;
     });
+  }
+
+  async completeSetup(token: string, newPassword: string, ip?: string) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token ?? ''))
+      throw new GoneException('Parent access link is invalid or expired');
+    const hash = createHash('sha256').update(token).digest('hex');
+    const user = await this.dataSource.transaction(async (manager) => {
+      const links = (await manager.query(
+        `SELECT "id", "parent_id", "is_active", "is_single_use", "used_at",
+                "expires_at" <= now() AS "expired"
+         FROM "parent_access_links" WHERE "token_hash" = $1 FOR UPDATE`,
+        [hash],
+      )) as (LinkRow & { expired: boolean })[];
+      const link = links[0];
+      if (
+        !link ||
+        !link.is_active ||
+        link.expired ||
+        (link.is_single_use && link.used_at)
+      )
+        throw new GoneException('Parent access link is invalid or expired');
+
+      const parent = await manager.findOne(Parent, {
+        where: { id: link.parent_id, is_active: true },
+        relations: ['user'],
+      });
+      if (!parent || !parent.user?.is_active || parent.user.deleted_at)
+        throw new GoneException('Parent access link is invalid or expired');
+
+      const accounts = (await manager.query(
+        `SELECT "password_setup_required" FROM "users" WHERE "id" = $1 FOR UPDATE`,
+        [parent.user.id],
+      )) as { password_setup_required: boolean }[];
+      if (!accounts[0]?.password_setup_required)
+        throw new GoneException('Password setup has already been completed');
+
+      const password = await bcrypt.hash(newPassword, 10);
+      await manager.query(
+        `UPDATE "users" SET "password" = $1, "reset_token" = NULL,
+           "reset_token_expiry" = NULL, "password_setup_required" = false,
+           "updated_at" = now() WHERE "id" = $2`,
+        [password, parent.user.id],
+      );
+      await manager.query(
+        `UPDATE "parent_access_links" SET "is_active" = false, "used_at" = now(),
+           "used_by_ip" = $2, "updated_at" = now() WHERE "id" = $1`,
+        [link.id, ip?.slice(0, 45) ?? null],
+      );
+      return parent.user;
+    });
+    return this.auth.createParentLinkSession(user);
   }
 }

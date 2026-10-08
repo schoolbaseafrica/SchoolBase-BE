@@ -3,8 +3,6 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
-  Param,
-  Patch,
   Post,
   Get,
   UseGuards,
@@ -16,16 +14,13 @@ import { IRequestWithUser } from '../../common/types';
 
 import { AuthService } from './auth.service';
 import {
-  ActivateAccountDocs,
   GetProfileDocs,
   GoogleLoginDocs,
   LoginDocs,
   LogoutDocs,
   RefreshTokenDocs,
-  SignupDocs,
 } from './docs';
 import {
-  AuthDto,
   ForgotPasswordDto,
   LogoutDto,
   RefreshTokenDto,
@@ -39,13 +34,6 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
-
-  @SignupDocs()
-  @HttpCode(HttpStatus.CREATED)
-  @Post('signup')
-  signup(@Body() signupDto: AuthDto) {
-    return this.authService.signup(signupDto);
-  }
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
@@ -79,17 +67,6 @@ export class AuthController {
   @Post('reset-password')
   resetPassword(@Body() payload: ResetPasswordDto) {
     return this.authService.resetPassword(payload);
-  }
-
-  @Patch('users/:user_id/activate')
-  @HttpCode(HttpStatus.OK)
-  @ActivateAccountDocs()
-  async activateAccount(@Param('user_id') userId: string) {
-    const message = await this.authService.activateUserAccount(userId);
-    return {
-      status: HttpStatus.OK,
-      message,
-    };
   }
 
   @GetProfileDocs()

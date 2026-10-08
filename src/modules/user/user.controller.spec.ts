@@ -1,64 +1,57 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import { Test } from '@nestjs/testing';
 
-import { ApiSuccessResponseDto } from '../../common/dto/response.dto';
-import { UserNotFoundException } from '../../common/exceptions/domain.exceptions';
-import * as sysMsg from '../../constants/system.messages';
-
+import { User } from './entities/user.entity';
 import { UserController } from './user.controller';
 import { UserService } from './user.service';
 
-describe('UserService', () => {
+describe('UserController owner assignment', () => {
+  const assignFirstOwner = jest.fn();
+  const getFirstOwner = jest.fn();
+  const findAdminProfile = jest.fn();
+  const setAdminActive = jest.fn();
   let controller: UserController;
-  let userService: UserService;
-
-  const mockAuthService = {
-    remove: jest.fn(),
-  };
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    const module = await Test.createTestingModule({
       controllers: [UserController],
       providers: [
         {
           provide: UserService,
-          useValue: mockAuthService,
+          useValue: {
+            assignFirstOwner,
+            getFirstOwner,
+            findAdminProfile,
+            setAdminActive,
+          },
         },
       ],
     }).compile();
-
-    controller = module.get<UserController>(UserController);
-    userService = module.get<UserService>(UserService);
+    controller = module.get(UserController);
+    jest.clearAllMocks();
   });
 
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
+  it('uses the authenticated admin as the assignment actor', async () => {
+    const actor = { id: 'actor-id' } as User;
+    const dto = { owner_user_id: 'owner-id' };
+    assignFirstOwner.mockResolvedValue({ owner_user_id: dto.owner_user_id });
+
+    await controller.assignFirstOwner(dto, actor);
+
+    expect(assignFirstOwner).toHaveBeenCalledWith('owner-id', 'actor-id');
   });
 
-  describe('remove', () => {
-    it('should remove a user and return a success response', async () => {
-      const userId = 'some-uuid';
-      const successMessage = sysMsg.ACCOUNT_DELETED;
-
-      mockAuthService.remove.mockResolvedValue(
-        new ApiSuccessResponseDto(successMessage),
-      );
-
-      const result = await controller.remove(userId);
-
-      expect(userService.remove).toHaveBeenCalledWith(userId);
-      expect(result).toEqual(new ApiSuccessResponseDto(successMessage));
+  it('returns only the admin profile selected by the service', async () => {
+    findAdminProfile.mockResolvedValue({ id: 'admin-id' });
+    await expect(controller.findOne('admin-id')).resolves.toEqual({
+      id: 'admin-id',
     });
+    expect(findAdminProfile).toHaveBeenCalledWith('admin-id');
+  });
 
-    it('should return a UserNotFoundException if user is not found', async () => {
-      const userId = 'some-uuid';
-
-      mockAuthService.remove.mockRejectedValue(
-        new UserNotFoundException(userId),
-      );
-
-      await expect(controller.remove(userId)).rejects.toThrow(
-        new UserNotFoundException(userId),
-      );
-    });
+  it('passes the authenticated actor to the admin access service', async () => {
+    await controller.setAdminActive('admin-id', { is_active: false }, {
+      id: 'owner-id',
+    } as User);
+    expect(setAdminActive).toHaveBeenCalledWith('admin-id', 'owner-id', false);
   });
 });

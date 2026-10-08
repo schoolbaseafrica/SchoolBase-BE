@@ -59,6 +59,9 @@ export class School extends BaseEntity {
   @Column({ default: false })
   installation_completed: boolean;
 
+  @Column({ type: 'uuid', nullable: true })
+  owner_user_id?: string | null;
+
   @Column({ type: 'boolean', default: false })
   use_marketing_site: boolean;
 

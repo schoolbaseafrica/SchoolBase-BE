@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -162,6 +163,7 @@ export class ParentService {
           is_active: createDto.is_active ?? true,
           reset_token: resetToken,
           reset_token_expiry: resetTokenExpiry,
+          password_setup_required: true,
         },
         transactionOptions: {
           useTransaction: true,
@@ -272,6 +274,14 @@ export class ParentService {
       throw new NotFoundException(sysMsg.PARENT_NOT_FOUND);
     }
 
+    if (
+      parent.user?.role?.includes(UserRole.ADMIN) &&
+      updateDto.is_active !== undefined
+    )
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
+
     // Check for email conflict if email is being updated
     if (updateDto.email && updateDto.email !== parent.user.email) {
       const existingUser = await this.userModelAction.get({
@@ -379,6 +389,11 @@ export class ParentService {
       this.logger.warn(`Parent not found with ID: ${id}`);
       throw new NotFoundException(sysMsg.PARENT_NOT_FOUND);
     }
+
+    if (parent.user?.role?.includes(UserRole.ADMIN))
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
 
     return this.dataSource.transaction(async (manager) => {
       // Set deleted_at and is_active to false within transaction

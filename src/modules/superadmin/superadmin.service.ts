@@ -92,57 +92,31 @@ export class SuperadminService {
       throw new ConflictException(sysMsg.SUPERADMIN_PASSWORDS_REQUIRED);
     }
 
-    const existing = await this.superadminModelAction.get({
-      identifierOptions: { role: Role.SUPERADMIN },
-    });
+    // Serialize first-account creation within this school's database. Checking
+    // outside the transaction would let two concurrent setup requests succeed.
+    const createdSuperadmin = await this.dataSource.transaction(
+      async (manager) => {
+        await manager.query('SELECT pg_advisory_xact_lock(908230504)');
+        const existing = await this.superadminModelAction.get({
+          identifierOptions: { role: Role.SUPERADMIN },
+        });
+        if (existing) {
+          throw new ConflictException(sysMsg.SUPERADMIN_ALREADY_EXISTS);
+        }
 
-    const passwordHash: string = await bcrypt.hash(password, 10);
-
-    const createNewRecord = async (manager) => {
-      const updatedSuperadminRecord = await this.superadminModelAction.create({
-        createPayload: {
-          ...restData,
-          email,
-          password: passwordHash,
-          role: Role.SUPERADMIN,
-          is_active: createSuperadminDto.school_name ? true : false,
-        },
-        transactionOptions: { useTransaction: true, transaction: manager },
-      });
-      return updatedSuperadminRecord;
-    };
-
-    const updateRecord = async (manager) => {
-      const updatedSuperadminRecord = await this.superadminModelAction.update({
-        updatePayload: {
-          ...restData,
-          email,
-          password: passwordHash,
-          role: Role.SUPERADMIN,
-          is_active: createSuperadminDto.school_name ? true : false,
-        },
-        identifierOptions: { role: Role.SUPERADMIN },
-        transactionOptions: { useTransaction: true, transaction: manager },
-      });
-      return updatedSuperadminRecord;
-    };
-
-    if (existing) {
-      const updatedSuperadmin = await this.dataSource.transaction(updateRecord);
-
-      if (updatedSuperadmin.password) delete updatedSuperadmin.password;
-
-      this.logger.info(sysMsg.SUPERADMIN_ACCOUNT_UPDATED);
-
-      return {
-        message: sysMsg.SUPERADMIN_ACCOUNT_UPDATED,
-        status_code: HttpStatus.OK,
-        data: updatedSuperadmin,
-      };
-    }
-
-    const createdSuperadmin =
-      await this.dataSource.transaction(createNewRecord);
+        const passwordHash = await bcrypt.hash(password, 10);
+        return this.superadminModelAction.create({
+          createPayload: {
+            ...restData,
+            email,
+            password: passwordHash,
+            role: Role.SUPERADMIN,
+            is_active: true,
+          },
+          transactionOptions: { useTransaction: true, transaction: manager },
+        });
+      },
+    );
 
     if (createdSuperadmin.password) delete createdSuperadmin.password;
 
@@ -173,6 +147,13 @@ export class SuperadminService {
    * @param loginSuperadminDto - requires data with which a superadmin is logged on
    */
   async login(loginSuperadminDto: LoginSuperadminDto) {
+    const activeAdmins = (await this.dataSource.query(
+      `SELECT EXISTS (SELECT 1 FROM "users" WHERE 'ADMIN' = ANY("role") AND "deleted_at" IS NULL) AS "has_admin"`,
+    )) as { has_admin: boolean }[];
+    if (activeAdmins[0]?.has_admin) {
+      throw new UnauthorizedException('Initial setup access has ended');
+    }
+
     // Find superadmin by email
     const superadmin = await this.superadminModelAction.get({
       identifierOptions: { email: loginSuperadminDto.email },

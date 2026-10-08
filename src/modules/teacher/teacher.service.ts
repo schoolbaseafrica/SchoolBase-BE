@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -350,6 +351,14 @@ export class TeacherService {
       throw new NotFoundException(`Teacher with ID ${id} not found`);
     }
 
+    if (
+      teacher.user?.role?.includes(UserRole.ADMIN) &&
+      updateDto.is_active !== undefined
+    )
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
+
     // IMMUTABILITY CHECK: Employment ID cannot be updated
     if (
       updateDto.employment_id &&
@@ -458,6 +467,11 @@ export class TeacherService {
       this.logger.warn(sysMsg.RESOURCE_NOT_FOUND, { teacherId: id });
       throw new NotFoundException(`Teacher with ID ${id} not found`);
     }
+
+    if (teacher.user?.role?.includes(UserRole.ADMIN))
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
 
     return this.dataSource.transaction(async (manager) => {
       // Set is_active to false (Deactivate) within transaction

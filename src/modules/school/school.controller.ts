@@ -13,6 +13,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import { IMulterFile } from '../../common/types/multer.types';
 import { pictureUploadConfig } from '../../config/multer.config';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -35,13 +36,6 @@ import { UpdateWebsiteLayoutDto } from './dto/update-website-layout.dto';
 import { SchoolSettingsService } from './school-settings.service';
 import { SchoolService } from './school.service';
 
-interface IUploadedFile {
-  buffer: Buffer;
-  originalname: string;
-  mimetype: string;
-  size: number;
-}
-
 @ApiTags('School')
 @Controller('school')
 export class SchoolController {
@@ -51,11 +45,12 @@ export class SchoolController {
   ) {}
 
   @Post('installation')
+  @UseGuards(InitialSetupGuard)
   @UseInterceptors(FileInterceptor('logo', pictureUploadConfig))
   @installationApi()
   async processInstallation(
     @Body() createInstallationDto: CreateInstallationDto,
-    @UploadedFile() logo?: IUploadedFile,
+    @UploadedFile() logo?: IMulterFile,
   ) {
     return this.schoolService.processInstallation(createInstallationDto, logo);
   }

@@ -1,6 +1,7 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import { ActivityLogModule } from '../activity-log/activity-log.module';
 import { LandingPageModule } from '../landing-page/landing-page.module';
 import { SuperadminModule } from '../superadmin/superadmin.module';
@@ -21,7 +22,12 @@ import { SchoolService } from './school.service';
     UploadModule,
   ],
   controllers: [SchoolController],
-  providers: [SchoolService, SchoolSettingsService, SchoolModelAction],
+  providers: [
+    SchoolService,
+    SchoolSettingsService,
+    SchoolModelAction,
+    InitialSetupGuard,
+  ],
   exports: [SchoolModelAction, SchoolService],
 })
 export class SchoolModule {}

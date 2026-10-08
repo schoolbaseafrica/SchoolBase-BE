@@ -1,23 +1,13 @@
-// Mock external modules that have native dependencies BEFORE any imports
-
-const mockSharp = jest.fn();
-jest.mock('sharp', () => mockSharp);
-
-jest.mock('fs/promises', () => ({
-  mkdir: jest.fn(),
-  unlink: jest.fn(),
-}));
-
-import * as fs from 'fs/promises';
-
 import { ConflictException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { DataSource } from 'typeorm';
 
 import { LandingPage } from '../landing-page/entities/landing-page.entity';
 import { LandingPageModelAction } from '../landing-page/model-actions/landing-page.action';
 import { SetupPhase } from '../shared/enums';
 import { Role, SuperAdmin } from '../superadmin/entities/superadmin.entity';
 import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
+import { MinioService } from '../upload/services/minio.service';
 
 import { CreateInstallationDto } from './dto/create-installation.dto';
 import { WebsiteLayout } from './dto/update-website-layout.dto';
@@ -30,6 +20,7 @@ describe('SchoolService', () => {
   let schoolModelAction: jest.Mocked<SchoolModelAction>;
   let landingPageModelAction: jest.Mocked<LandingPageModelAction>;
   let superadminModelAction: jest.Mocked<SuperadminModelAction>;
+  let minio: jest.Mocked<MinioService>;
 
   beforeEach(async () => {
     const mockSchoolModelAction = {
@@ -60,6 +51,18 @@ describe('SchoolService', () => {
           provide: SuperadminModelAction,
           useValue: mockSuperadminModelAction,
         },
+        {
+          provide: DataSource,
+          useValue: {
+            transaction: jest.fn(async (callback) =>
+              callback({ query: jest.fn() }),
+            ),
+          },
+        },
+        {
+          provide: MinioService,
+          useValue: { uploadImage: jest.fn(), deleteImage: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -72,15 +75,16 @@ describe('SchoolService', () => {
     superadminModelAction = module.get<jest.Mocked<SuperadminModelAction>>(
       SuperadminModelAction,
     );
+    minio = module.get<jest.Mocked<MinioService>>(MinioService);
 
     // Reset mocks
     jest.clearAllMocks();
-    mockSharp.mockReturnValue({
-      resize: jest.fn().mockReturnThis(),
-      png: jest.fn().mockReturnThis(),
-      toFile: jest.fn().mockResolvedValue(undefined),
+    superadminModelAction.get.mockResolvedValue(null);
+    minio.uploadImage.mockResolvedValue({
+      url: 'https://files.example.invalid/demo/schoolbase-school-logos/logo.png',
+      publicId: 'schoolbase-school-logos/logo.png',
     });
-    (fs.mkdir as jest.Mock).mockResolvedValue(undefined);
+    minio.deleteImage.mockResolvedValue(undefined);
   });
 
   it('should be defined', () => {
@@ -137,7 +141,7 @@ describe('SchoolService', () => {
       });
     });
 
-    it('should update existing school installation with new data', async () => {
+    it('refuses to replace an existing school installation', async () => {
       const existingSchool: Partial<School> = {
         id: 'existing-id',
         name: 'Old School Name',
@@ -151,59 +155,33 @@ describe('SchoolService', () => {
         installation_completed: true,
       };
 
-      const updatedSchool: Partial<School> = {
-        id: 'existing-id',
-        name: 'Test School',
-        address: '123 Main Street, Springfield',
-        email: 'contact@testschool.edu',
-        phone: '+1234567890',
-        logo_url: '/uploads/logos/old-logo.png',
-        primary_color: '#1E40AF',
-        secondary_color: '#3B82F6',
-        accent_color: '#60A5FA',
-        installation_completed: true,
-      };
-
       schoolModelAction.list.mockResolvedValue({
         payload: [existingSchool as School],
         paginationMeta: {},
       });
-      schoolModelAction.update.mockResolvedValue(updatedSchool as School);
-
-      const result = await service.processInstallation(validDto);
-
-      expect(schoolModelAction.update).toHaveBeenCalledWith({
-        identifierOptions: { id: 'existing-id' },
-        updatePayload: {
-          name: validDto.name,
-          address: validDto.address,
-          email: validDto.email,
-          phone: validDto.phone,
-          logo_url: '/uploads/logos/old-logo.png',
-          primary_color: validDto.primary_color,
-          secondary_color: validDto.secondary_color,
-          accent_color: validDto.accent_color,
-          installation_completed: true,
-        },
-        transactionOptions: { useTransaction: false },
-      });
-
-      expect(result).toEqual({
-        id: 'existing-id',
-        name: 'Test School',
-        address: '123 Main Street, Springfield',
-        email: 'contact@testschool.edu',
-        phone: '+1234567890',
-        logo_url: '/uploads/logos/old-logo.png',
-        primary_color: '#1E40AF',
-        secondary_color: '#3B82F6',
-        accent_color: '#60A5FA',
-        installation_completed: true,
-        message: 'school installation updated successfully',
-      });
+      await expect(service.processInstallation(validDto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(schoolModelAction.update).not.toHaveBeenCalled();
+      expect(schoolModelAction.create).not.toHaveBeenCalled();
     });
 
-    it('should update existing school with new logo file', async () => {
+    it('refuses school installation when a superadmin already exists', async () => {
+      schoolModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+      superadminModelAction.get.mockResolvedValue({
+        id: 'existing-admin',
+      } as SuperAdmin);
+
+      await expect(service.processInstallation(validDto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(schoolModelAction.create).not.toHaveBeenCalled();
+    });
+
+    it('does not write a logo when setup is already complete', async () => {
       const existingSchool: Partial<School> = {
         id: 'existing-id',
         name: 'Old School',
@@ -218,6 +196,8 @@ describe('SchoolService', () => {
       };
 
       const mockFile = {
+        fieldname: 'logo',
+        encoding: '7bit',
         buffer: Buffer.from('new-image-data'),
         originalname: 'new-logo.png',
         mimetype: 'image/png',
@@ -229,30 +209,10 @@ describe('SchoolService', () => {
         paginationMeta: {},
       });
 
-      // Mock the update to return the school with a dynamically generated logo URL
-      schoolModelAction.update.mockImplementation(async (options) => {
-        return {
-          id: 'existing-id',
-          name: validDto.name,
-          address: validDto.address,
-          email: validDto.email,
-          phone: validDto.phone,
-          logo_url: options.updatePayload.logo_url,
-          primary_color: validDto.primary_color,
-          secondary_color: validDto.secondary_color,
-          accent_color: validDto.accent_color,
-          installation_completed: true,
-        } as School;
-      });
-
-      const result = await service.processInstallation(validDto, mockFile);
-
-      expect(fs.mkdir).toHaveBeenCalled();
-      expect(mockSharp).toHaveBeenCalledWith(mockFile.buffer);
-      expect(result.logo_url).toMatch(
-        /^\/uploads\/logos\/logo-[a-f0-9]+\.png$/,
-      );
-      expect(result.message).toBe('school installation updated successfully');
+      await expect(
+        service.processInstallation(validDto, mockFile),
+      ).rejects.toThrow(ConflictException);
+      expect(minio.uploadImage).not.toHaveBeenCalled();
     });
 
     it('should handle installation without optional colors', async () => {
@@ -292,6 +252,8 @@ describe('SchoolService', () => {
 
     it('should successfully process installation with logo file', async () => {
       const mockFile = {
+        fieldname: 'logo',
+        encoding: '7bit',
         buffer: Buffer.from('fake-image-data'),
         originalname: 'logo.png',
         mimetype: 'image/png',
@@ -304,7 +266,8 @@ describe('SchoolService', () => {
         address: '123 Main Street, Springfield',
         email: 'contact@testschool.edu',
         phone: '+1234567890',
-        logo_url: '/uploads/logos/logo-abc123.png',
+        logo_url:
+          'https://files.example.invalid/demo/schoolbase-school-logos/logo.png',
         primary_color: '#1E40AF',
         secondary_color: '#3B82F6',
         accent_color: '#60A5FA',
@@ -321,11 +284,36 @@ describe('SchoolService', () => {
 
       const result = await service.processInstallation(validDto, mockFile);
 
-      expect(fs.mkdir).toHaveBeenCalled();
-      expect(mockSharp).toHaveBeenCalledWith(mockFile.buffer);
+      expect(minio.uploadImage).toHaveBeenCalledWith(
+        mockFile,
+        'schoolbase-school-logos',
+      );
       expect(result.name).toBe('Test School');
-      expect(result.logo_url).toMatch(
-        /^\/uploads\/logos\/logo-[a-f0-9]+\.png$/,
+      expect(result.logo_url).toBe(mockSchool.logo_url);
+    });
+
+    it('removes a newly uploaded logo when school creation fails', async () => {
+      const mockFile = {
+        fieldname: 'logo',
+        encoding: '7bit',
+        buffer: Buffer.from('fake-image-data'),
+        originalname: 'logo.png',
+        mimetype: 'image/png',
+        size: 1024,
+      };
+      schoolModelAction.list.mockResolvedValue({
+        payload: [],
+        paginationMeta: {},
+      });
+      schoolModelAction.create.mockRejectedValue(
+        new Error('database unavailable'),
+      );
+
+      await expect(
+        service.processInstallation(validDto, mockFile),
+      ).rejects.toThrow('database unavailable');
+      expect(minio.deleteImage).toHaveBeenCalledWith(
+        'schoolbase-school-logos/logo.png',
       );
     });
   });
