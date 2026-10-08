@@ -22,7 +22,7 @@ export class ListActivityLogsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @MaxLength(100)
+  @Max(100)
   limit: number = 20;
 
   @ApiPropertyOptional()
@@ -33,7 +33,7 @@ export class ListActivityLogsQueryDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  @Max(100)
+  @MaxLength(100)
   entity_type?: string;
 
   @ApiPropertyOptional()
