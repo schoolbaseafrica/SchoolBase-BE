@@ -92,6 +92,15 @@ export class School extends BaseEntity {
   @Column({ type: 'boolean', default: true })
   allow_manual_teacher_ids: boolean;
 
+  @Column({ type: 'boolean', default: false })
+  email_alert_results: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  email_alert_fees: boolean;
+
+  @Column({ type: 'boolean', default: false })
+  email_alert_attendance: boolean;
+
   @Column({ type: 'varchar', length: 100, nullable: true })
   parent_id_format?: string | null;
 

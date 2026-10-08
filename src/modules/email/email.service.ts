@@ -28,6 +28,9 @@ export class EmailService {
       },
       pool: true,
       maxConnections: 5,
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     });
   }
 

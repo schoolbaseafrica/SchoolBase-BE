@@ -12,8 +12,14 @@ import {
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
 import { TermName } from '../../academic-term/entities/term.entity';
 import { TermModelAction } from '../../academic-term/model-actions';
+import { SchoolEmailAlertService } from '../../notification/services/school-email-alert.service';
 import { ScheduleBasedAttendance, StudentDailyAttendance } from '../entities';
-import { AttendanceStatus, DailyAttendanceStatus } from '../enums';
+import {
+  AttendanceStatus,
+  AttendanceType,
+  DailyAttendanceStatus,
+  EditRequestStatus,
+} from '../enums';
 import {
   AttendanceModelAction,
   StudentDailyAttendanceModelAction,
@@ -33,6 +39,7 @@ describe('AttendanceService', () => {
   const mockFindOne = jest.fn();
   const mockFind = jest.fn();
   const mockUpdate = jest.fn();
+  const enqueueAttendance = jest.fn();
 
   const mockEntityManager = {
     create: mockCreate,
@@ -134,6 +141,7 @@ describe('AttendanceService', () => {
           provide: DataSource,
           useValue: mockDataSource,
         },
+        { provide: SchoolEmailAlertService, useValue: { enqueueAttendance } },
         {
           provide: AttendanceEditRequestModelAction,
           useValue: mockEditRequestModelAction,
@@ -394,6 +402,14 @@ describe('AttendanceService', () => {
       );
       expect(result.marked).toBeGreaterThanOrEqual(0);
       expect(result.total).toBe(2);
+      expect(enqueueAttendance).toHaveBeenCalledWith([
+        {
+          student_id: 'student-002',
+          class_id: 'class-123',
+          date: '2025-12-02',
+          status: 'LATE',
+        },
+      ]);
     });
 
     it('should throw BadRequestException for future dates', async () => {
@@ -445,6 +461,59 @@ describe('AttendanceService', () => {
         identifierOptions: { id: attendanceId },
       });
     });
+
+    it('queues a parent alert when daily attendance is corrected to absent', async () => {
+      studentDailyAttendanceModelAction.get.mockResolvedValue({
+        id: 'attendance-id',
+        student_id: 'student-id',
+        class_id: 'class-id',
+        date: new Date('2026-10-08T00:00:00Z'),
+        is_locked: false,
+      } as StudentDailyAttendance);
+      await service.updateStudentDailyAttendance('attendance-id', {
+        status: DailyAttendanceStatus.ABSENT,
+      });
+      expect(enqueueAttendance).toHaveBeenCalledWith([
+        {
+          student_id: 'student-id',
+          class_id: 'class-id',
+          date: '2026-10-08',
+          status: 'ABSENT',
+        },
+      ]);
+    });
+  });
+
+  it('queues an alert after approving a late-attendance correction', async () => {
+    const editRequests = module.get(
+      AttendanceEditRequestModelAction,
+    ) as jest.Mocked<AttendanceEditRequestModelAction>;
+    editRequests.get.mockResolvedValue({
+      id: 'request-id',
+      attendance_id: 'attendance-id',
+      attendance_type: AttendanceType.DAILY,
+      status: EditRequestStatus.PENDING,
+      proposed_changes: { status: 'late' },
+      createdAt: new Date('2026-10-09T00:00:00Z'),
+    } as never);
+    studentDailyAttendanceModelAction.get.mockResolvedValue({
+      id: 'attendance-id',
+      student_id: 'student-id',
+      class_id: 'class-id',
+      date: new Date('2026-10-08T00:00:00Z'),
+      updatedAt: new Date('2026-10-08T00:00:00Z'),
+    } as StudentDailyAttendance);
+    await service.reviewEditRequest('request-id', 'admin-id', {
+      status: EditRequestStatus.APPROVED,
+    });
+    expect(enqueueAttendance).toHaveBeenCalledWith([
+      {
+        student_id: 'student-id',
+        class_id: 'class-id',
+        date: '2026-10-08',
+        status: 'LATE',
+      },
+    ]);
   });
 
   describe('getClassDailyAttendance', () => {

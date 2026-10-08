@@ -387,9 +387,7 @@ export class ResultService {
       }
 
       await queryRunner.commitTransaction();
-      /* A non-blocking call (no await) is used so notification
-      errors don't fail the HTTP response. */
-      this.triggerResultNotifications(
+      await this.triggerResultNotifications(
         studentsToNotify,
         classId,
         termId,
@@ -433,8 +431,7 @@ export class ResultService {
       `Triggering result notifications for ${payloads.length} students`,
     );
 
-    // Process in background
-    Promise.allSettled(
+    const outcomes = await Promise.allSettled(
       payloads.map((payload) => {
         const eventDto: ResultEventDto = {
           result_id: payload.result_id,
@@ -446,11 +443,14 @@ export class ResultService {
         };
         return this.resultNotificationService.handleResultPublication(eventDto);
       }),
-    ).catch((err) =>
-      this.logger.error('Error triggering result notifications', {
-        error: err,
-      }),
     );
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        this.logger.error('Error triggering result notifications', {
+          error: outcome.reason,
+        });
+      }
+    }
   }
 
   /**

@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 import { SchoolSettingsService } from './school-settings.service';
 
 describe('SchoolSettingsService', () => {
@@ -21,10 +23,16 @@ describe('SchoolSettingsService', () => {
     deleteImage: jest.fn(),
   };
   const activityLogs = { purgeExpired: jest.fn().mockResolvedValue(0) };
+  const config = {
+    get: jest.fn((key: string): string =>
+      key === 'mail.host' ? 'smtp.example.com' : 'school@example.com',
+    ),
+  };
   const service = new SchoolSettingsService(
     schools as never,
     minio as never,
     activityLogs as never,
+    config as never,
   );
 
   beforeEach(() => jest.clearAllMocks());
@@ -62,6 +70,29 @@ describe('SchoolSettingsService', () => {
     expect(schools.save).toHaveBeenCalledWith(
       expect.objectContaining({ student_id_format: '', teacher_id_format: '' }),
     );
+  });
+
+  it('persists school-wide email switches without changing account email behavior', async () => {
+    await service.updateSchool({
+      email_alert_results: 'true',
+      email_alert_fees: 'false',
+      email_alert_attendance: 'true',
+    });
+    expect(schools.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email_alert_results: true,
+        email_alert_fees: false,
+        email_alert_attendance: true,
+      }),
+    );
+  });
+
+  it('refuses to enable optional emails without SMTP configuration', async () => {
+    config.get.mockReturnValueOnce('');
+    await expect(
+      service.updateSchool({ email_alert_results: 'true' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(schools.save).not.toHaveBeenCalled();
   });
 
   it('reads and saves one-page content through the school record', async () => {

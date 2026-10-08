@@ -1,4 +1,10 @@
-import { ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -24,6 +30,7 @@ export class SchoolSettingsService {
     private readonly schools: Repository<School>,
     private readonly minio: MinioService,
     private readonly activityLogs: ActivityLogService,
+    private readonly config: ConfigService,
   ) {}
 
   private async currentSchool(): Promise<School> {
@@ -35,6 +42,19 @@ export class SchoolSettingsService {
   }
 
   async updateSchool(dto: UpdateSchoolSettingsDto, logo?: IMulterFile) {
+    if (
+      [
+        dto.email_alert_results,
+        dto.email_alert_fees,
+        dto.email_alert_attendance,
+      ].includes('true') &&
+      (!this.config.get<string>('mail.host') ||
+        !this.config.get<string>('mail.from.address'))
+    ) {
+      throw new BadRequestException(
+        'Configure SMTP host and sender address before enabling email alerts',
+      );
+    }
     const school = await this.currentSchool();
     let uploadedKey: string | undefined;
     let saved: School;
@@ -53,7 +73,10 @@ export class SchoolSettingsService {
         if (key === 'activity_log_retention_days') {
           school.activity_log_retention_days =
             value === '' ? null : Number(value);
-        } else if (key.startsWith('allow_manual_')) {
+        } else if (
+          key.startsWith('allow_manual_') ||
+          key.startsWith('email_alert_')
+        ) {
           (school as unknown as Record<string, unknown>)[key] =
             value === 'true';
         } else {

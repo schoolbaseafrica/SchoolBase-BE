@@ -25,6 +25,9 @@ export class UpdateSchoolSettingsDto {
   @IsOptional() @IsString() @MaxLength(100) teacher_id_format?: string;
   @IsOptional() @IsString() @MaxLength(20) teacher_id_prefix?: string;
   @IsOptional() @IsBooleanString() allow_manual_teacher_ids?: string;
+  @IsOptional() @IsBooleanString() email_alert_results?: string;
+  @IsOptional() @IsBooleanString() email_alert_fees?: string;
+  @IsOptional() @IsBooleanString() email_alert_attendance?: string;
   @IsOptional() @IsString() @MaxLength(100) parent_id_format?: string;
   @IsOptional() @IsString() @MaxLength(20) parent_id_prefix?: string;
   @IsOptional() @IsBooleanString() allow_manual_parent_ids?: string;

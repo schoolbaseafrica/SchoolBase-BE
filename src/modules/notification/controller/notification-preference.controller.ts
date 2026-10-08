@@ -37,8 +37,13 @@ export class NotificationPreferenceController {
   ) {}
 
   @Get(':userId/notification-preferences')
+  @Roles(UserRole.ADMIN, UserRole.STUDENT, UserRole.TEACHER, UserRole.PARENT)
   @ApiGetUserNotificationPreferences()
-  async getUserNotificationPreferences(@Param('userId') userId: string) {
+  async getUserNotificationPreferences(
+    @Param('userId') userId: string,
+    @Req() req: IRequestWithUser,
+  ) {
+    this.assertCanAccess(userId, req);
     const preference =
       await this.notificationPreferenceService.findOneByUserId(userId);
     if (!preference) {
@@ -59,12 +64,7 @@ export class NotificationPreferenceController {
     @Req() req: IRequestWithUser,
   ) {
     // Allow users to update their own preferences, or an admin to update any
-    if (
-      req.user.userId !== userId &&
-      !req.user.roles.includes(UserRole.ADMIN)
-    ) {
-      throw new ForbiddenException(sysMsg.UNAUTHORIZED_NOTIFICATION_ACCESS);
-    }
+    this.assertCanAccess(userId, req);
 
     // Check if preferences exist
     const existing =
@@ -79,5 +79,14 @@ export class NotificationPreferenceController {
       preferences: updateDto.preferences,
     };
     return this.notificationPreferenceService.create(userId, createDto);
+  }
+
+  private assertCanAccess(userId: string, req: IRequestWithUser) {
+    if (
+      req.user.userId !== userId &&
+      !req.user.roles.includes(UserRole.ADMIN)
+    ) {
+      throw new ForbiddenException(sysMsg.UNAUTHORIZED_NOTIFICATION_ACCESS);
+    }
   }
 }

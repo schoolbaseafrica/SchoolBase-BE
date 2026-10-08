@@ -18,6 +18,7 @@ import { TermName } from '../../academic-term/entities/term.entity';
 import { TermModelAction } from '../../academic-term/model-actions';
 import { ClassStudent } from '../../class/entities/class-student.entity';
 import { ClassTeacher } from '../../class/entities/class-teacher.entity';
+import { SchoolEmailAlertService } from '../../notification/services/school-email-alert.service';
 import { Teacher } from '../../teacher/entities/teacher.entity';
 import { Schedule } from '../../timetable/entities/schedule.entity';
 import { DayOfWeek } from '../../timetable/enums/timetable.enums';
@@ -70,6 +71,7 @@ export class AttendanceService {
     private readonly termModelAction: TermModelAction,
     private readonly dataSource: DataSource,
     private readonly editRequestModelAction: AttendanceEditRequestModelAction,
+    private readonly schoolEmailAlerts: SchoolEmailAlertService,
   ) {
     this.logger = baseLogger.child({ context: AttendanceService.name });
   }
@@ -428,6 +430,21 @@ export class AttendanceService {
       `Teacher ${teacherId} marked daily attendance for class ${classId} on ${attendanceDate.toISOString().split('T')[0]}. Marked: ${markedCount}, Updated: ${updatedCount}`,
     );
 
+    await this.schoolEmailAlerts.enqueueAttendance(
+      attendanceRecords
+        .filter(
+          (record) =>
+            record.status === DailyAttendanceStatus.ABSENT ||
+            record.status === DailyAttendanceStatus.LATE,
+        )
+        .map((record) => ({
+          student_id: record.student_id,
+          class_id: classId,
+          date: attendanceDate.toISOString().slice(0, 10),
+          status: record.status as 'ABSENT' | 'LATE',
+        })),
+    );
+
     return { marked: markedCount, updated: updatedCount };
   }
 
@@ -555,6 +572,23 @@ export class AttendanceService {
       updatePayload: updateData,
       transactionOptions: { useTransaction: false },
     });
+
+    if (
+      dto.status === DailyAttendanceStatus.ABSENT ||
+      dto.status === DailyAttendanceStatus.LATE
+    ) {
+      await this.schoolEmailAlerts.enqueueAttendance([
+        {
+          student_id: attendance.student_id,
+          class_id: attendance.class_id,
+          date:
+            attendance.date instanceof Date
+              ? attendance.date.toISOString().slice(0, 10)
+              : String(attendance.date).slice(0, 10),
+          status: dto.status,
+        },
+      ]);
+    }
 
     this.logger.info(`Student daily attendance record ${attendanceId} updated`);
 
@@ -1449,6 +1483,12 @@ export class AttendanceService {
     adminId: string,
     dto: ReviewEditRequestDto,
   ) {
+    let approvedDailyAlert: {
+      student_id: string;
+      class_id: string;
+      date: string;
+      status: 'ABSENT' | 'LATE';
+    } | null = null;
     const request = await this.editRequestModelAction.get({
       identifierOptions: { id: requestId },
     });
@@ -1518,6 +1558,23 @@ export class AttendanceService {
         },
       });
 
+      if (
+        request.attendance_type === AttendanceType.DAILY &&
+        (proposedChanges.status === DailyAttendanceStatus.ABSENT ||
+          proposedChanges.status === DailyAttendanceStatus.LATE)
+      ) {
+        const daily = attendance as StudentDailyAttendance;
+        approvedDailyAlert = {
+          student_id: daily.student_id,
+          class_id: daily.class_id,
+          date:
+            daily.date instanceof Date
+              ? daily.date.toISOString().slice(0, 10)
+              : String(daily.date).slice(0, 10),
+          status: proposedChanges.status,
+        };
+      }
+
       this.logger.info(
         `Attendance updated via approved edit request: attendance_id=${request.attendance_id}, type=${request.attendance_type}, changes=${JSON.stringify(proposedChanges)}`,
       );
@@ -1536,6 +1593,9 @@ export class AttendanceService {
         useTransaction: false,
       },
     });
+    if (approvedDailyAlert) {
+      await this.schoolEmailAlerts.enqueueAttendance([approvedDailyAlert]);
+    }
 
     this.logger.info(
       `Edit request ${dto.status.toLowerCase()}: request_id=${requestId}, reviewed_by=${adminId}, attendance_id=${request.attendance_id}, requested_by=${request.requested_by}`,

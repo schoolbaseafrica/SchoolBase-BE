@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AcademicSessionModule } from '../academic-session/academic-session.module';
 import { TermModule } from '../academic-term/term.module';
+import { NotificationModule } from '../notification/notification.module';
 import { TeachersModule } from '../teacher/teacher.module';
 import { UploadModule } from '../upload/upload.module';
 
@@ -44,6 +45,7 @@ import { AttendanceService, TeachersAttendanceService } from './services';
     AcademicSessionModule,
     TermModule,
     TeachersModule,
+    NotificationModule,
     UploadModule,
   ],
   controllers: [
