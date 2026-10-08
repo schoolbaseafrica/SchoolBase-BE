@@ -9,7 +9,7 @@ import { resolveTenantName } from './config/tenant-identity';
 import { LoggingInterceptor } from './middleware/logging.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { abortOnError: false });
   const configService = app.get(ConfigService);
   const schoolName = resolveTenantName(configService);
 
@@ -95,4 +95,10 @@ async function bootstrap() {
   );
 }
 
-bootstrap();
+void bootstrap().catch((error: unknown) => {
+  // Keep startup failures visible in container logs even if the application
+  // logger could not initialize.
+  // eslint-disable-next-line no-console
+  console.error('SchoolBase backend failed to start', error);
+  process.exitCode = 1;
+});
