@@ -26,7 +26,7 @@ import { ClassService } from './services/class.service';
     AcademicSessionModule,
     forwardRef(() => StudentModule),
     TeachersModule,
-    NotificationModule,
+    forwardRef(() => NotificationModule),
     forwardRef(() => SubjectModule),
   ],
   controllers: [ClassController, ClassSubjectController],
