@@ -11,6 +11,7 @@ import { Student } from '../student/entities/student.entity';
 
 import { CreateUserDto } from './dto/create-user.dto';
 import { ListAdminsQueryDto } from './dto/list-admins-query.dto';
+import { OwnerOverviewQueryDto } from './dto/owner-overview-query.dto';
 import { User } from './entities/user.entity';
 import { UserModelAction } from './model-actions/user-actions';
 
@@ -121,6 +122,79 @@ export class UserService {
     }[];
     if (!rows[0]) throw new NotFoundException('School not found');
     return rows[0];
+  }
+
+  async getOwnerOverview(actorUserId: string, query: OwnerOverviewQueryDto) {
+    const [owner] = (await this.dataSource.query(
+      `SELECT school."owner_user_id"
+       FROM "schools" school
+       INNER JOIN "users" usr ON usr."id" = school."owner_user_id"
+       WHERE school."installation_completed" = true
+         AND usr."is_active" = true AND usr."deleted_at" IS NULL
+       LIMIT 1`,
+    )) as { owner_user_id: string }[];
+    if (!owner || owner.owner_user_id !== actorUserId) {
+      throw new ForbiddenException(
+        'Only the school owner can view this overview',
+      );
+    }
+
+    const sessionRows = (await this.dataSource.query(
+      query.session_id
+        ? `SELECT "id", "name" FROM "academic_sessions"
+           WHERE "id" = $1 AND "deleted_at" IS NULL LIMIT 1`
+        : `SELECT "id", "name" FROM "academic_sessions"
+           WHERE "status" = 'Active' AND "deleted_at" IS NULL
+           ORDER BY "start_date" DESC LIMIT 1`,
+      query.session_id ? [query.session_id] : [],
+    )) as { id: string; name: string }[];
+    const session = sessionRows[0];
+    if (!session) throw new NotFoundException('Academic session not found');
+
+    if (query.term_id) {
+      const terms = (await this.dataSource.query(
+        `SELECT "id" FROM "terms" WHERE "id" = $1 AND "session_id" = $2 LIMIT 1`,
+        [query.term_id, session.id],
+      )) as { id: string }[];
+      if (!terms.length)
+        throw new NotFoundException('Term not found in session');
+    }
+
+    const [counts] = (await this.dataSource.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM "users" WHERE 'ADMIN' = ANY("role")
+           AND "is_active" = true AND "deleted_at" IS NULL) AS "active_admins",
+         (SELECT COUNT(*)::int FROM "users" WHERE 'ADMIN' = ANY("role")
+           AND "is_active" = false AND "deleted_at" IS NULL) AS "inactive_admins",
+         (SELECT COUNT(DISTINCT cs."student_id")::int FROM "class_students" cs
+           INNER JOIN "students" s ON s."id" = cs."student_id"
+           WHERE cs."session_id" = $1 AND cs."is_active" = true
+             AND s."is_deleted" = false) AS "enrolled_students",
+         (SELECT COUNT(*)::int FROM "results" r
+           WHERE r."academic_session_id" = $2
+             AND ($3::uuid IS NULL OR r."term_id" = $3::uuid)) AS "results_generated",
+         (SELECT COUNT(*)::int FROM "student_daily_attendance" a
+           WHERE a."session_id" = $2
+             AND ($3::uuid IS NULL OR EXISTS (
+               SELECT 1 FROM "terms" t WHERE t."id" = $3::uuid
+                 AND a."date" BETWEEN t."start_date" AND t."end_date"
+             ))) AS "attendance_records",
+         (SELECT COUNT(*)::int FROM "student_daily_attendance" a
+           WHERE a."session_id" = $2 AND a."status" IN ('ABSENT', 'LATE')
+             AND ($3::uuid IS NULL OR EXISTS (
+               SELECT 1 FROM "terms" t WHERE t."id" = $3::uuid
+                 AND a."date" BETWEEN t."start_date" AND t."end_date"
+             ))) AS "absence_late_records",
+         (SELECT COUNT(*)::int FROM "activity_logs"
+           WHERE "created_at" >= now() - interval '24 hours') AS "recent_activity_events"`,
+      [session.id, session.id, query.term_id ?? null],
+    )) as Array<Record<string, number>>;
+
+    return {
+      session: { id: session.id, name: session.name },
+      term_id: query.term_id ?? null,
+      ...counts,
+    };
   }
 
   async assignFirstOwner(ownerUserId: string, actorUserId: string) {

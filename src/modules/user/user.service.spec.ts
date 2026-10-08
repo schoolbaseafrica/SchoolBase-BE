@@ -221,6 +221,57 @@ describe('UserService', () => {
     });
   });
 
+  describe('getOwnerOverview', () => {
+    it('rejects an admin who is not the active school owner before reading metrics', async () => {
+      mockDataSource.query.mockResolvedValueOnce([
+        { owner_user_id: 'owner-id' },
+      ]);
+
+      await expect(
+        service.getOwnerOverview('other-admin-id', {
+          session_id: 'session-id',
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockDataSource.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns counts scoped to the selected session and term', async () => {
+      mockDataSource.query
+        .mockResolvedValueOnce([{ owner_user_id: 'owner-id' }])
+        .mockResolvedValueOnce([{ id: 'session-id', name: '2025/2026' }])
+        .mockResolvedValueOnce([{ id: 'term-id' }])
+        .mockResolvedValueOnce([
+          {
+            active_admins: 5,
+            inactive_admins: 1,
+            enrolled_students: 32,
+            results_generated: 13,
+            attendance_records: 40,
+            absence_late_records: 3,
+            recent_activity_events: 7,
+          },
+        ]);
+
+      await expect(
+        service.getOwnerOverview('owner-id', {
+          session_id: 'session-id',
+          term_id: 'term-id',
+        }),
+      ).resolves.toMatchObject({
+        session: { id: 'session-id', name: '2025/2026' },
+        term_id: 'term-id',
+        enrolled_students: 32,
+        results_generated: 13,
+        absence_late_records: 3,
+      });
+      expect(mockDataSource.query).toHaveBeenNthCalledWith(
+        4,
+        expect.any(String),
+        ['session-id', 'session-id', 'term-id'],
+      );
+    });
+  });
+
   describe('assignFirstOwner', () => {
     const actor = {
       id: '00000000-0000-4000-8000-000000000001',

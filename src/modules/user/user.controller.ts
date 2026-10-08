@@ -22,6 +22,7 @@ import { UserRole } from '../shared/enums';
 import { ApiUpdateUser } from './docs/user.swagger';
 import { AssignFirstOwnerDto } from './dto/assign-first-owner.dto';
 import { ListAdminsQueryDto } from './dto/list-admins-query.dto';
+import { OwnerOverviewQueryDto } from './dto/owner-overview-query.dto';
 import { SetAdminActiveDto } from './dto/set-admin-active.dto';
 import { TransferOwnerDto } from './dto/transfer-owner.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -49,6 +50,16 @@ export class UserController {
   @SkipWrap()
   findAdmins(@Query() query: ListAdminsQueryDto) {
     return this.userService.findAdmins(query);
+  }
+
+  @Get('owner/overview')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  getOwnerOverview(
+    @Query() query: OwnerOverviewQueryDto,
+    @CurrentUser() actor: User,
+  ) {
+    return this.userService.getOwnerOverview(actor.id, query);
   }
 
   @Get('owner')
