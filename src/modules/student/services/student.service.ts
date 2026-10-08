@@ -8,7 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import { Logger } from 'winston';
 
 import { SessionStatus } from 'src/modules/academic-session/entities/academic-session.entity';
@@ -80,20 +80,15 @@ export class StudentService {
           'Manual student IDs are disabled in school settings',
         );
       }
-    } else {
-      registration_number = await this.generateStudentNumber();
     }
 
-    const existingStudent = await this.studentModelAction.get({
-      identifierOptions: { registration_number },
-    });
-
-    if (existingStudent) {
-      this.logger.warn(
-        `Attempt to create student with existing registration number: ${registration_number}`,
-      );
+    if (
+      registration_number &&
+      (await this.studentModelAction.get({
+        identifierOptions: { registration_number },
+      }))
+    )
       throw new ConflictException(sysMsg.STUDENT_REGISTRATION_NUMBER_CONFLICT);
-    }
 
     const hashedPassword = await hashPassword(createStudentDto.password);
 
@@ -106,6 +101,21 @@ export class StudentService {
 
     const { savedUser, savedStudent } = await this.dataSource.transaction(
       async (manager) => {
+        await manager.query(
+          `SELECT pg_advisory_xact_lock(hashtext('schoolbase:student-id'))`,
+        );
+        if (!registration_number) {
+          registration_number = await this.generateStudentNumber(manager);
+        } else {
+          const matches = (await manager.query(
+            `SELECT 1 FROM "students" WHERE "registration_number" = $1 LIMIT 1`,
+            [registration_number],
+          )) as unknown[];
+          if (matches.length)
+            throw new ConflictException(
+              sysMsg.STUDENT_REGISTRATION_NUMBER_CONFLICT,
+            );
+        }
         const savedUser = await this.userModelAction.create({
           createPayload: {
             first_name: createStudentDto.first_name,
@@ -465,7 +475,7 @@ export class StudentService {
    * Generate a unique Student Number in the format STU-YYYY-XXXX
    * where YYYY is the current year and XXXX is a 4-digit sequential number.
    */
-  private async generateStudentNumber(): Promise<string> {
+  private async generateStudentNumber(manager: EntityManager): Promise<string> {
     const school = await this.dataSource
       .getRepository(School)
       .findOne({ where: { installation_completed: true } });
@@ -475,7 +485,7 @@ export class StudentService {
       school?.school_code ?? '',
       4,
     );
-    const rows = (await this.dataSource.query(
+    const rows = (await manager.query(
       `SELECT COALESCE(MAX((regexp_match("registration_number", $1))[1]::bigint), 0) AS last
        FROM "students" WHERE "registration_number" ~ $1`,
       [pattern.regex],

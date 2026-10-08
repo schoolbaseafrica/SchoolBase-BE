@@ -102,25 +102,15 @@ export class TeacherService {
         'Manual teacher IDs are disabled in school settings',
       );
     }
-    const employment_id =
-      manualEmploymentId ||
-      (await generateEmploymentId(
-        this.teacherRepository,
-        school?.teacher_id_format,
-        school?.teacher_id_prefix ?? 'EMP',
-        school?.school_code ?? '',
-      ));
-    const existingTeacher = await this.teacherModelAction.get({
-      identifierOptions: { employment_id },
-    });
-    if (existingTeacher) {
-      this.logger.warn(
-        `Attempt to create teacher with existing employment ID: ${employment_id}`,
-      );
+    if (
+      manualEmploymentId &&
+      (await this.teacherModelAction.get({
+        identifierOptions: { employment_id: manualEmploymentId },
+      }))
+    )
       throw new ConflictException(
-        `Employment ID ${employment_id} already exists.`,
+        `Employment ID ${manualEmploymentId} already exists.`,
       );
-    }
 
     // Validate Teacher Age to be at least 18 years old
     this.validateTeacherAge(createDto.date_of_birth);
@@ -138,6 +128,27 @@ export class TeacherService {
     const { resetToken, resetTokenExpiry } = generateResetToken(24);
 
     const response = await this.dataSource.transaction(async (manager) => {
+      let employment_id = manualEmploymentId;
+      await manager.query(
+        `SELECT pg_advisory_xact_lock(hashtext('schoolbase:teacher-id'))`,
+      );
+      if (!employment_id) {
+        employment_id = await generateEmploymentId(
+          manager.getRepository(Teacher),
+          school?.teacher_id_format,
+          school?.teacher_id_prefix ?? 'EMP',
+          school?.school_code ?? '',
+        );
+      } else {
+        const matches = (await manager.query(
+          `SELECT 1 FROM "teachers" WHERE "employment_id" = $1 LIMIT 1`,
+          [employment_id],
+        )) as unknown[];
+        if (matches.length)
+          throw new ConflictException(
+            `Employment ID ${employment_id} already exists.`,
+          );
+      }
       // 5. Create User using model action within transaction
       const savedUser = await this.userModelAction.create({
         createPayload: {

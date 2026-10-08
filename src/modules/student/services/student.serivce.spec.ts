@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
@@ -46,6 +50,7 @@ const mockUserModelAction = {
 const mockDataSource = {
   transaction: jest.fn(),
   query: jest.fn(),
+  getRepository: jest.fn(),
 };
 
 const mockFileService = {
@@ -146,6 +151,84 @@ describe('StudentService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('serializes auto student IDs through the creating transaction', async () => {
+    const generatedId = `STU-${new Date().getFullYear()}-0008`;
+    const manager = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ last: 7 }]),
+    };
+    mockDataSource.getRepository.mockReturnValue({
+      findOne: jest.fn().mockResolvedValue({
+        student_id_prefix: 'STU',
+        school_code: '',
+      }),
+    });
+    mockDataSource.transaction.mockImplementation(async (callback) =>
+      callback(manager),
+    );
+    mockUserModelAction.get.mockResolvedValue(null);
+    mockStudentModelAction.get.mockResolvedValue(null);
+    mockUserModelAction.create.mockResolvedValue({
+      id: 'user-id',
+      first_name: 'A',
+      last_name: 'B',
+      email: 'a@example.test',
+    });
+    mockStudentModelAction.create.mockResolvedValue({
+      id: 'student-id',
+      registration_number: generatedId,
+    });
+    await service.create({
+      first_name: 'A',
+      last_name: 'B',
+      email: 'a@example.test',
+      password: 'Password123!',
+      date_of_birth: '2010-01-01',
+    } as never);
+    expect(manager.query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining(
+        "pg_advisory_xact_lock(hashtext('schoolbase:student-id'))",
+      ),
+    );
+    expect(mockStudentModelAction.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createPayload: expect.objectContaining({
+          registration_number: generatedId,
+        }),
+        transactionOptions: expect.objectContaining({ transaction: manager }),
+      }),
+    );
+  });
+
+  it('rejects a manual student ID taken while waiting for the ID lock', async () => {
+    const manager = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ present: 1 }]),
+    };
+    mockDataSource.getRepository.mockReturnValue({
+      findOne: jest.fn().mockResolvedValue({ allow_manual_student_ids: true }),
+    });
+    mockDataSource.transaction.mockImplementation(async (callback) =>
+      callback(manager),
+    );
+    mockUserModelAction.get.mockResolvedValue(null);
+    mockStudentModelAction.get.mockResolvedValue(null);
+    await expect(
+      service.create({
+        email: 'a@example.test',
+        registration_number: 'STU-2026-0001',
+        password: 'Password123!',
+        date_of_birth: '2010-01-01',
+      } as never),
+    ).rejects.toThrow(ConflictException);
+    expect(mockUserModelAction.create).not.toHaveBeenCalled();
   });
 
   describe('getStudentGrowthReport', () => {

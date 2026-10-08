@@ -81,6 +81,8 @@ describe('TeacherService', () => {
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
         save: mockSave,
+        query: jest.fn().mockResolvedValue([]),
+        getRepository: jest.fn(),
       },
     } as unknown as jest.Mocked<QueryRunner>;
 
@@ -91,6 +93,9 @@ describe('TeacherService', () => {
       findOne: jest.fn(),
       createQueryBuilder: jest.fn(),
     } as unknown as jest.Mocked<Repository<Teacher>>;
+    (queryRunner.manager.getRepository as jest.Mock).mockReturnValue(
+      teacherRepository,
+    );
 
     // Mock DataSource
     dataSource = {
@@ -240,6 +245,17 @@ describe('TeacherService', () => {
       await service.create(dtoWithoutId);
 
       expect(generateEmploymentId).toHaveBeenCalled();
+      expect(queryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "pg_advisory_xact_lock(hashtext('schoolbase:teacher-id'))",
+        ),
+      );
+      expect(generateEmploymentId).toHaveBeenCalledWith(
+        teacherRepository,
+        undefined,
+        'EMP',
+        '',
+      );
     });
 
     it('should use provided employment ID if given', async () => {
@@ -260,6 +276,16 @@ describe('TeacherService', () => {
       expect(generateEmploymentId).not.toHaveBeenCalled();
     });
 
+    it('rejects a manual ID taken while waiting for the ID lock', async () => {
+      (queryRunner.manager.query as jest.Mock)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ present: 1 }]);
+      await expect(
+        service.create({ ...createDto, employment_id: 'EMP-2025-999' }),
+      ).rejects.toThrow(ConflictException);
+      expect(userModelAction.create).not.toHaveBeenCalled();
+    });
+
     it('should throw ConflictException if email already exists', async () => {
       userModelAction.get.mockResolvedValue(mockUser as User);
 
@@ -272,9 +298,9 @@ describe('TeacherService', () => {
     it('should throw ConflictException if employment ID already exists', async () => {
       teacherModelAction.get.mockResolvedValue(mockTeacher as Teacher);
 
-      await expect(service.create(createDto)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.create({ ...createDto, employment_id: 'EMP-2025-014' }),
+      ).rejects.toThrow(ConflictException);
       // Transaction is not called if validation fails before transaction starts
     });
 
