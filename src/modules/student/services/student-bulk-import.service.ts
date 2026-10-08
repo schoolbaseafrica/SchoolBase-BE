@@ -68,7 +68,7 @@ export class StudentBulkImportService {
     return { missing_classes, existing_classes };
   }
 
-  async import(rows: Record<string, string>[]) {
+  async import(rows: Record<string, string>[], actorUserId?: string) {
     const results: Array<{
       email: string;
       success: boolean;
@@ -101,7 +101,7 @@ export class StudentBulkImportService {
         const classEntity = row.class
           ? await this.findClass(row.class, row.arm || '')
           : null;
-        const student = await this.students.create(dto);
+        const student = await this.students.create(dto, actorUserId);
         if (classEntity) {
           try {
             await this.classes.assignStudentToClass(classEntity.id, student.id);

@@ -71,6 +71,30 @@ describe('ActivityLogService', () => {
     );
   });
 
+  it('loads filter choices from actual stored actions and entity types', async () => {
+    dataSource.query
+      .mockResolvedValueOnce([{ value: 'FEE' }, { value: 'school' }])
+      .mockResolvedValueOnce([
+        { value: 'CREATE' },
+        { value: 'TRANSFER_OWNER' },
+      ]);
+    await expect(service.filterOptions()).resolves.toEqual({
+      entity_types: ['FEE', 'school'],
+      actions: ['CREATE', 'TRANSFER_OWNER'],
+    });
+  });
+
+  it('filters a custom audit action exactly and orders tied timestamps predictably', async () => {
+    dataSource.query
+      .mockResolvedValueOnce([{ total: 1 }])
+      .mockResolvedValueOnce([]);
+    await service.findAll({ page: 1, limit: 20, action: 'TRANSFER_OWNER' });
+    expect(dataSource.query.mock.calls[0][1]).toEqual(['TRANSFER_OWNER']);
+    expect(dataSource.query.mock.calls[1][0]).toContain(
+      'ORDER BY log."created_at" DESC, log."id" DESC',
+    );
+  });
+
   it('keeps activity logs when retention is unlimited', async () => {
     dataSource.query.mockResolvedValueOnce([{ days: null }]);
     await expect(service.purgeExpired()).resolves.toBe(0);

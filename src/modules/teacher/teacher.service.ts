@@ -13,6 +13,7 @@ import { DataSource, Repository } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../constants/system.messages';
+import { writeActivityLog } from '../activity-log/write-activity-log';
 import { AccountCreationService } from '../email/account-creation.service';
 import { School } from '../school/entities/school.entity';
 import { UserRole } from '../shared/enums';
@@ -78,7 +79,10 @@ export class TeacherService {
   }
 
   // --- CREATE ---
-  async create(createDto: CreateTeacherDto): Promise<TeacherResponseDto> {
+  async create(
+    createDto: CreateTeacherDto,
+    actorUserId?: string,
+  ): Promise<TeacherResponseDto> {
     // 1. Check for existing user with email
     const existingUser = await this.userModelAction.get({
       identifierOptions: { email: createDto.email },
@@ -186,6 +190,17 @@ export class TeacherService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'TEACHER',
+          entityId: savedTeacher.id,
+          action: 'CREATE',
+          description: 'Teacher record created',
+          newValues: { employment_id },
+        });
+      }
 
       // 7. Return response (Transform User/Teacher entities into DTO)
       return {
@@ -353,6 +368,7 @@ export class TeacherService {
   async update(
     id: string,
     updateDto: UpdateTeacherDto,
+    actorUserId?: string,
   ): Promise<TeacherResponseDto> {
     const teacher = await this.teacherModelAction.get({
       identifierOptions: { id },
@@ -439,6 +455,17 @@ export class TeacherService {
         },
       });
 
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'TEACHER',
+          entityId: id,
+          action: 'UPDATE',
+          description: 'Teacher record updated',
+          metadata: { changed_fields: Object.keys(updateDto) },
+        });
+      }
+
       // Return response
       const response = {
         ...updatedTeacher,
@@ -469,7 +496,7 @@ export class TeacherService {
   }
 
   // --- DELETE (Soft Delete / Deactivate) ---
-  async remove(id: string): Promise<void> {
+  async remove(id: string, actorUserId?: string): Promise<void> {
     const teacher = await this.teacherModelAction.get({
       identifierOptions: { id },
       relations: { user: true },
@@ -505,6 +532,18 @@ export class TeacherService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'TEACHER',
+          entityId: id,
+          action: 'DEACTIVATE',
+          description: 'Teacher account deactivated',
+          oldValues: { is_active: teacher.is_active },
+          newValues: { is_active: false },
+        });
+      }
 
       this.logger.info(sysMsg.RESOURCE_DELETED, {
         teacherId: id,

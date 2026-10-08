@@ -14,6 +14,7 @@ import * as sysMsg from '../../constants/system.messages';
 import { AcademicSessionService } from '../academic-session/academic-session.service';
 import { TermModelAction } from '../academic-term/model-actions';
 import { TermService } from '../academic-term/term.service';
+import { writeActivityLog } from '../activity-log/write-activity-log';
 import { ClassModelAction } from '../class/model-actions/class.actions';
 import { FeeNotificationService } from '../notification/services/fee-notification.service';
 import { PaymentService } from '../payment/services/payment.service';
@@ -83,8 +84,8 @@ export class FeesService {
     }
 
     // Create fee
-    const savedFee = await this.dataSource.transaction(async (manager) =>
-      this.feesModelAction.create({
+    const savedFee = await this.dataSource.transaction(async (manager) => {
+      const fee = await this.feesModelAction.create({
         createPayload: {
           component_name: createFeesDto.component_name,
           description: createFeesDto.description,
@@ -99,8 +100,17 @@ export class FeesService {
           useTransaction: true,
           transaction: manager,
         },
-      }),
-    );
+      });
+      await writeActivityLog(manager, {
+        actorUserId: createdBy,
+        entityType: 'FEE',
+        entityId: fee.id,
+        action: 'CREATE',
+        description: 'Fee component created',
+        newValues: { amount: fee.amount, status: fee.status },
+      });
+      return fee;
+    });
 
     this.logger.info('Fee component created successfully', {
       fee_id: savedFee.id,
@@ -153,7 +163,11 @@ export class FeesService {
     return result;
   }
 
-  async update(id: string, updateFeesDto: UpdateFeesDto): Promise<Fees> {
+  async update(
+    id: string,
+    updateFeesDto: UpdateFeesDto,
+    actorUserId?: string,
+  ): Promise<Fees> {
     const existingFee = await this.feesModelAction.get({
       identifierOptions: { id },
       relations: { classes: true },
@@ -227,15 +241,26 @@ export class FeesService {
       existingFee.status = updateFeesDto.status;
     }
 
-    const updatedFee = await this.dataSource.transaction(async (manager) =>
-      this.feesModelAction.save({
+    const updatedFee = await this.dataSource.transaction(async (manager) => {
+      const fee = await this.feesModelAction.save({
         entity: existingFee,
         transactionOptions: {
           useTransaction: true,
           transaction: manager,
         },
-      }),
-    );
+      });
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'FEE',
+          entityId: id,
+          action: 'UPDATE',
+          description: 'Fee component updated',
+          metadata: { changed_fields: Object.keys(updateFeesDto) },
+        });
+      }
+      return fee;
+    });
 
     this.logger.info('Fee component updated successfully', {
       fee_id: updatedFee.id,
@@ -309,14 +334,23 @@ export class FeesService {
     }
 
     // Update status to inactive with transactionOptions (only update needs it)
-    const updatedFee = await this.feesModelAction.update({
-      identifierOptions: { id },
-      updatePayload: {
-        status: FeeStatus.INACTIVE,
-      },
-      transactionOptions: {
-        useTransaction: false,
-      },
+    const updatedFee = await this.dataSource.transaction(async (manager) => {
+      const updated = await this.feesModelAction.update({
+        identifierOptions: { id },
+        updatePayload: { status: FeeStatus.INACTIVE },
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      await writeActivityLog(manager, {
+        actorUserId: deactivatedBy,
+        entityType: 'FEE',
+        entityId: id,
+        action: 'DEACTIVATE',
+        description: 'Fee component deactivated',
+        oldValues: { status: fee.status },
+        newValues: { status: FeeStatus.INACTIVE },
+        metadata: reason ? { reason } : undefined,
+      });
+      return updated;
     });
 
     this.logger.info('Fee component deactivated successfully', {
@@ -355,14 +389,22 @@ export class FeesService {
       return fee;
     }
 
-    const updatedFee = await this.feesModelAction.update({
-      identifierOptions: { id },
-      updatePayload: {
-        status: FeeStatus.ACTIVE,
-      },
-      transactionOptions: {
-        useTransaction: false,
-      },
+    const updatedFee = await this.dataSource.transaction(async (manager) => {
+      const updated = await this.feesModelAction.update({
+        identifierOptions: { id },
+        updatePayload: { status: FeeStatus.ACTIVE },
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      await writeActivityLog(manager, {
+        actorUserId: activatedBy,
+        entityType: 'FEE',
+        entityId: id,
+        action: 'ACTIVATE',
+        description: 'Fee component activated',
+        oldValues: { status: fee.status },
+        newValues: { status: FeeStatus.ACTIVE },
+      });
+      return updated;
     });
 
     this.logger.info('Fee component activated successfully', {

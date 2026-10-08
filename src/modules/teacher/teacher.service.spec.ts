@@ -229,13 +229,22 @@ describe('TeacherService', () => {
     });
 
     it('should create a teacher successfully', async () => {
-      const result = await service.create(createDto);
+      const result = await service.create(createDto, 'admin-1');
 
       expect(result).toBeDefined();
       expect(result).toHaveProperty('employment_id');
       expect(result).toHaveProperty('first_name');
       expect(result).toHaveProperty('last_name');
       expect(dataSource.transaction).toHaveBeenCalled();
+      expect(queryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining([
+          'admin-1',
+          'TEACHER',
+          mockTeacher.id,
+          'CREATE',
+        ]),
+      );
     });
 
     it('should auto-generate employment ID if not provided', async () => {

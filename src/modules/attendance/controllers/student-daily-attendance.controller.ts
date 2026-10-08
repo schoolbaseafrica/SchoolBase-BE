@@ -182,8 +182,13 @@ export class StudentDailyAttendanceController {
   async updateStudentDailyAttendance(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStudentDailyAttendanceDto,
+    @Req() req: IRequestWithUser,
   ) {
-    return this.attendanceService.updateStudentDailyAttendance(id, dto);
+    return this.attendanceService.updateStudentDailyAttendance(
+      id,
+      dto,
+      req.user.userId,
+    );
   }
 
   // --- POST: CREATE EDIT REQUEST FOR LOCKED ATTENDANCE (TEACHER/ADMIN) ---

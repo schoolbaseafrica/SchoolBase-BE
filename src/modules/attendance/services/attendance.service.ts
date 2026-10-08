@@ -16,6 +16,7 @@ import * as sysMsg from '../../../constants/system.messages';
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { TermName } from '../../academic-term/entities/term.entity';
 import { TermModelAction } from '../../academic-term/model-actions';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { ClassStudent } from '../../class/entities/class-student.entity';
 import { ClassTeacher } from '../../class/entities/class-teacher.entity';
 import { SchoolEmailAlertService } from '../../notification/services/school-email-alert.service';
@@ -297,6 +298,20 @@ export class AttendanceService {
           markedCount++;
         }
       }
+      if (markedCount + updatedCount > 0) {
+        await writeActivityLog(manager, {
+          actorUserId: userId,
+          entityType: 'ATTENDANCE',
+          entityId: scheduleId,
+          action: 'MARK',
+          description: 'Schedule attendance marked',
+          metadata: {
+            date: attendanceDate.toISOString().slice(0, 10),
+            marked: markedCount,
+            updated: updatedCount,
+          },
+        });
+      }
     });
 
     this.logger.info(
@@ -424,6 +439,20 @@ export class AttendanceService {
           markedCount++;
         }
       }
+      if (markedCount + updatedCount > 0) {
+        await writeActivityLog(manager, {
+          actorUserId: userId,
+          entityType: 'ATTENDANCE',
+          entityId: classId,
+          action: 'MARK',
+          description: 'Daily class attendance marked',
+          metadata: {
+            date: attendanceDate.toISOString().slice(0, 10),
+            marked: markedCount,
+            updated: updatedCount,
+          },
+        });
+      }
     });
 
     this.logger.info(
@@ -480,6 +509,7 @@ export class AttendanceService {
   async updateAttendance(
     attendanceId: string,
     dto: UpdateAttendanceDto,
+    actorUserId?: string,
   ): Promise<{
     message: string;
     data: AttendanceResponseDto;
@@ -510,12 +540,25 @@ export class AttendanceService {
       updatePayload.notes = dto.notes;
     }
 
-    const updated = await this.attendanceModelAction.update({
-      identifierOptions: { id: attendanceId },
-      updatePayload,
-      transactionOptions: {
-        useTransaction: false,
-      },
+    const updated = await this.dataSource.transaction(async (manager) => {
+      const record = await this.attendanceModelAction.update({
+        identifierOptions: { id: attendanceId },
+        updatePayload,
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'ATTENDANCE',
+          entityId: attendanceId,
+          action: 'UPDATE',
+          description: 'Schedule attendance corrected',
+          oldValues: { status: attendance.status },
+          newValues: { status: dto.status ?? attendance.status },
+          metadata: { changed_fields: Object.keys(dto) },
+        });
+      }
+      return record;
     });
 
     this.logger.info(`Attendance record ${attendanceId} updated`);
@@ -532,6 +575,7 @@ export class AttendanceService {
   async updateStudentDailyAttendance(
     attendanceId: string,
     dto: UpdateAttendanceDto,
+    actorUserId?: string,
   ): Promise<{
     message: string;
   }> {
@@ -567,10 +611,24 @@ export class AttendanceService {
       updateData.check_out_time = new Date(`1970-01-01T${dto.check_out_time}`);
     }
 
-    await this.studentDailyAttendanceModelAction.update({
-      identifierOptions: { id: attendanceId },
-      updatePayload: updateData,
-      transactionOptions: { useTransaction: false },
+    await this.dataSource.transaction(async (manager) => {
+      await this.studentDailyAttendanceModelAction.update({
+        identifierOptions: { id: attendanceId },
+        updatePayload: updateData,
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'ATTENDANCE',
+          entityId: attendanceId,
+          action: 'UPDATE',
+          description: 'Daily student attendance corrected',
+          oldValues: { status: attendance.status },
+          newValues: { status: dto.status ?? attendance.status },
+          metadata: { changed_fields: Object.keys(dto) },
+        });
+      }
     });
 
     if (

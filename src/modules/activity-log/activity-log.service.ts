@@ -50,6 +50,21 @@ export class ActivityLogService implements OnModuleInit, OnModuleDestroy {
       : 0;
   }
 
+  async filterOptions() {
+    const [entityRows, actionRows] = await Promise.all([
+      this.dataSource.query(
+        `SELECT DISTINCT "entity_type" AS value FROM "activity_logs" ORDER BY value`,
+      ) as Promise<{ value: string }[]>,
+      this.dataSource.query(
+        `SELECT DISTINCT "action" AS value FROM "activity_logs" ORDER BY value`,
+      ) as Promise<{ value: string }[]>,
+    ]);
+    return {
+      entity_types: entityRows.map((row) => row.value),
+      actions: actionRows.map((row) => row.value),
+    };
+  }
+
   async findAll(query: ListActivityLogsQueryDto) {
     const { page = 1, limit = 20 } = query;
     const parameters: unknown[] = [];
@@ -91,7 +106,7 @@ export class ActivityLogService implements OnModuleInit, OnModuleDestroy {
        FROM "activity_logs" log
        LEFT JOIN "users" usr ON usr."id" = log."user_id"
        ${where}
-       ORDER BY log."created_at" DESC
+       ORDER BY log."created_at" DESC, log."id" DESC
        LIMIT $${parameters.length - 1} OFFSET $${parameters.length}`,
       parameters,
     )) as Record<string, unknown>[];

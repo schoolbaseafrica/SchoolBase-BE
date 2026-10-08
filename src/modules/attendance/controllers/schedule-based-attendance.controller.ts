@@ -108,7 +108,8 @@ export class ScheduleBasedAttendanceController {
   async updateAttendance(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAttendanceDto,
+    @Req() req: IRequestWithUser,
   ) {
-    return this.attendanceService.updateAttendance(id, dto);
+    return this.attendanceService.updateAttendance(id, dto, req.user.userId);
   }
 }

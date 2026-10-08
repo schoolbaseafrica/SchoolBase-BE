@@ -17,6 +17,7 @@ import { ClassStudentModelAction } from 'src/modules/class/model-actions/class-s
 import { ClassModelAction } from 'src/modules/class/model-actions/class.actions';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { AccountCreationService } from '../../email/account-creation.service';
 import { IUserPayload } from '../../parent/parent.service';
 import { School } from '../../school/entities/school.entity';
@@ -59,6 +60,7 @@ export class StudentService {
 
   async create(
     createStudentDto: CreateStudentDto,
+    actorUserId?: string,
   ): Promise<StudentResponseDto> {
     const existingUser = await this.userModelAction.get({
       identifierOptions: { email: createStudentDto.email },
@@ -149,6 +151,17 @@ export class StudentService {
             transaction: manager,
           },
         });
+
+        if (actorUserId) {
+          await writeActivityLog(manager, {
+            actorUserId,
+            entityType: 'STUDENT',
+            entityId: savedStudent.id,
+            action: 'CREATE',
+            description: 'Student record created',
+            newValues: { registration_number },
+          });
+        }
 
         this.logger.info(sysMsg.RESOURCE_CREATED, {
           studentId: savedStudent.id,
@@ -261,6 +274,7 @@ export class StudentService {
   async update(
     id: string,
     updateStudentDto: PatchStudentDto,
+    actorUserId?: string,
   ): Promise<StudentResponseDto> {
     const existingStudent = await this.studentModelAction.get({
       identifierOptions: { id },
@@ -324,6 +338,17 @@ export class StudentService {
         });
       }
 
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'STUDENT',
+          entityId: id,
+          action: 'UPDATE',
+          description: 'Student record updated',
+          metadata: { changed_fields: Object.keys(updateStudentDto) },
+        });
+      }
+
       this.logger.info(sysMsg.RESOURCE_UPDATED, {
         studentId: id,
       });
@@ -336,7 +361,7 @@ export class StudentService {
     });
   }
 
-  async remove(id: string) {
+  async remove(id: string, actorUserId?: string) {
     const existingStudent = await this.studentModelAction.get({
       identifierOptions: { id },
       relations: {
@@ -369,6 +394,18 @@ export class StudentService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'STUDENT',
+          entityId: id,
+          action: 'DEACTIVATE',
+          description: 'Student account deactivated',
+          oldValues: { is_deleted: false },
+          newValues: { is_deleted: true },
+        });
+      }
 
       this.logger.info(sysMsg.RESOURCE_DELETED, {
         studentId: id,

@@ -74,11 +74,15 @@ export class ResultController {
     description: 'Results generated successfully',
   })
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
-  async generateResults(@Body() generateDto: GenerateResultDto) {
+  async generateResults(
+    @Body() generateDto: GenerateResultDto,
+    @Req() req: IRequestWithUser,
+  ) {
     return this.resultService.generateClassResults(
       generateDto.class_id,
       generateDto.term_id,
       generateDto.academic_session_id,
+      req.user.userId,
     );
   }
 

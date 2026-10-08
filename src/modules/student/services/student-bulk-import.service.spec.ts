@@ -47,10 +47,11 @@ describe('StudentBulkImportService', () => {
     findOne.mockResolvedValue({ id: 'class-1' });
     students.create.mockResolvedValue({ id: 'student-1' });
     classes.assignStudentToClass.mockResolvedValue({});
-    const result = await service.import([row]);
+    const result = await service.import([row], 'admin-1');
     expect(result).toMatchObject({ total: 1, successful: 1, failed: 0 });
     expect(students.create).toHaveBeenCalledWith(
       expect.objectContaining({ email: row.email }),
+      'admin-1',
     );
     expect(classes.assignStudentToClass).toHaveBeenCalledWith(
       'class-1',

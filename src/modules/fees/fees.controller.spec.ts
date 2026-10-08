@@ -514,9 +514,17 @@ describe('FeesController', () => {
     it('should update a fee successfully', async () => {
       service.update.mockResolvedValue(mockFee);
 
-      const result = await controller.updateFee('fee-123', mockUpdateFeesDto);
+      const result = await controller.updateFee(
+        'fee-123',
+        mockUpdateFeesDto,
+        mockUser,
+      );
 
-      expect(service.update).toHaveBeenCalledWith('fee-123', mockUpdateFeesDto);
+      expect(service.update).toHaveBeenCalledWith(
+        'fee-123',
+        mockUpdateFeesDto,
+        mockUser.user.userId,
+      );
       expect(result).toEqual({
         message: sysMsg.FEE_UPDATED_SUCCESSFULLY,
         fee: mockFee,
@@ -528,7 +536,7 @@ describe('FeesController', () => {
       service.update.mockRejectedValue(notFoundError);
 
       await expect(
-        controller.updateFee('invalid-id', mockUpdateFeesDto),
+        controller.updateFee('invalid-id', mockUpdateFeesDto, mockUser),
       ).rejects.toThrow(notFoundError);
     });
   });

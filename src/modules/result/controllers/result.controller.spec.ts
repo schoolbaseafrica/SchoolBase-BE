@@ -205,13 +205,16 @@ describe('ResultController', () => {
 
         resultService.generateClassResults.mockResolvedValue(expectedResult);
 
-        const result = await controller.generateResults(generateDto);
+        const result = await controller.generateResults(generateDto, {
+          user: { userId: 'actor-id' },
+        } as never);
 
         expect(result).toEqual(expectedResult);
         expect(resultService.generateClassResults).toHaveBeenCalledWith(
           mockClassId,
           mockTermId,
           undefined,
+          'actor-id',
         );
       });
     });

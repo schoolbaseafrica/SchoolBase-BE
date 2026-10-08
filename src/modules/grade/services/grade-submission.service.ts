@@ -441,6 +441,7 @@ export class GradeSubmissionService {
         submission.class_id,
         submission.term_id,
         submission.academic_session_id,
+        userId,
       );
     } catch (error) {
       this.logger.error(sysMsg.AUTO_RESULTS_FAILED, {

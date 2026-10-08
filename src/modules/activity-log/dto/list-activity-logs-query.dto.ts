@@ -2,12 +2,12 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsDateString,
-  IsIn,
   IsInt,
   IsOptional,
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -22,7 +22,7 @@ export class ListActivityLogsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @MaxLength(100)
   limit: number = 20;
 
   @ApiPropertyOptional()
@@ -33,6 +33,7 @@ export class ListActivityLogsQueryDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @Max(100)
   entity_type?: string;
 
   @ApiPropertyOptional()
@@ -40,10 +41,11 @@ export class ListActivityLogsQueryDto {
   @IsUUID()
   entity_id?: string;
 
-  @ApiPropertyOptional({ enum: ['CREATE', 'UPDATE', 'DELETE'] })
+  @ApiPropertyOptional()
   @IsOptional()
-  @IsIn(['CREATE', 'UPDATE', 'DELETE'])
-  action?: 'CREATE' | 'UPDATE' | 'DELETE';
+  @IsString()
+  @MaxLength(20)
+  action?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

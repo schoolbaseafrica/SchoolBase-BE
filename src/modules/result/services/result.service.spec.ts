@@ -36,6 +36,7 @@ describe('ResultService', () => {
   let termModelAction: jest.Mocked<TermModelAction>;
   let academicSessionModelAction: jest.Mocked<AcademicSessionModelAction>;
   let studentModelAction: StudentModelAction;
+  let classSubjectModelAction: jest.Mocked<ClassSubjectModelAction>;
 
   const mockLogger = {
     child: jest.fn().mockReturnThis(),
@@ -53,6 +54,7 @@ describe('ResultService', () => {
     manager: {
       save: jest.fn(),
       delete: jest.fn(),
+      query: jest.fn().mockResolvedValue([]),
     },
   };
 
@@ -272,6 +274,7 @@ describe('ResultService', () => {
     service = module.get<ResultService>(ResultService);
     resultModelAction = module.get(ResultModelAction);
     studentModelAction = module.get<StudentModelAction>(StudentModelAction);
+    classSubjectModelAction = module.get(ClassSubjectModelAction);
     classModelAction = module.get(ClassModelAction);
     classStudentModelAction = module.get(ClassStudentModelAction);
     termModelAction = module.get(TermModelAction);
@@ -355,6 +358,61 @@ describe('ResultService', () => {
   });
 
   describe('generateClassResults', () => {
+    it('records result publication before committing the generated results', async () => {
+      const classId = 'class-id';
+      const termId = 'term-id';
+      const sessionId = 'session-id';
+      classModelAction.get.mockResolvedValue({
+        id: classId,
+        is_deleted: false,
+        academicSession: { id: sessionId },
+      } as never);
+      termModelAction.get.mockResolvedValue({
+        id: termId,
+        academicSession: { id: sessionId },
+      } as never);
+      academicSessionModelAction.get.mockResolvedValue({
+        id: sessionId,
+      } as never);
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [{ student: { id: 'student-id' } }],
+      } as never);
+      classSubjectModelAction.list.mockResolvedValue({
+        payload: [{ id: 'subject-id' }],
+      } as never);
+      (
+        service as unknown as { computeStudentResultData: jest.Mock }
+      ).computeStudentResultData = jest.fn().mockResolvedValue({
+        student_id: 'student-id',
+        class_id: classId,
+        grades: [],
+        total_score: 80,
+        average_score: 80,
+        subject_count: 1,
+      });
+      resultModelAction.get.mockResolvedValue(null);
+      mockQueryRunner.manager.save.mockImplementation(async (_type, value) =>
+        Array.isArray(value) ? value : { ...value, id: 'result-id' },
+      );
+
+      await service.generateClassResults(
+        classId,
+        termId,
+        sessionId,
+        'actor-id',
+      );
+
+      expect(mockQueryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining(['actor-id', 'RESULT', classId, 'PUBLISH']),
+      );
+      expect(
+        mockQueryRunner.manager.query.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        mockQueryRunner.commitTransaction.mock.invocationCallOrder[0],
+      );
+    });
+
     it('should throw NotFoundException when class does not exist', async () => {
       const classId = 'class-uuid-123';
       const termId = 'term-uuid-123';

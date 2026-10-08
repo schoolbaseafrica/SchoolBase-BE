@@ -1,9 +1,10 @@
 import { PaginationMeta } from '@hng-sdk/orm'; // Import PaginationMeta
 import { Injectable, Optional } from '@nestjs/common';
-import { SelectQueryBuilder } from 'typeorm';
+import { DataSource, SelectQueryBuilder } from 'typeorm';
 
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { TermService } from '../../academic-term/term.service';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { FetchPaymentsDto, PaymentSortBy } from '../dto/get-all-payments.dto'; // CORRECT IMPORT
 import { RecordPaymentDto } from '../dto/payment.dto';
 import { Payment } from '../entities/payment.entity';
@@ -23,6 +24,7 @@ export class PaymentService {
   constructor(
     private readonly paymentModelAction: PaymentModelAction,
     private readonly paymentValidationService: PaymentValidationService,
+    private readonly dataSource: DataSource,
     @Optional()
     private readonly academicSessionService: AcademicSessionService | undefined,
     @Optional()
@@ -36,21 +38,39 @@ export class PaymentService {
   ): Promise<Payment> {
     await this.paymentValidationService.validatePayment(dto);
     const transactionId = this.generateTransactionId();
-    const payment = await this.paymentModelAction.create({
-      createPayload: {
-        student_id: dto.student_id,
-        fee_component_id: dto.fee_component_id,
-        amount_paid: dto.amount_paid,
-        payment_method: dto.payment_method,
-        payment_date: new Date(dto.payment_date),
-        term_id: dto.term_id,
-        session_id: dto.session_id,
-        invoice_number: dto.invoice_number,
-        receipt_url: receiptUrl,
-        recorded_by: userId,
-        transaction_id: transactionId,
-      },
-      transactionOptions: { useTransaction: false },
+    const payment = await this.dataSource.transaction(async (manager) => {
+      const saved = await this.paymentModelAction.create({
+        createPayload: {
+          student_id: dto.student_id,
+          fee_component_id: dto.fee_component_id,
+          amount_paid: dto.amount_paid,
+          payment_method: dto.payment_method,
+          payment_date: new Date(dto.payment_date),
+          term_id: dto.term_id,
+          session_id: dto.session_id,
+          invoice_number: dto.invoice_number,
+          receipt_url: receiptUrl,
+          recorded_by: userId,
+          transaction_id: transactionId,
+        },
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      await writeActivityLog(manager, {
+        actorUserId: userId,
+        entityType: 'PAYMENT',
+        entityId: saved.id,
+        action: 'RECORD',
+        description: 'Fee payment recorded',
+        newValues: {
+          amount_paid: dto.amount_paid,
+          payment_method: dto.payment_method,
+        },
+        metadata: {
+          student_id: dto.student_id,
+          fee_component_id: dto.fee_component_id,
+        },
+      });
+      return saved;
     });
 
     return this.paymentModelAction.get({

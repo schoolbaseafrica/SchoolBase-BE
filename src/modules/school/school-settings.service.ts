@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 
 import { IMulterFile } from '../../common/types/multer.types';
+import { writeActivityLog } from '../activity-log/write-activity-log';
 import { MinioService } from '../upload/services/minio.service';
 
 import { UpdateSchoolSettingsDto } from './dto/update-school-settings.dto';
@@ -39,7 +40,11 @@ export class SchoolSettingsService {
     return school;
   }
 
-  async updateSchool(dto: UpdateSchoolSettingsDto, logo?: IMulterFile) {
+  async updateSchool(
+    dto: UpdateSchoolSettingsDto,
+    logo?: IMulterFile,
+    actorUserId?: string,
+  ) {
     if (
       [
         dto.email_alert_results,
@@ -102,7 +107,29 @@ export class SchoolSettingsService {
       // Retention has its own owner-only transaction. Ordinary settings saves
       // must never write a stale retention value back over an owner decision.
       school.activity_log_retention_days = undefined;
-      saved = await this.schools.save(school);
+      if (actorUserId) {
+        saved = await this.dataSource.transaction(async (manager) => {
+          const updated = await manager.save(School, school);
+          await writeActivityLog(manager, {
+            actorUserId,
+            entityType: 'SCHOOL',
+            entityId: school.id,
+            action: 'UPDATE',
+            description: 'School settings updated',
+            metadata: {
+              changed_fields: [
+                ...Object.keys(dto).filter(
+                  (key) => key !== 'activity_log_retention_days',
+                ),
+                ...(logo ? ['logo'] : []),
+              ],
+            },
+          });
+          return updated;
+        });
+      } else {
+        saved = await this.schools.save(school);
+      }
     } catch (error) {
       if (uploadedKey)
         await this.minio.deleteImage(uploadedKey).catch(() => undefined);

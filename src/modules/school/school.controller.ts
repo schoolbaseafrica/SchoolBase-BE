@@ -71,9 +71,10 @@ export class SchoolController {
   @UseInterceptors(FileInterceptor('logo', pictureUploadConfig))
   async updateSchool(
     @Body() dto: UpdateSchoolSettingsDto,
+    @CurrentUser() actor: User,
     @UploadedFile() logo?: IMulterFile,
   ) {
-    await this.settings.updateSchool(dto, logo);
+    await this.settings.updateSchool(dto, logo, actor.id);
     return this.schoolService.getSchoolDetails();
   }
 

@@ -19,6 +19,7 @@ import { AcademicSessionService } from '../../academic-session/academic-session.
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
 import { TermModelAction } from '../../academic-term/model-actions';
 import { TermService } from '../../academic-term/term.service';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { ClassModelAction } from '../../class/model-actions/class.actions';
 import { GradeSubmissionStatus } from '../../grade/entities';
@@ -190,6 +191,7 @@ export class ResultService {
     classId: string,
     termId: string,
     academicSessionId?: string,
+    actorUserId?: string,
   ): Promise<{
     message: string;
     generated_count: number;
@@ -386,6 +388,20 @@ export class ResultService {
         generatedCount++;
       }
 
+      if (actorUserId) {
+        await writeActivityLog(queryRunner.manager, {
+          actorUserId,
+          entityType: 'RESULT',
+          entityId: classId,
+          action: 'PUBLISH',
+          description: 'Class results generated and published',
+          metadata: {
+            term_id: termId,
+            academic_session_id: sessionId,
+            count: generatedCount,
+          },
+        });
+      }
       await queryRunner.commitTransaction();
       await this.triggerResultNotifications(
         studentsToNotify,

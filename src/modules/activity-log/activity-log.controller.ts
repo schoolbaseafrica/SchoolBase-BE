@@ -17,6 +17,13 @@ import { ListActivityLogsQueryDto } from './dto/list-activity-logs-query.dto';
 export class ActivityLogController {
   constructor(private readonly activityLogService: ActivityLogService) {}
 
+  @Get('filter-options')
+  @Roles(UserRole.ADMIN)
+  @SkipWrap()
+  filterOptions() {
+    return this.activityLogService.filterOptions();
+  }
+
   @Get()
   @Roles(UserRole.ADMIN)
   @SkipWrap()

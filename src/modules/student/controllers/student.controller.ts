@@ -76,8 +76,11 @@ export class StudentController {
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
   )
-  async bulkUpload(@UploadedFile() file: Express.Multer.File) {
-    return this.bulkImport.import(await parseBulkCsv(file));
+  async bulkUpload(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() actor: { id: string },
+  ) {
+    return this.bulkImport.import(await parseBulkCsv(file), actor.id);
   }
 
   @Post('me/photo-capture-links')
@@ -121,8 +124,9 @@ export class StudentController {
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() createStudentDto: CreateStudentDto,
+    @CurrentUser() actor: { id: string },
   ): Promise<StudentResponseDto> {
-    return this.studentService.create(createStudentDto);
+    return this.studentService.create(createStudentDto, actor.id);
   }
 
   // --- GET: LIST ALL STUDENTS (with pagination and search) ---
@@ -202,8 +206,9 @@ export class StudentController {
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateStudentDto: PatchStudentDto,
+    @CurrentUser() actor: { id: string },
   ) {
-    return this.studentService.update(id, updateStudentDto);
+    return this.studentService.update(id, updateStudentDto, actor.id);
   }
 
   @DeleteStudentDocs()
@@ -211,8 +216,11 @@ export class StudentController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @HttpCode(HttpStatus.OK)
   @Delete(':id')
-  remove(@Param('id', ParseUUIDPipe) id: string) {
-    return this.studentService.remove(id);
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: { id: string },
+  ) {
+    return this.studentService.remove(id, actor.id);
   }
 
   // report.controller.ts

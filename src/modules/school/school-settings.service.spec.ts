@@ -23,7 +23,10 @@ describe('SchoolSettingsService', () => {
     }),
     deleteImage: jest.fn(),
   };
-  const manager = { query: jest.fn() };
+  const manager = {
+    query: jest.fn(),
+    save: jest.fn(async (_type: unknown, value: unknown) => value),
+  };
   const dataSource = {
     transaction: jest.fn(
       async (callback: (tx: typeof manager) => Promise<unknown>) =>
@@ -66,6 +69,20 @@ describe('SchoolSettingsService', () => {
     );
     expect(minio.uploadImage).toHaveBeenCalledTimes(1);
     expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
+
+  it('audits ordinary school settings through the same transaction as the save', async () => {
+    manager.query.mockResolvedValue([]);
+    await service.updateSchool({ name: 'New name' }, undefined, 'admin-1');
+    expect(manager.save).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ name: 'New name' }),
+    );
+    expect(manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO "activity_logs"'),
+      expect.arrayContaining(['admin-1', 'SCHOOL', school.id, 'UPDATE']),
+    );
+    expect(schools.save).not.toHaveBeenCalled();
   });
 
   it('lets the owner set and clear retention with an audit entry in the same transaction', async () => {

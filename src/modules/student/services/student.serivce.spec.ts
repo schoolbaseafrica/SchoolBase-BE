@@ -182,13 +182,16 @@ describe('StudentService', () => {
       id: 'student-id',
       registration_number: generatedId,
     });
-    await service.create({
-      first_name: 'A',
-      last_name: 'B',
-      email: 'a@example.test',
-      password: 'Password123!',
-      date_of_birth: '2010-01-01',
-    } as never);
+    await service.create(
+      {
+        first_name: 'A',
+        last_name: 'B',
+        email: 'a@example.test',
+        password: 'Password123!',
+        date_of_birth: '2010-01-01',
+      } as never,
+      'admin-1',
+    );
     expect(manager.query).toHaveBeenNthCalledWith(
       1,
       expect.stringContaining(
@@ -202,6 +205,10 @@ describe('StudentService', () => {
         }),
         transactionOptions: expect.objectContaining({ transaction: manager }),
       }),
+    );
+    expect(manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO "activity_logs"'),
+      expect.arrayContaining(['admin-1', 'STUDENT', 'student-id', 'CREATE']),
     );
   });
 

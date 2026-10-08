@@ -47,6 +47,7 @@ describe('AttendanceService', () => {
     findOne: mockFindOne,
     find: mockFind,
     update: mockUpdate,
+    query: jest.fn().mockResolvedValue([]),
   } as unknown as EntityManager;
 
   const mockLogger = {
@@ -402,6 +403,10 @@ describe('AttendanceService', () => {
       );
       expect(result.marked).toBeGreaterThanOrEqual(0);
       expect(result.total).toBe(2);
+      expect(mockEntityManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining([teacherId, 'ATTENDANCE', 'class-123', 'MARK']),
+      );
       expect(enqueueAttendance).toHaveBeenCalledWith([
         {
           student_id: 'student-002',

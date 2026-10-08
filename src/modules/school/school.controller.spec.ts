@@ -27,7 +27,11 @@ import { SchoolService } from './school.service';
 
 describe('SchoolController', () => {
   let controller: SchoolController;
-  let settings: { updateActivityLogRetention: jest.Mock };
+  let settings: {
+    updateActivityLogRetention: jest.Mock;
+    updateSchool: jest.Mock;
+  };
+  let schoolService: { getSchoolDetails: jest.Mock };
 
   beforeEach(async () => {
     const mockSchoolService = {
@@ -60,6 +64,7 @@ describe('SchoolController', () => {
 
     controller = module.get<SchoolController>(SchoolController);
     settings = module.get(SchoolSettingsService);
+    schoolService = module.get(SchoolService);
   });
 
   it('should be defined', () => {
@@ -73,6 +78,20 @@ describe('SchoolController', () => {
     expect(settings.updateActivityLogRetention).toHaveBeenCalledWith(
       90,
       'owner-1',
+    );
+  });
+
+  it('passes the authenticated actor to ordinary settings updates', async () => {
+    schoolService.getSchoolDetails = jest
+      .fn()
+      .mockResolvedValue({ id: 'school-1' });
+    await controller.updateSchool({ name: 'New name' }, {
+      id: 'admin-1',
+    } as never);
+    expect(settings.updateSchool).toHaveBeenCalledWith(
+      { name: 'New name' },
+      undefined,
+      'admin-1',
     );
   });
 });

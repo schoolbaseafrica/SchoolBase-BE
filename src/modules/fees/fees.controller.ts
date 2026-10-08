@@ -88,8 +88,13 @@ export class FeesController {
   async updateFee(
     @Param('id') id: string,
     @Body() updateFeesDto: UpdateFeesDto,
+    @Request() req: { user: { userId: string } },
   ) {
-    const fee = await this.feesService.update(id, updateFeesDto);
+    const fee = await this.feesService.update(
+      id,
+      updateFeesDto,
+      req.user.userId,
+    );
     return {
       message: sysMsg.FEE_UPDATED_SUCCESSFULLY,
       fee,
