@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
 import { SchoolSettingsService } from './school-settings.service';
 
@@ -8,7 +8,8 @@ describe('SchoolSettingsService', () => {
     installation_completed: true,
     name: 'SchoolBase Demo',
     landing_page_config: null as Record<string, unknown> | null,
-    activity_log_retention_days: 30 as number | null,
+    activity_log_retention_days: null as number | null | undefined,
+    owner_user_id: 'owner-1',
     allow_manual_student_ids: true,
   };
   const schools = {
@@ -22,7 +23,13 @@ describe('SchoolSettingsService', () => {
     }),
     deleteImage: jest.fn(),
   };
-  const activityLogs = { purgeExpired: jest.fn().mockResolvedValue(0) };
+  const manager = { query: jest.fn() };
+  const dataSource = {
+    transaction: jest.fn(
+      async (callback: (tx: typeof manager) => Promise<unknown>) =>
+        callback(manager),
+    ),
+  };
   const config = {
     get: jest.fn((key: string): string =>
       key === 'mail.host' ? 'smtp.example.com' : 'school@example.com',
@@ -31,17 +38,19 @@ describe('SchoolSettingsService', () => {
   const service = new SchoolSettingsService(
     schools as never,
     minio as never,
-    activityLogs as never,
+    dataSource as never,
     config as never,
   );
 
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    school.activity_log_retention_days = null;
+  });
 
-  it('persists school information, logo, retention and manual-ID settings', async () => {
+  it('persists ordinary school settings without touching retention', async () => {
     await service.updateSchool(
       {
         name: 'New name',
-        activity_log_retention_days: '',
         allow_manual_student_ids: 'false',
       },
       { buffer: Buffer.from('image'), originalname: 'logo.png' } as never,
@@ -51,12 +60,84 @@ describe('SchoolSettingsService', () => {
       expect.objectContaining({
         name: 'New name',
         logo_url: 'https://files.example/logo.png',
-        activity_log_retention_days: null,
+        activity_log_retention_days: undefined,
         allow_manual_student_ids: false,
       }),
     );
     expect(minio.uploadImage).toHaveBeenCalledTimes(1);
-    expect(activityLogs.purgeExpired).toHaveBeenCalledTimes(1);
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
+
+  it('lets the owner set and clear retention with an audit entry in the same transaction', async () => {
+    manager.query
+      .mockResolvedValueOnce([
+        {
+          id: school.id,
+          owner_user_id: 'owner-1',
+          days: null,
+        },
+      ])
+      .mockResolvedValue([]);
+    await expect(
+      service.updateActivityLogRetention(90, 'owner-1'),
+    ).resolves.toEqual({ activity_log_retention_days: 90 });
+    expect(manager.query.mock.calls[1]).toEqual([
+      expect.stringContaining('UPDATE "schools"'),
+      [90, school.id],
+    ]);
+    expect(manager.query.mock.calls[2][0]).toContain(
+      'INSERT INTO "activity_logs"',
+    );
+    expect(manager.query.mock.calls[2][1]).toContain(
+      JSON.stringify({ activity_log_retention_days: 90 }),
+    );
+
+    manager.query
+      .mockReset()
+      .mockResolvedValueOnce([
+        { id: school.id, owner_user_id: 'owner-1', days: 90 },
+      ])
+      .mockResolvedValue([]);
+    await expect(
+      service.updateActivityLogRetention(null, 'owner-1'),
+    ).resolves.toEqual({ activity_log_retention_days: null });
+    expect(manager.query.mock.calls[1][1]).toEqual([null, school.id]);
+  });
+
+  it('refuses non-owner changes without updating or deleting logs', async () => {
+    manager.query.mockResolvedValueOnce([
+      {
+        id: school.id,
+        owner_user_id: 'owner-1',
+        days: null,
+      },
+    ]);
+    await expect(
+      service.updateActivityLogRetention(90, 'admin-2'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(manager.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts an unchanged legacy retention field but refuses changes through ordinary settings', async () => {
+    await service.updateSchool({
+      activity_log_retention_days: '',
+      name: 'Updated',
+    });
+    expect(schools.save).toHaveBeenCalledWith(
+      expect.objectContaining({ activity_log_retention_days: undefined }),
+    );
+    jest.clearAllMocks();
+    await expect(
+      service.updateSchool({ activity_log_retention_days: '90' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(schools.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects zero days before any database work', async () => {
+    await expect(
+      service.updateActivityLogRetention(0, 'owner-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(dataSource.transaction).not.toHaveBeenCalled();
   });
 
   it('allows a saved ID format to be cleared back to automatic defaults', async () => {

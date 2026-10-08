@@ -39,7 +39,7 @@ export class ActivityLogService implements OnModuleInit, OnModuleDestroy {
     )) as { days: number | null }[];
     const days = rows[0]?.days;
     if (days === null || days === undefined) return 0;
-    if (!Number.isInteger(days) || days < 0)
+    if (!Number.isInteger(days) || days < 1)
       throw new Error('Invalid activity log retention setting');
     const removed = (await this.dataSource.query(
       `DELETE FROM "activity_logs" WHERE "created_at" < now() - ($1 * interval '1 day')`,

@@ -16,10 +16,12 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import { IMulterFile } from '../../common/types/multer.types';
 import { pictureUploadConfig } from '../../config/multer.config';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../shared/enums';
+import { User } from '../user/entities/user.entity';
 
 import { installationApi } from './decorators/installation-api.decorator';
 import {
@@ -29,6 +31,7 @@ import {
 import { CreateInstallationDto } from './dto/create-installation.dto';
 import { UpdateMarketingSiteDto } from './dto/update-marketing-site.dto';
 import {
+  UpdateActivityLogRetentionDto,
   UpdateLandingPageConfigDto,
   UpdateSchoolSettingsDto,
 } from './dto/update-school-settings.dto';
@@ -72,6 +75,20 @@ export class SchoolController {
   ) {
     await this.settings.updateSchool(dto, logo);
     return this.schoolService.getSchoolDetails();
+  }
+
+  @Patch('activity-log-retention')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN)
+  updateActivityLogRetention(
+    @Body() dto: UpdateActivityLogRetentionDto,
+    @CurrentUser() actor: User,
+  ) {
+    return this.settings.updateActivityLogRetention(
+      dto.activity_log_retention_days,
+      actor.id,
+    );
   }
 
   @Get('landing-page')

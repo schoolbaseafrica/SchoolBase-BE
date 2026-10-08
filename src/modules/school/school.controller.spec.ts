@@ -27,6 +27,7 @@ import { SchoolService } from './school.service';
 
 describe('SchoolController', () => {
   let controller: SchoolController;
+  let settings: { updateActivityLogRetention: jest.Mock };
 
   beforeEach(async () => {
     const mockSchoolService = {
@@ -49,6 +50,7 @@ describe('SchoolController', () => {
           provide: SchoolSettingsService,
           useValue: {
             updateSchool: jest.fn(),
+            updateActivityLogRetention: jest.fn(),
             getLandingPageConfig: jest.fn(),
             updateLandingPageConfig: jest.fn(),
           },
@@ -57,9 +59,20 @@ describe('SchoolController', () => {
     }).compile();
 
     controller = module.get<SchoolController>(SchoolController);
+    settings = module.get(SchoolSettingsService);
   });
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('passes the authenticated actor to retention updates', () => {
+    controller.updateActivityLogRetention({ activity_log_retention_days: 90 }, {
+      id: 'owner-1',
+    } as never);
+    expect(settings.updateActivityLogRetention).toHaveBeenCalledWith(
+      90,
+      'owner-1',
+    );
   });
 });

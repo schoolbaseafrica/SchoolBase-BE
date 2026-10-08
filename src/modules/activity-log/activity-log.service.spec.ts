@@ -95,4 +95,12 @@ describe('ActivityLogService', () => {
     );
     expect(dataSource.query).toHaveBeenCalledTimes(1);
   });
+
+  it('does not purge a restored school with a legacy zero-day setting', async () => {
+    dataSource.query.mockResolvedValueOnce([{ days: 0 }]);
+    await expect(service.purgeExpired()).rejects.toThrow(
+      'Invalid activity log retention setting',
+    );
+    expect(dataSource.query).toHaveBeenCalledTimes(1);
+  });
 });

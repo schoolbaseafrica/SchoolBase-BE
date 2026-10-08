@@ -1,15 +1,14 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
-  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 
 import { IMulterFile } from '../../common/types/multer.types';
-import { ActivityLogService } from '../activity-log/activity-log.service';
 import { MinioService } from '../upload/services/minio.service';
 
 import { UpdateSchoolSettingsDto } from './dto/update-school-settings.dto';
@@ -24,12 +23,11 @@ const emptyLandingPage = {
 
 @Injectable()
 export class SchoolSettingsService {
-  private readonly logger = new Logger(SchoolSettingsService.name);
   constructor(
     @InjectRepository(School)
     private readonly schools: Repository<School>,
     private readonly minio: MinioService,
-    private readonly activityLogs: ActivityLogService,
+    private readonly dataSource: DataSource,
     private readonly config: ConfigService,
   ) {}
 
@@ -56,6 +54,17 @@ export class SchoolSettingsService {
       );
     }
     const school = await this.currentSchool();
+    if (dto.activity_log_retention_days !== undefined) {
+      const requested =
+        dto.activity_log_retention_days === ''
+          ? null
+          : Number(dto.activity_log_retention_days);
+      if (requested !== (school.activity_log_retention_days ?? null)) {
+        throw new BadRequestException(
+          'Use the school owner retention control to change activity log retention',
+        );
+      }
+    }
     let uploadedKey: string | undefined;
     let saved: School;
     try {
@@ -70,13 +79,8 @@ export class SchoolSettingsService {
       const values = dto as Record<string, string | undefined>;
       for (const [key, value] of Object.entries(values)) {
         if (value === undefined) continue;
-        if (key === 'activity_log_retention_days') {
-          school.activity_log_retention_days =
-            value === '' ? null : Number(value);
-        } else if (
-          key.startsWith('allow_manual_') ||
-          key.startsWith('email_alert_')
-        ) {
+        if (key === 'activity_log_retention_days') continue;
+        if (key.startsWith('allow_manual_') || key.startsWith('email_alert_')) {
           (school as unknown as Record<string, unknown>)[key] =
             value === 'true';
         } else {
@@ -95,23 +99,53 @@ export class SchoolSettingsService {
         school.school_code ?? '',
         3,
       );
+      // Retention has its own owner-only transaction. Ordinary settings saves
+      // must never write a stale retention value back over an owner decision.
+      school.activity_log_retention_days = undefined;
       saved = await this.schools.save(school);
     } catch (error) {
       if (uploadedKey)
         await this.minio.deleteImage(uploadedKey).catch(() => undefined);
       throw error;
     }
-    if (dto.activity_log_retention_days !== undefined) {
-      await this.activityLogs
-        .purgeExpired()
-        .catch((error) =>
-          this.logger.warn(
-            'Activity log cleanup will retry on the next scheduled run',
-            error,
-          ),
-        );
-    }
     return saved;
+  }
+
+  async updateActivityLogRetention(days: number | null, actorUserId: string) {
+    if (days !== null && (!Number.isSafeInteger(days) || days < 1)) {
+      throw new BadRequestException(
+        'Retention must be a positive number of days',
+      );
+    }
+    return this.dataSource.transaction(async (manager) => {
+      const rows = (await manager.query(
+        `SELECT "id", "owner_user_id", "activity_log_retention_days" AS days
+         FROM "schools" WHERE "installation_completed" = true LIMIT 1 FOR UPDATE`,
+      )) as { id: string; owner_user_id: string | null; days: number | null }[];
+      const school = rows[0];
+      if (!school) throw new ConflictException('School not found');
+      if (!school.owner_user_id || school.owner_user_id !== actorUserId) {
+        throw new ForbiddenException(
+          'Only the school owner can change activity log retention',
+        );
+      }
+      if (school.days === days) return { activity_log_retention_days: days };
+      await manager.query(
+        `UPDATE "schools" SET "activity_log_retention_days" = $1, "updated_at" = now() WHERE "id" = $2`,
+        [days, school.id],
+      );
+      await manager.query(
+        `INSERT INTO "activity_logs" ("user_id", "entity_type", "entity_id", "action", "description", "old_values", "new_values")
+         VALUES ($1, 'school', $2, 'UPDATE_RETENTION', 'Activity log retention changed', $3::jsonb, $4::jsonb)`,
+        [
+          actorUserId,
+          school.id,
+          JSON.stringify({ activity_log_retention_days: school.days }),
+          JSON.stringify({ activity_log_retention_days: days }),
+        ],
+      );
+      return { activity_log_retention_days: days };
+    });
   }
 
   async getLandingPageConfig() {

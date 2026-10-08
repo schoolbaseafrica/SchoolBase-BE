@@ -1,11 +1,14 @@
 import {
   IsBooleanString,
   IsEmail,
+  IsInt,
   IsObject,
   IsOptional,
   IsString,
   Matches,
   MaxLength,
+  Min,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateSchoolSettingsDto {
@@ -16,6 +19,7 @@ export class UpdateSchoolSettingsDto {
   @IsOptional() @Matches(/^#[0-9A-Fa-f]{6}$/) primary_color?: string;
   @IsOptional() @Matches(/^#[0-9A-Fa-f]{6}$/) secondary_color?: string;
   @IsOptional() @Matches(/^#[0-9A-Fa-f]{6}$/) accent_color?: string;
+  // Accepted for cached older clients; retention changes use the owner-only endpoint.
   @IsOptional() @Matches(/^(|[1-9]\d*)$/) activity_log_retention_days?: string;
   @IsOptional() @IsString() @MaxLength(20) school_code?: string;
 
@@ -34,6 +38,13 @@ export class UpdateSchoolSettingsDto {
   @IsOptional() @IsString() @MaxLength(100) staff_id_format?: string;
   @IsOptional() @IsString() @MaxLength(20) staff_id_prefix?: string;
   @IsOptional() @IsBooleanString() allow_manual_staff_ids?: string;
+}
+
+export class UpdateActivityLogRetentionDto {
+  @ValidateIf((_, value: unknown) => value !== null)
+  @IsInt()
+  @Min(1)
+  activity_log_retention_days: number | null;
 }
 
 export class UpdateLandingPageConfigDto {
