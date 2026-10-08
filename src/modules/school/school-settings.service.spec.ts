@@ -51,6 +51,19 @@ describe('SchoolSettingsService', () => {
     expect(activityLogs.purgeExpired).toHaveBeenCalledTimes(1);
   });
 
+  it('allows a saved ID format to be cleared back to automatic defaults', async () => {
+    await service.updateSchool({
+      student_id_format: '',
+      teacher_id_format: '',
+      student_id_prefix: 'STU',
+      teacher_id_prefix: 'EMP',
+    });
+
+    expect(schools.save).toHaveBeenCalledWith(
+      expect.objectContaining({ student_id_format: '', teacher_id_format: '' }),
+    );
+  });
+
   it('reads and saves one-page content through the school record', async () => {
     const config = {
       hero_images: [

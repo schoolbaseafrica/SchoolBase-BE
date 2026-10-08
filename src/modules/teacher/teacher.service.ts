@@ -96,13 +96,14 @@ export class TeacherService {
     const school = await this.dataSource
       .getRepository(School)
       .findOne({ where: { installation_completed: true } });
-    if (createDto.employment_id && !school?.allow_manual_teacher_ids) {
+    const manualEmploymentId = createDto.employment_id?.trim();
+    if (manualEmploymentId && !school?.allow_manual_teacher_ids) {
       throw new BadRequestException(
         'Manual teacher IDs are disabled in school settings',
       );
     }
     const employment_id =
-      createDto.employment_id ||
+      manualEmploymentId ||
       (await generateEmploymentId(
         this.teacherRepository,
         school?.teacher_id_format,

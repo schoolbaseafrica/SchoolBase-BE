@@ -251,6 +251,15 @@ describe('TeacherService', () => {
       expect(generateEmploymentId).not.toHaveBeenCalled();
     });
 
+    it('trims a manual employment ID before storing it', async () => {
+      await service.create({ ...createDto, employment_id: '  EMP-2025-999  ' });
+
+      expect(teacherModelAction.get).toHaveBeenCalledWith({
+        identifierOptions: { employment_id: 'EMP-2025-999' },
+      });
+      expect(generateEmploymentId).not.toHaveBeenCalled();
+    });
+
     it('should throw ConflictException if email already exists', async () => {
       userModelAction.get.mockResolvedValue(mockUser as User);
 
