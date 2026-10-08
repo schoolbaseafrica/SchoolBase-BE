@@ -96,12 +96,8 @@ export class ResultService {
       paginationPayload: { page, limit },
     });
 
-    if (!results.payload || results.payload.length === 0) {
-      throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
-    }
-
     // Transform to response DTOs
-    const transformedResults: ResultResponseDto[] = results.payload.map(
+    const transformedResults: ResultResponseDto[] = (results.payload ?? []).map(
       (result) => this.transformToResponseDto(result),
     );
 

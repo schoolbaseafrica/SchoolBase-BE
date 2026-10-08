@@ -878,15 +878,19 @@ describe('ResultService', () => {
       subject_lines: [],
     };
 
-    it('should throw NotFoundException when no results found', async () => {
+    it('returns an empty page when no results have been generated', async () => {
       resultModelAction.list.mockResolvedValue({
         payload: [],
         paginationMeta: { total: 0, page, limit, total_pages: 0 },
       });
 
-      await expect(service.getResults({ page, limit })).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.getResults({ page, limit })).resolves.toEqual({
+        total: 0,
+        totalPages: 0,
+        page,
+        limit,
+        data: [],
+      });
     });
 
     it('should return paginated results with default subject_lines', async () => {
