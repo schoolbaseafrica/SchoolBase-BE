@@ -296,6 +296,98 @@ describe('UserService', () => {
     });
   });
 
+  describe('transferOwner', () => {
+    const owner = {
+      id: '00000000-0000-4000-8000-000000000001',
+      first_name: 'Old',
+      last_name: 'Owner',
+      email: 'old@example.com',
+    };
+    const successor = {
+      id: '00000000-0000-4000-8000-000000000002',
+      first_name: 'New',
+      last_name: 'Owner',
+      email: 'new@example.com',
+    };
+    let query: jest.Mock;
+
+    beforeEach(() => {
+      query = jest.fn();
+      mockDataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+    });
+
+    it('atomically transfers ownership with an audit record and admin notice', async () => {
+      query
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: owner.id }])
+        .mockResolvedValueOnce([owner, successor])
+        .mockResolvedValue([]);
+      await expect(
+        service.transferOwner(successor.id, owner.id),
+      ).resolves.toEqual({
+        owner_user_id: successor.id,
+        first_name: successor.first_name,
+        last_name: successor.last_name,
+        email: successor.email,
+      });
+      expect(query.mock.calls[0][0]).toContain('FOR UPDATE');
+      expect(query.mock.calls[1][0]).toContain('FOR UPDATE');
+      expect(query.mock.calls[2]).toEqual([
+        expect.stringContaining('UPDATE "schools"'),
+        [successor.id, 'school-id'],
+      ]);
+      expect(query.mock.calls[3][0]).toContain('TRANSFER_OWNER');
+      expect(query.mock.calls[3][1]).toEqual([
+        owner.id,
+        'school-id',
+        JSON.stringify({ owner_user_id: owner.id }),
+        JSON.stringify({ owner_user_id: successor.id }),
+      ]);
+      expect(query.mock.calls[4][0]).toContain('INSERT INTO "notifications"');
+    });
+
+    it('denies the former owner after a transfer', async () => {
+      query.mockResolvedValueOnce([
+        { id: 'school-id', owner_user_id: successor.id },
+      ]);
+      await expect(
+        service.transferOwner(owner.id, owner.id),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(query).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects self-transfer', async () => {
+      query.mockResolvedValueOnce([
+        { id: 'school-id', owner_user_id: owner.id },
+      ]);
+      await expect(
+        service.transferOwner(owner.id, owner.id),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(query).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects an inactive or non-admin successor', async () => {
+      query
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: owner.id }])
+        .mockResolvedValueOnce([owner]);
+      await expect(
+        service.transferOwner(successor.id, owner.id),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(query).toHaveBeenCalledTimes(2);
+    });
+
+    it('requires the current owner account to be active', async () => {
+      query
+        .mockResolvedValueOnce([{ id: 'school-id', owner_user_id: owner.id }])
+        .mockResolvedValueOnce([successor]);
+      await expect(
+        service.transferOwner(successor.id, owner.id),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(query).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('setAdminActive', () => {
     const owner = { id: 'owner-id', is_active: true };
     const admin = {

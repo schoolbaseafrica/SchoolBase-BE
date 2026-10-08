@@ -23,6 +23,7 @@ import { ApiUpdateUser } from './docs/user.swagger';
 import { AssignFirstOwnerDto } from './dto/assign-first-owner.dto';
 import { ListAdminsQueryDto } from './dto/list-admins-query.dto';
 import { SetAdminActiveDto } from './dto/set-admin-active.dto';
+import { TransferOwnerDto } from './dto/transfer-owner.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { User } from './entities/user.entity';
 import { UserService } from './user.service';
@@ -65,6 +66,13 @@ export class UserController {
     @CurrentUser() actor: User,
   ) {
     return this.userService.assignFirstOwner(dto.owner_user_id, actor.id);
+  }
+
+  @Post('owner/transfer')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  transferOwner(@Body() dto: TransferOwnerDto, @CurrentUser() actor: User) {
+    return this.userService.transferOwner(dto.new_owner_user_id, actor.id);
   }
 
   @Patch('admins/:id/status')

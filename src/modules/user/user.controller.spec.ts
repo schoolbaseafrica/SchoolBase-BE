@@ -9,6 +9,7 @@ describe('UserController owner assignment', () => {
   const getFirstOwner = jest.fn();
   const findAdminProfile = jest.fn();
   const setAdminActive = jest.fn();
+  const transferOwner = jest.fn();
   let controller: UserController;
 
   beforeEach(async () => {
@@ -22,6 +23,7 @@ describe('UserController owner assignment', () => {
             getFirstOwner,
             findAdminProfile,
             setAdminActive,
+            transferOwner,
           },
         },
       ],
@@ -53,5 +55,12 @@ describe('UserController owner assignment', () => {
       id: 'owner-id',
     } as User);
     expect(setAdminActive).toHaveBeenCalledWith('admin-id', 'owner-id', false);
+  });
+
+  it('passes the authenticated owner to the transfer service', async () => {
+    await controller.transferOwner({ new_owner_user_id: 'new-owner-id' }, {
+      id: 'owner-id',
+    } as User);
+    expect(transferOwner).toHaveBeenCalledWith('new-owner-id', 'owner-id');
   });
 });

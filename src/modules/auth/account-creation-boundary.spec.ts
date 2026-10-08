@@ -115,9 +115,13 @@ describe('Account creation HTTP boundary', () => {
     const ownerResponse = await request(app.getHttpServer())
       .post('/api/v1/users/owner')
       .send({ owner_user_id: '00000000-0000-4000-8000-000000000001' });
+    const transferResponse = await request(app.getHttpServer())
+      .post('/api/v1/users/owner/transfer')
+      .send({ new_owner_user_id: '00000000-0000-4000-8000-000000000001' });
 
     expect(deleteResponse.status).toBe(404);
     expect(detailResponse.status).toBe(403);
     expect(ownerResponse.status).toBe(403);
+    expect(transferResponse.status).toBe(403);
   });
 });

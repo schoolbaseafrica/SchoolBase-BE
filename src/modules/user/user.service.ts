@@ -187,6 +187,72 @@ export class UserService {
     });
   }
 
+  async transferOwner(newOwnerUserId: string, actorUserId: string) {
+    return this.dataSource.transaction(async (manager) => {
+      const schools = (await manager.query(
+        `SELECT "id", "owner_user_id" FROM "schools"
+         WHERE "installation_completed" = true LIMIT 1 FOR UPDATE`,
+      )) as { id: string; owner_user_id: string | null }[];
+      const school = schools[0];
+      if (!school || school.owner_user_id !== actorUserId)
+        throw new ForbiddenException(
+          'Only the current school owner can transfer ownership',
+        );
+      if (newOwnerUserId === actorUserId)
+        throw new ConflictException(
+          'Select a different admin as the new owner',
+        );
+
+      const admins = (await manager.query(
+        `SELECT "id", "first_name", "last_name", "email" FROM "users"
+         WHERE "id" = ANY($1::uuid[]) AND 'ADMIN' = ANY("role")
+           AND "is_active" = true AND "deleted_at" IS NULL FOR UPDATE`,
+        [[actorUserId, newOwnerUserId]],
+      )) as {
+        id: string;
+        first_name: string;
+        last_name: string;
+        email: string;
+      }[];
+      if (!admins.some((admin) => admin.id === actorUserId))
+        throw new ForbiddenException('The school owner account is inactive');
+      const newOwner = admins.find((admin) => admin.id === newOwnerUserId);
+      if (!newOwner)
+        throw new NotFoundException('Select an active admin as the new owner');
+
+      await manager.query(
+        `UPDATE "schools" SET "owner_user_id" = $1, "updated_at" = now()
+         WHERE "id" = $2`,
+        [newOwnerUserId, school.id],
+      );
+      await manager.query(
+        `INSERT INTO "activity_logs" ("user_id", "entity_type", "entity_id", "action", "description", "old_values", "new_values")
+         VALUES ($1, 'school', $2, 'TRANSFER_OWNER', 'School ownership transferred', $3::jsonb, $4::jsonb)`,
+        [
+          actorUserId,
+          school.id,
+          JSON.stringify({ owner_user_id: actorUserId }),
+          JSON.stringify({ owner_user_id: newOwnerUserId }),
+        ],
+      );
+      await manager.query(
+        `INSERT INTO "notifications" ("recipient_id", "title", "message", "type", "is_read")
+         SELECT "id", 'School ownership transferred', $1, 'SYSTEM_ALERT', false
+         FROM "users" WHERE 'ADMIN' = ANY("role")
+           AND "is_active" = true AND "deleted_at" IS NULL`,
+        [
+          `${newOwner.first_name} ${newOwner.last_name} is now the school owner.`,
+        ],
+      );
+      return {
+        owner_user_id: newOwner.id,
+        first_name: newOwner.first_name,
+        last_name: newOwner.last_name,
+        email: newOwner.email,
+      };
+    });
+  }
+
   async setAdminActive(
     targetUserId: string,
     actorUserId: string,
