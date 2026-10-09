@@ -148,8 +148,23 @@ export class ResultController {
   })
   @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)
   async getResultById(
+    @Req() req: IRequestWithUser,
     @Param('resultId', ParseUUIDPipe) resultId: string,
   ): Promise<ResultResponseDto> {
-    return this.resultService.getResultById(resultId);
+    const result = await this.resultService.getResultById(resultId);
+    if (req.user.roles.includes(UserRole.STUDENT)) {
+      if (req.user.student_id !== result.student.id) {
+        throw new ForbiddenException('Unauthorized access to student results');
+      }
+    } else if (req.user.roles.includes(UserRole.PARENT)) {
+      const student = await this.studentModelAction.get({
+        identifierOptions: { id: result.student.id },
+        relations: { parent: true },
+      });
+      if (!student?.parent || student.parent.id !== req.user.parent_id) {
+        throw new ForbiddenException('Unauthorized access to student results');
+      }
+    }
+    return result;
   }
 }

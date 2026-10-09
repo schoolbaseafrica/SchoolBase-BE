@@ -23,6 +23,7 @@ interface IRequestWithUser extends Request {
 describe('ResultController', () => {
   let controller: ResultController;
   let resultService: jest.Mocked<ResultService>;
+  let studentModelAction: jest.Mocked<StudentModelAction>;
 
   const mockStudentId = 'student-uuid-123';
   const mockClassId = 'class-uuid-123';
@@ -57,6 +58,7 @@ describe('ResultController', () => {
 
     controller = module.get<ResultController>(ResultController);
     resultService = module.get(ResultService);
+    studentModelAction = module.get(StudentModelAction);
   });
 
   afterEach(() => {
@@ -254,10 +256,57 @@ describe('ResultController', () => {
 
         resultService.getResultById.mockResolvedValue(expectedResult);
 
-        const result = await controller.getResultById(resultId);
+        const result = await controller.getResultById(
+          { user: { roles: [UserRole.ADMIN] } } as never,
+          resultId,
+        );
 
         expect(result).toEqual(expectedResult);
         expect(resultService.getResultById).toHaveBeenCalledWith(resultId);
+
+        await expect(
+          controller.getResultById(
+            {
+              user: {
+                roles: [UserRole.STUDENT],
+                student_id: 'another-student',
+              },
+            } as never,
+            resultId,
+          ),
+        ).rejects.toThrow(ForbiddenException);
+
+        await expect(
+          controller.getResultById(
+            {
+              user: {
+                roles: [UserRole.STUDENT],
+                student_id: mockStudentId,
+              },
+            } as never,
+            resultId,
+          ),
+        ).resolves.toEqual(expectedResult);
+
+        studentModelAction.get.mockResolvedValue({
+          parent: { id: 'parent-1' },
+        } as never);
+        await expect(
+          controller.getResultById(
+            {
+              user: { roles: [UserRole.PARENT], parent_id: 'parent-2' },
+            } as never,
+            resultId,
+          ),
+        ).rejects.toThrow(ForbiddenException);
+        await expect(
+          controller.getResultById(
+            {
+              user: { roles: [UserRole.PARENT], parent_id: 'parent-1' },
+            } as never,
+            resultId,
+          ),
+        ).resolves.toEqual(expectedResult);
       });
     });
   });
