@@ -13,6 +13,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import * as sysMsg from '../../constants/system.messages';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -22,6 +23,7 @@ import { UserRole } from '../shared/enums';
 import { csvUploadDocs } from './docs/csv-swagger-doc';
 import { ApiInviteTags, ApiListInvites } from './docs/invite.swagger';
 import { AcceptInviteDto } from './dto/accept-invite.dto';
+import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
 import { InviteQueryDto } from './dto/get-invites.dto';
 import { InviteRole, InviteUserDto } from './dto/invite-user.dto';
 import { InviteService } from './invites.service';
@@ -30,6 +32,12 @@ import { InviteService } from './invites.service';
 @Controller('auth/invites')
 export class InvitesController {
   constructor(private readonly inviteService: InviteService) {}
+
+  @Post('bootstrap-admin')
+  @UseGuards(InitialSetupGuard)
+  async bootstrapAdmin(@Body() dto: BootstrapAdminDto) {
+    return this.inviteService.bootstrapFirstAdmin(dto);
+  }
 
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -45,6 +53,8 @@ export class InvitesController {
 
   // --- GET: LIST ALL INVITES (ADMIN ONLY) ---
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
   @Roles(UserRole.ADMIN)
   @ApiListInvites()
   async listInvites(@Query() query: InviteQueryDto) {
@@ -87,7 +97,9 @@ export class InvitesController {
   @Roles(UserRole.ADMIN)
   @UseGuards(JwtAuthGuard, RolesGuard)
   @ApiBearerAuth()
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
   @HttpCode(HttpStatus.OK)
   @csvUploadDocs()
   async uploadCsv(

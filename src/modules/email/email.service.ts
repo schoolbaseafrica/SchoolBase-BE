@@ -6,6 +6,8 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import * as nunjucks from 'nunjucks';
 
+import { resolveTenantName } from '../../config/tenant-identity';
+
 import { EmailPayload } from './email.types';
 
 @Injectable()
@@ -26,6 +28,9 @@ export class EmailService {
       },
       pool: true,
       maxConnections: 5,
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     });
   }
 
@@ -77,9 +82,9 @@ export class EmailService {
     const fromAddress =
       from?.email ?? this.configService.get<string>('mail.from.address');
     const fromName =
-      from?.name ??
-      this.configService.get<string>('mail.from.name') ??
-      'Open School Portal';
+      from?.name?.trim() ||
+      this.configService.get<string>('mail.from.name')?.trim() ||
+      resolveTenantName(this.configService);
 
     const mailOptions: nodemailer.SendMailOptions = {
       from: `"${fromName}" <${fromAddress}>`,

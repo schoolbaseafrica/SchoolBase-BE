@@ -234,6 +234,16 @@ export class GradeSubmissionService {
     }
 
     if (
+      !(await this.verifyTeacherSubjectAssignment(
+        teacherId,
+        submission.subject_id,
+        submission.class_id,
+      ))
+    ) {
+      throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
+    }
+
+    if (
       submission.status !== GradeSubmissionStatus.DRAFT &&
       submission.status !== GradeSubmissionStatus.REJECTED
     ) {
@@ -314,6 +324,7 @@ export class GradeSubmissionService {
       class_id,
       subject_id,
       term_id,
+      academic_session_id,
       status,
       teacher_id,
     } = listDto;
@@ -322,6 +333,8 @@ export class GradeSubmissionService {
     if (class_id) filterOptions.class_id = class_id;
     if (subject_id) filterOptions.subject_id = subject_id;
     if (term_id) filterOptions.term_id = term_id;
+    if (academic_session_id)
+      filterOptions.academic_session_id = academic_session_id;
     if (status) filterOptions.status = status;
     if (teacher_id) filterOptions.teacher_id = teacher_id;
 
@@ -370,6 +383,7 @@ export class GradeSubmissionService {
             id: submission.class.id,
             name: submission.class.name,
             arm: submission.class.arm,
+            stream: submission.class.stream,
           }
         : null,
       subject: submission.subject
@@ -437,6 +451,7 @@ export class GradeSubmissionService {
         submission.class_id,
         submission.term_id,
         submission.academic_session_id,
+        userId,
       );
     } catch (error) {
       this.logger.error(sysMsg.AUTO_RESULTS_FAILED, {

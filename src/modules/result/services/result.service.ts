@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
@@ -14,8 +15,11 @@ import { ResultEventDto } from 'src/modules/notification/dto/event-trigger.dto';
 import { ResultNotificationService } from 'src/modules/notification/services/result.notification.service';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
 import { TermModelAction } from '../../academic-term/model-actions';
+import { TermService } from '../../academic-term/term.service';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { ClassModelAction } from '../../class/model-actions/class.actions';
 import { GradeSubmissionStatus } from '../../grade/entities';
@@ -49,6 +53,10 @@ export class ResultService {
     private readonly classStudentModelAction: ClassStudentModelAction,
     private readonly termModelAction: TermModelAction,
     private readonly academicSessionModelAction: AcademicSessionModelAction,
+    @Optional()
+    private readonly academicSessionService: AcademicSessionService | undefined,
+    @Optional()
+    private readonly termService: TermService | undefined,
     private readonly dataSource: DataSource,
     private readonly resultNotificationService: ResultNotificationService,
     private readonly classSubjectModelAction: ClassSubjectModelAction,
@@ -65,9 +73,12 @@ export class ResultService {
 
     const filters: Partial<GetResultsQueryDto> = {};
 
-    if (query.academic_session_id)
-      filters.academic_session_id = query.academic_session_id;
-    if (query.term_id) filters.term_id = query.term_id;
+    const period = await this.resolveListPeriod(
+      query.academic_session_id,
+      query.term_id,
+    );
+    if (period.sessionId) filters.academic_session_id = period.sessionId;
+    if (period.termId) filters.term_id = period.termId;
     if (query.class_id) filters.class_id = query.class_id;
     if (query.student_id) filters.student_id = query.student_id;
 
@@ -85,12 +96,8 @@ export class ResultService {
       paginationPayload: { page, limit },
     });
 
-    if (!results.payload || results.payload.length === 0) {
-      throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
-    }
-
     // Transform to response DTOs
-    const transformedResults: ResultResponseDto[] = results.payload.map(
+    const transformedResults: ResultResponseDto[] = (results.payload ?? []).map(
       (result) => this.transformToResponseDto(result),
     );
 
@@ -131,13 +138,12 @@ export class ResultService {
       student_id: studentId,
     };
 
-    if (query.term_id) {
-      filterOptions.term_id = query.term_id;
-    }
-
-    if (query.academic_session_id) {
-      filterOptions.academic_session_id = query.academic_session_id;
-    }
+    const period = await this.resolveListPeriod(
+      query.academic_session_id,
+      query.term_id,
+    );
+    if (period.termId) filterOptions.term_id = period.termId;
+    if (period.sessionId) filterOptions.academic_session_id = period.sessionId;
 
     const page = query.page || 1;
     const limit = query.limit || 10;
@@ -165,12 +171,23 @@ export class ResultService {
     };
   }
 
+  private async resolveListPeriod(sessionId?: string, termId?: string) {
+    if (sessionId || termId) return { sessionId, termId };
+    if (!this.academicSessionService || !this.termService) return {};
+    const [session, term] = await Promise.all([
+      this.academicSessionService.activeSessions(),
+      this.termService.getActiveTerm(),
+    ]);
+    return { sessionId: session.data.id, termId: term.id };
+  }
+
   /* Generate results for all students in a class for a specific term
    */
   async generateClassResults(
     classId: string,
     termId: string,
     academicSessionId?: string,
+    actorUserId?: string,
   ): Promise<{
     message: string;
     generated_count: number;
@@ -367,10 +384,22 @@ export class ResultService {
         generatedCount++;
       }
 
+      if (actorUserId) {
+        await writeActivityLog(queryRunner.manager, {
+          actorUserId,
+          entityType: 'RESULT',
+          entityId: classId,
+          action: 'PUBLISH',
+          description: 'Class results generated and published',
+          metadata: {
+            term_id: termId,
+            academic_session_id: sessionId,
+            count: generatedCount,
+          },
+        });
+      }
       await queryRunner.commitTransaction();
-      /* A non-blocking call (no await) is used so notification
-      errors don't fail the HTTP response. */
-      this.triggerResultNotifications(
+      await this.triggerResultNotifications(
         studentsToNotify,
         classId,
         termId,
@@ -414,8 +443,7 @@ export class ResultService {
       `Triggering result notifications for ${payloads.length} students`,
     );
 
-    // Process in background
-    Promise.allSettled(
+    const outcomes = await Promise.allSettled(
       payloads.map((payload) => {
         const eventDto: ResultEventDto = {
           result_id: payload.result_id,
@@ -427,11 +455,14 @@ export class ResultService {
         };
         return this.resultNotificationService.handleResultPublication(eventDto);
       }),
-    ).catch((err) =>
-      this.logger.error('Error triggering result notifications', {
-        error: err,
-      }),
     );
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        this.logger.error('Error triggering result notifications', {
+          error: outcome.reason,
+        });
+      }
+    }
   }
 
   /**

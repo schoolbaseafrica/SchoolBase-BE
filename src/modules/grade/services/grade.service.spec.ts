@@ -148,6 +148,7 @@ describe('GradeService', () => {
     }).compile();
 
     service = module.get<GradeService>(GradeService);
+    mockClassSubjectRepo.findOne.mockResolvedValue({ id: 'assignment-1' });
     gradeModelAction = module.get(GradeModelAction);
     studentModelAction = module.get(StudentModelAction);
   });
@@ -195,6 +196,16 @@ describe('GradeService', () => {
 
       expect(result).toBeDefined();
       expect(gradeModelAction.update).toHaveBeenCalled();
+    });
+
+    it('blocks editing a rejected grade after subject ownership changes', async () => {
+      (gradeModelAction.get as jest.Mock).mockResolvedValue(mockGrade);
+      mockClassSubjectRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.updateGrade(mockTeacherId, mockGradeId, { ca_score: 25 }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(gradeModelAction.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if grade not found', async () => {

@@ -14,6 +14,7 @@ import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../shared/enums';
 
 import {
@@ -43,14 +44,16 @@ export class TimetableController {
   }
 
   @Post('schedule')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
   @AddScheduleDocs()
   addSchedule(@Body() dto: AddScheduleDto) {
     return this.timetableService.addSchedule(dto);
   }
 
   @Put('schedule/:schedule_id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
   @EditScheduleDocs()
   editSchedule(
     @Param('schedule_id') scheduleId: string,
@@ -60,7 +63,7 @@ export class TimetableController {
   }
 
   @Patch('schedule/:schedule_id/unassign-room')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @UnassignRoomDocs()
   unassignRoom(@Param('schedule_id') scheduleId: string) {

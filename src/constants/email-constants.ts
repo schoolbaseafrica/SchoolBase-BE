@@ -10,4 +10,5 @@ export enum EmailTemplateID {
   INVITE = 'invite.njk',
   SUPERADMIN_WELCOME = 'superadmin-welcome.njk',
   ACCOUNT_CREATED = 'account-creation.njk',
+  SCHOOL_ACTIVITY_ALERT = 'school-activity-alert.njk',
 }

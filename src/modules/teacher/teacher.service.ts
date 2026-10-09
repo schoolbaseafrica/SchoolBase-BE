@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -12,7 +13,9 @@ import { DataSource, Repository } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../constants/system.messages';
+import { writeActivityLog } from '../activity-log/write-activity-log';
 import { AccountCreationService } from '../email/account-creation.service';
+import { School } from '../school/entities/school.entity';
 import { UserRole } from '../shared/enums';
 import { FileService } from '../shared/file/file.service';
 import {
@@ -76,7 +79,10 @@ export class TeacherService {
   }
 
   // --- CREATE ---
-  async create(createDto: CreateTeacherDto): Promise<TeacherResponseDto> {
+  async create(
+    createDto: CreateTeacherDto,
+    actorUserId?: string,
+  ): Promise<TeacherResponseDto> {
     // 1. Check for existing user with email
     const existingUser = await this.userModelAction.get({
       identifierOptions: { email: createDto.email },
@@ -91,20 +97,24 @@ export class TeacherService {
     }
 
     // 2. Generate Employment ID
-    const employment_id =
-      createDto.employment_id ||
-      (await generateEmploymentId(this.teacherRepository));
-    const existingTeacher = await this.teacherModelAction.get({
-      identifierOptions: { employment_id },
-    });
-    if (existingTeacher) {
-      this.logger.warn(
-        `Attempt to create teacher with existing employment ID: ${employment_id}`,
-      );
-      throw new ConflictException(
-        `Employment ID ${employment_id} already exists.`,
+    const school = await this.dataSource
+      .getRepository(School)
+      .findOne({ where: { installation_completed: true } });
+    const manualEmploymentId = createDto.employment_id?.trim();
+    if (manualEmploymentId && !school?.allow_manual_teacher_ids) {
+      throw new BadRequestException(
+        'Manual teacher IDs are disabled in school settings',
       );
     }
+    if (
+      manualEmploymentId &&
+      (await this.teacherModelAction.get({
+        identifierOptions: { employment_id: manualEmploymentId },
+      }))
+    )
+      throw new ConflictException(
+        `Employment ID ${manualEmploymentId} already exists.`,
+      );
 
     // Validate Teacher Age to be at least 18 years old
     this.validateTeacherAge(createDto.date_of_birth);
@@ -122,6 +132,27 @@ export class TeacherService {
     const { resetToken, resetTokenExpiry } = generateResetToken(24);
 
     const response = await this.dataSource.transaction(async (manager) => {
+      let employment_id = manualEmploymentId;
+      await manager.query(
+        `SELECT pg_advisory_xact_lock(hashtext('schoolbase:teacher-id'))`,
+      );
+      if (!employment_id) {
+        employment_id = await generateEmploymentId(
+          manager.getRepository(Teacher),
+          school?.teacher_id_format,
+          school?.teacher_id_prefix ?? 'EMP',
+          school?.school_code ?? '',
+        );
+      } else {
+        const matches = (await manager.query(
+          `SELECT 1 FROM "teachers" WHERE "employment_id" = $1 LIMIT 1`,
+          [employment_id],
+        )) as unknown[];
+        if (matches.length)
+          throw new ConflictException(
+            `Employment ID ${employment_id} already exists.`,
+          );
+      }
       // 5. Create User using model action within transaction
       const savedUser = await this.userModelAction.create({
         createPayload: {
@@ -159,6 +190,17 @@ export class TeacherService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'TEACHER',
+          entityId: savedTeacher.id,
+          action: 'CREATE',
+          description: 'Teacher record created',
+          newValues: { employment_id },
+        });
+      }
 
       // 7. Return response (Transform User/Teacher entities into DTO)
       return {
@@ -326,6 +368,7 @@ export class TeacherService {
   async update(
     id: string,
     updateDto: UpdateTeacherDto,
+    actorUserId?: string,
   ): Promise<TeacherResponseDto> {
     const teacher = await this.teacherModelAction.get({
       identifierOptions: { id },
@@ -335,6 +378,14 @@ export class TeacherService {
     if (!teacher) {
       throw new NotFoundException(`Teacher with ID ${id} not found`);
     }
+
+    if (
+      teacher.user?.role?.includes(UserRole.ADMIN) &&
+      updateDto.is_active !== undefined
+    )
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
 
     // IMMUTABILITY CHECK: Employment ID cannot be updated
     if (
@@ -404,6 +455,17 @@ export class TeacherService {
         },
       });
 
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'TEACHER',
+          entityId: id,
+          action: 'UPDATE',
+          description: 'Teacher record updated',
+          metadata: { changed_fields: Object.keys(updateDto) },
+        });
+      }
+
       // Return response
       const response = {
         ...updatedTeacher,
@@ -434,7 +496,7 @@ export class TeacherService {
   }
 
   // --- DELETE (Soft Delete / Deactivate) ---
-  async remove(id: string): Promise<void> {
+  async remove(id: string, actorUserId?: string): Promise<void> {
     const teacher = await this.teacherModelAction.get({
       identifierOptions: { id },
       relations: { user: true },
@@ -444,6 +506,11 @@ export class TeacherService {
       this.logger.warn(sysMsg.RESOURCE_NOT_FOUND, { teacherId: id });
       throw new NotFoundException(`Teacher with ID ${id} not found`);
     }
+
+    if (teacher.user?.role?.includes(UserRole.ADMIN))
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
 
     return this.dataSource.transaction(async (manager) => {
       // Set is_active to false (Deactivate) within transaction
@@ -465,6 +532,18 @@ export class TeacherService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'TEACHER',
+          entityId: id,
+          action: 'DEACTIVATE',
+          description: 'Teacher account deactivated',
+          oldValues: { is_active: teacher.is_active },
+          newValues: { is_active: false },
+        });
+      }
 
       this.logger.info(sysMsg.RESOURCE_DELETED, {
         teacherId: id,

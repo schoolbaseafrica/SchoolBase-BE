@@ -46,6 +46,8 @@ import {
   StudentAssignmentResponseDto,
   AssignSingleStudentResponseDto,
   GetStudentsQueryDto,
+  PromoteStudentsDto,
+  AssignTeacherToClassDto,
 } from '../dto';
 import { GetTeachersQueryDto } from '../dto/get-teachers-query.dto';
 import { TeacherAssignmentResponseDto } from '../dto/teacher-response.dto';
@@ -83,7 +85,25 @@ export class ClassController {
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
   @DocsGetGroupedClasses()
   async getGroupedClasses(@Query() query: ListGroupedClassesDto) {
-    return this.classService.getGroupedClasses(query.page, query.limit);
+    return this.classService.getGroupedClasses(
+      query.page,
+      query.limit,
+      query.includeArchived,
+      query.session_id,
+      query.includeAllSessions,
+    );
+  }
+
+  @Post('promotion/preview')
+  @Roles(UserRole.ADMIN)
+  async previewPromotion(@Body() dto: PromoteStudentsDto) {
+    return this.classService.previewPromotion(dto);
+  }
+
+  @Post('promotion/execute')
+  @Roles(UserRole.ADMIN)
+  async executePromotion(@Body() dto: PromoteStudentsDto) {
+    return this.classService.executePromotion(dto);
   }
 
   // --- GET: TOTAL NUMBER OF CLASSES ---
@@ -130,6 +150,35 @@ export class ClassController {
       message: sysMsg.TEACHER_CLASS_FETCHED,
       data: classes,
     };
+  }
+
+  // --- ASSIGN A TEACHER AS CLASS TEACHER (ADMIN ONLY) ---
+  @Post('teachers/:teacherId/assign')
+  @Roles(UserRole.ADMIN)
+  async assignTeacherToClass(
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Body() dto: AssignTeacherToClassDto,
+  ) {
+    return this.classService.assignTeacherToClass(
+      teacherId,
+      dto.classId,
+      dto.sessionId,
+    );
+  }
+
+  // --- UNASSIGN A CLASS TEACHER (ADMIN ONLY) ---
+  @Delete('teachers/:teacherId/classes/:classId')
+  @Roles(UserRole.ADMIN)
+  async unassignTeacherFromClass(
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Param('classId', ParseUUIDPipe) classId: string,
+    @Query('session_id') sessionId?: string,
+  ) {
+    return this.classService.unassignTeacherFromClass(
+      teacherId,
+      classId,
+      sessionId,
+    );
   }
 
   // --- POST: ASSIGN STUDENTS TO CLASS (ADMIN ONLY) ---

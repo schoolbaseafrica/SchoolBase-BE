@@ -58,6 +58,35 @@ export default () => ({
     accessKey: process.env.MINIO_ACCESS_KEY,
     secretKey: process.env.MINIO_SECRET_KEY,
     bucket: process.env.MINIO_BUCKET_NAME,
+    publicUrl: process.env.MINIO_PUBLIC_URL,
+  },
+
+  face: {
+    verifyUrl: process.env.FACE_VERIFY_URL,
+    apiKey: process.env.FACE_VERIFY_API_KEY,
+    matchThreshold: process.env.FACE_MATCH_THRESHOLD,
+  },
+
+  livekit: {
+    url: process.env.LIVEKIT_URL,
+    apiUrl: process.env.LIVEKIT_API_URL || process.env.LIVEKIT_URL,
+    apiKey: process.env.LIVEKIT_API_KEY,
+    apiSecret: process.env.LIVEKIT_API_SECRET,
+  },
+
+  cors: {
+    origins: (process.env.CORS_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  },
+
+  databaseSetup: {
+    enabled: process.env.DATABASE_SETUP_ENABLED === 'true',
+  },
+
+  initialSetup: {
+    secret: process.env.INITIAL_SETUP_SECRET,
   },
 
   frontend: {

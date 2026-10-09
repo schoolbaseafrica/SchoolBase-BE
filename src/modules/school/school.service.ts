@@ -1,25 +1,21 @@
-import * as crypto from 'crypto';
-import * as fs from 'fs/promises';
-import * as path from 'path';
-
 import { Injectable, ConflictException } from '@nestjs/common';
-import * as sharp from 'sharp';
+import { DataSource } from 'typeorm';
 
+import { IMulterFile } from '../../common/types/multer.types';
 import * as sysMsg from '../../constants/system.messages';
 import { LandingPageModelAction } from '../landing-page/model-actions/landing-page.action';
 import { SetupPhase } from '../shared/enums';
 import { Role } from '../superadmin/entities/superadmin.entity';
 import { SuperadminModelAction } from '../superadmin/model-actions/superadmin-actions';
+import { MinioService } from '../upload/services/minio.service';
 
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import { UpdateMarketingSiteDto } from './dto/update-marketing-site.dto';
+import {
+  UpdateWebsiteLayoutDto,
+  WebsiteLayout,
+} from './dto/update-website-layout.dto';
 import { SchoolModelAction } from './model-actions/school.action';
-
-interface IUploadedFile {
-  buffer: Buffer;
-  originalname: string;
-  mimetype: string;
-  size: number;
-}
 
 export interface ISetupStatusResponse {
   is_complete: boolean;
@@ -43,113 +39,78 @@ export interface ISetupStatusResponse {
 
 @Injectable()
 export class SchoolService {
-  private readonly uploadDir = path.join(process.cwd(), 'uploads', 'logos');
-
   constructor(
     private readonly schoolModelAction: SchoolModelAction,
     private readonly landingPageModelAction: LandingPageModelAction,
     private readonly superadminModelAction: SuperadminModelAction,
+    private readonly dataSource: DataSource,
+    private readonly minio: MinioService,
   ) {}
 
   async processInstallation(
     createInstallationDto: CreateInstallationDto,
-    logoFile?: IUploadedFile,
+    logoFile?: IMulterFile,
   ) {
-    // Check for existing installation
-    const { payload: installations } = await this.schoolModelAction.list({
-      filterRecordOptions: { installation_completed: true },
-    });
+    let uploadedKey: string | undefined;
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        await manager.query('SELECT pg_advisory_xact_lock(908230504)');
+        const [{ payload: schools }, superadmin] = await Promise.all([
+          this.schoolModelAction.list({}),
+          this.superadminModelAction.get({
+            identifierOptions: { role: Role.SUPERADMIN },
+          }),
+        ]);
+        if (schools?.length || superadmin) {
+          throw new ConflictException(
+            'Initial school setup is already complete',
+          );
+        }
 
-    const existingSchool =
-      installations && installations.length > 0 ? installations[0] : null;
+        let logoUrl: string | null = null;
+        if (logoFile) {
+          const uploaded = await this.minio.uploadImage(
+            logoFile,
+            'schoolbase-school-logos',
+          );
+          logoUrl = uploaded.url;
+          uploadedKey = uploaded.publicId;
+        }
 
-    if (existingSchool) {
-      // UPDATE PATH - School installation already exists
-      // Process new logo if provided, otherwise keep existing logo
-      let logoUrl = existingSchool.logo_url;
-      if (logoFile) {
-        logoUrl = await this.uploadLogo(logoFile);
-      }
+        const school = await this.schoolModelAction.create({
+          createPayload: {
+            name: createInstallationDto.name,
+            address: createInstallationDto.address,
+            email: createInstallationDto.email,
+            phone: createInstallationDto.phone,
+            logo_url: logoUrl,
+            primary_color: createInstallationDto.primary_color,
+            secondary_color: createInstallationDto.secondary_color,
+            accent_color: createInstallationDto.accent_color,
+            installation_completed: true,
+          },
+          transactionOptions: { useTransaction: true, transaction: manager },
+        });
 
-      // Update existing school record
-      const updatedSchool = await this.schoolModelAction.update({
-        identifierOptions: { id: existingSchool.id },
-        updatePayload: {
-          name: createInstallationDto.name,
-          address: createInstallationDto.address,
-          email: createInstallationDto.email,
-          phone: createInstallationDto.phone,
-          logo_url: logoUrl,
-          primary_color: createInstallationDto.primary_color,
-          secondary_color: createInstallationDto.secondary_color,
-          accent_color: createInstallationDto.accent_color,
-          installation_completed: true,
-        },
-        transactionOptions: { useTransaction: false },
+        return {
+          id: school.id,
+          name: school.name,
+          address: school.address,
+          email: school.email,
+          phone: school.phone,
+          logo_url: school.logo_url,
+          primary_color: school.primary_color,
+          secondary_color: school.secondary_color,
+          accent_color: school.accent_color,
+          installation_completed: school.installation_completed,
+          message: sysMsg.INSTALLATION_COMPLETED,
+        };
       });
-
-      return {
-        id: updatedSchool.id,
-        name: updatedSchool.name,
-        address: updatedSchool.address,
-        email: updatedSchool.email,
-        phone: updatedSchool.phone,
-        logo_url: updatedSchool.logo_url,
-        primary_color: updatedSchool.primary_color,
-        secondary_color: updatedSchool.secondary_color,
-        accent_color: updatedSchool.accent_color,
-        installation_completed: updatedSchool.installation_completed,
-        message: sysMsg.INSTALLATION_UPDATED,
-      };
-    } else {
-      // CREATE PATH - First time installation
-      // Process logo file if provided
-      let logoUrl: string | null = null;
-      if (logoFile) {
-        logoUrl = await this.uploadLogo(logoFile);
-      }
-
-      // Create school record
-      const school = await this.schoolModelAction.create({
-        createPayload: {
-          name: createInstallationDto.name,
-          address: createInstallationDto.address,
-          email: createInstallationDto.email,
-          phone: createInstallationDto.phone,
-          logo_url: logoUrl,
-          primary_color: createInstallationDto.primary_color,
-          secondary_color: createInstallationDto.secondary_color,
-          accent_color: createInstallationDto.accent_color,
-          installation_completed: true,
-        },
-        transactionOptions: { useTransaction: false },
-      });
-
-      return {
-        id: school.id,
-        name: school.name,
-        address: school.address,
-        email: school.email,
-        phone: school.phone,
-        logo_url: school.logo_url,
-        primary_color: school.primary_color,
-        secondary_color: school.secondary_color,
-        accent_color: school.accent_color,
-        installation_completed: school.installation_completed,
-        message: sysMsg.INSTALLATION_COMPLETED,
-      };
+    } catch (error) {
+      if (uploadedKey)
+        await this.minio.deleteImage(uploadedKey).catch(() => undefined);
+      throw error;
     }
-  }
-
-  private async uploadLogo(file: IUploadedFile): Promise<string> {
-    await fs.mkdir(this.uploadDir, { recursive: true });
-
-    const filename = `logo-${crypto.randomBytes(16).toString('hex')}.png`;
-    const filepath = path.join(this.uploadDir, filename);
-
-    await sharp(file.buffer).resize(200, 200).png().toFile(filepath);
-
-    return `/uploads/logos/${filename}`;
   }
 
   async getSchoolDetails() {
@@ -174,6 +135,76 @@ export class SchoolService {
       secondary_color: school.secondary_color,
       accent_color: school.accent_color,
       installation_completed: school.installation_completed,
+      website_layout: school.use_marketing_site
+        ? WebsiteLayout.MULTI_PAGE
+        : WebsiteLayout.ONE_PAGE,
+      use_marketing_site: school.use_marketing_site ?? false,
+      marketing_site_config: school.marketing_site_config ?? null,
+      activity_log_retention_days: school.activity_log_retention_days ?? null,
+      school_code: school.school_code ?? null,
+      student_id_format: school.student_id_format ?? null,
+      student_id_prefix: school.student_id_prefix ?? 'STU',
+      allow_manual_student_ids: school.allow_manual_student_ids ?? true,
+      teacher_id_format: school.teacher_id_format ?? null,
+      teacher_id_prefix: school.teacher_id_prefix ?? 'EMP',
+      allow_manual_teacher_ids: school.allow_manual_teacher_ids ?? true,
+      email_alert_results: school.email_alert_results ?? false,
+      email_alert_fees: school.email_alert_fees ?? false,
+      email_alert_attendance: school.email_alert_attendance ?? false,
+      parent_id_format: school.parent_id_format ?? null,
+      parent_id_prefix: school.parent_id_prefix ?? 'PAR',
+      allow_manual_parent_ids: school.allow_manual_parent_ids ?? true,
+      staff_id_format: school.staff_id_format ?? null,
+      staff_id_prefix: school.staff_id_prefix ?? 'STF',
+      allow_manual_staff_ids: school.allow_manual_staff_ids ?? true,
+    };
+  }
+
+  async updateWebsiteLayout(dto: UpdateWebsiteLayoutDto) {
+    const { payload } = await this.schoolModelAction.list({
+      filterRecordOptions: { installation_completed: true },
+    });
+
+    if (!payload || payload.length === 0) {
+      throw new ConflictException(sysMsg.SCHOOL_NOT_FOUND);
+    }
+
+    const useMarketingSite = dto.website_layout === WebsiteLayout.MULTI_PAGE;
+    const school = await this.schoolModelAction.update({
+      identifierOptions: { id: payload[0].id },
+      updatePayload: { use_marketing_site: useMarketingSite },
+      transactionOptions: { useTransaction: false },
+    });
+
+    return {
+      id: school.id,
+      website_layout: useMarketingSite
+        ? WebsiteLayout.MULTI_PAGE
+        : WebsiteLayout.ONE_PAGE,
+      use_marketing_site: useMarketingSite,
+    };
+  }
+
+  async updateMarketingSite(dto: UpdateMarketingSiteDto) {
+    const { payload } = await this.schoolModelAction.list({
+      filterRecordOptions: { installation_completed: true },
+    });
+
+    if (!payload || payload.length === 0) {
+      throw new ConflictException(sysMsg.SCHOOL_NOT_FOUND);
+    }
+
+    const school = await this.schoolModelAction.update({
+      identifierOptions: { id: payload[0].id },
+      updatePayload: {
+        marketing_site_config: dto.marketing_site_config,
+      },
+      transactionOptions: { useTransaction: false },
+    });
+
+    return {
+      id: school.id,
+      marketing_site_config: school.marketing_site_config ?? {},
     };
   }
 

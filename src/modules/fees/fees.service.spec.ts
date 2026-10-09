@@ -57,6 +57,7 @@ describe('FeesService', () => {
   };
 
   const mockEntityManager: Partial<EntityManager> = {
+    query: jest.fn().mockResolvedValue([]),
     findOne: jest.fn(),
     find: jest.fn(),
     create: jest.fn(),
@@ -201,6 +202,10 @@ describe('FeesService', () => {
       const result = await service.create(createFeesDto, 'admin');
 
       expect(result).toEqual(mockFee);
+      expect(mockEntityManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining(['admin', 'FEE', mockFee.id, 'CREATE']),
+      );
       expect(feesModelAction.create).toHaveBeenCalledWith(
         expect.objectContaining({
           createPayload: expect.objectContaining({
@@ -539,7 +544,8 @@ describe('FeesService', () => {
         identifierOptions: { id: feeId },
         updatePayload: { status: FeeStatus.INACTIVE },
         transactionOptions: {
-          useTransaction: false,
+          useTransaction: true,
+          transaction: mockEntityManager,
         },
       });
 
@@ -608,7 +614,8 @@ describe('FeesService', () => {
         identifierOptions: { id: feeId },
         updatePayload: { status: FeeStatus.ACTIVE },
         transactionOptions: {
-          useTransaction: false,
+          useTransaction: true,
+          transaction: mockEntityManager,
         },
       });
 

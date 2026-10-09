@@ -10,6 +10,7 @@ import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { ClassSubject } from '../../class/entities/class-subject.entity';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions';
 import { GradeResponseDto, UpdateGradeDto } from '../dto';
@@ -71,6 +72,19 @@ export class GradeService {
     // Verify teacher owns this submission
     if (grade.submission.teacher_id !== teacherId) {
       throw new ForbiddenException(sysMsg.UNAUTHORIZED_GRADE_ACCESS);
+    }
+
+    const currentAssignment = await this.dataSource
+      .getRepository(ClassSubject)
+      .findOne({
+        where: {
+          class: { id: grade.submission.class_id },
+          subject: { id: grade.submission.subject_id },
+          teacher: { id: teacherId },
+        },
+      });
+    if (!currentAssignment) {
+      throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
     }
 
     // Check if submission is editable

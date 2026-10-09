@@ -1,8 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
+import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMSG from '../../constants/system.messages';
@@ -37,6 +39,7 @@ describe('AuthService', () => {
 
   const mockUserService = {
     findByEmail: jest.fn(),
+    findByLoginIdentifier: jest.fn(),
     create: jest.fn(),
     findOne: jest.fn(),
     updateUser: jest.fn(),
@@ -75,6 +78,10 @@ describe('AuthService', () => {
     update: jest.fn(),
   };
 
+  const mockDataSource = {
+    getRepository: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -107,6 +114,7 @@ describe('AuthService', () => {
           provide: InviteModelAction,
           useValue: mockInviteModelAction,
         },
+        { provide: DataSource, useValue: mockDataSource },
       ],
     }).compile();
 
@@ -117,6 +125,103 @@ describe('AuthService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('clears first password setup after using the email reset link', async () => {
+    mockUserService.findByResetToken.mockResolvedValue({
+      id: 'parent-id',
+      email: 'parent@example.com',
+      reset_token_expiry: new Date(Date.now() + 60000),
+    });
+    mockUserService.updateUser.mockResolvedValue({});
+    await service.resetPassword({
+      token: 'reset-token',
+      newPassword: 'NewPassword123',
+    });
+    expect(mockUserService.updateUser).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reset_token: null,
+        password_setup_required: false,
+      }),
+      { id: 'parent-id' },
+      { useTransaction: false },
+    );
+  });
+
+  it('includes the saved student photo in their profile', async () => {
+    mockUserService.findOne.mockResolvedValue({
+      id: 'user-1',
+      email: 'student@example.com',
+      first_name: 'Student',
+      last_name: 'One',
+      role: ['STUDENT'],
+    });
+    const findOne = jest
+      .fn()
+      .mockResolvedValue({ photo_url: 'https://images.example/student.jpg' });
+    mockDataSource.getRepository.mockReturnValue({ findOne });
+
+    const profile = await service.getProfile({
+      user: { id: 'user-1', student_id: 'student-1' },
+    } as never);
+
+    expect(profile.photo_url).toBe('https://images.example/student.jpg');
+    expect(findOne).toHaveBeenCalledWith({
+      where: { id: 'student-1', is_deleted: false },
+      select: ['photo_url'],
+    });
+  });
+
+  describe('login', () => {
+    const activeStudent = {
+      id: 'student-user-id',
+      email: 'student@example.com',
+      first_name: 'Student',
+      last_name: 'One',
+      role: ['STUDENT'],
+      is_active: true,
+      password: 'stored-hash',
+    };
+
+    it('accepts a student registration number as the login identifier', async () => {
+      mockUserService.findByLoginIdentifier.mockResolvedValue(activeStudent);
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+      mockJwtService.signAsync.mockResolvedValue('token');
+      mockSessionService.createSession.mockResolvedValue({
+        session_id: 'session-id',
+        expires_at: new Date('2026-09-15T12:00:00Z'),
+      });
+
+      const result = await service.login({
+        email: 'SB/2026/0001',
+        password: 'password',
+      });
+
+      expect(mockUserService.findByLoginIdentifier).toHaveBeenCalledWith(
+        'SB/2026/0001',
+      );
+      expect(result.user.role).toEqual(['STUDENT']);
+      expect(result.access_token).toBe('token');
+    });
+
+    it('keeps email login on the same identifier path', async () => {
+      mockUserService.findByLoginIdentifier.mockResolvedValue(activeStudent);
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+      mockJwtService.signAsync.mockResolvedValue('token');
+      mockSessionService.createSession.mockResolvedValue({
+        session_id: 'session-id',
+        expires_at: new Date('2026-09-15T12:00:00Z'),
+      });
+
+      await service.login({
+        email: 'student@example.com',
+        password: 'password',
+      });
+
+      expect(mockUserService.findByLoginIdentifier).toHaveBeenCalledWith(
+        'student@example.com',
+      );
+    });
   });
 
   describe('logout', () => {
@@ -178,6 +283,7 @@ describe('AuthService', () => {
               provide: InviteModelAction,
               useValue: mockInviteModelAction,
             },
+            { provide: DataSource, useValue: mockDataSource },
           ],
         }).compile();
 
@@ -256,14 +362,20 @@ describe('AuthService', () => {
     const mockOldSession = {
       id: 'session-id-456',
       user_id: 'user-id-123',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
     };
 
     beforeEach(() => {
       jest.clearAllMocks();
+      mockUserService.findOne.mockResolvedValue({
+        id: mockJwtPayload.sub,
+        email: mockJwtPayload.email,
+        role: mockJwtPayload.role,
+        is_active: true,
+        deleted_at: null,
+      });
       mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
-      mockJwtService.signAsync
-        .mockResolvedValueOnce('new-access-token')
-        .mockResolvedValueOnce('new-refresh-token');
+      mockJwtService.signAsync.mockResolvedValue('new-access-token');
       mockSessionService.validateRefreshToken.mockResolvedValue(mockOldSession);
       mockSessionService.revokeSession.mockResolvedValue({
         revoked: true,
@@ -286,16 +398,15 @@ describe('AuthService', () => {
         mockJwtPayload.sub,
         mockRefreshTokenDto.refresh_token,
       );
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith(
-        mockOldSession.id,
-        mockJwtPayload.sub,
-      );
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        mockJwtPayload.sub,
-        'new-refresh-token',
-      );
+      expect(mockSessionService.revokeSession).not.toHaveBeenCalled();
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
       expect(result).toHaveProperty('access_token', 'new-access-token');
-      expect(result).toHaveProperty('refresh_token', 'new-refresh-token');
+      expect(result).toHaveProperty('refresh_token', 'valid-refresh-token');
+      expect(result).toHaveProperty('session_id', mockOldSession.id);
+      expect(result).toHaveProperty(
+        'session_expires_at',
+        mockOldSession.expires_at,
+      );
       expect(result).toHaveProperty('message');
     });
 
@@ -311,6 +422,14 @@ describe('AuthService', () => {
       expect(mockSessionService.createSession).not.toHaveBeenCalled();
     });
 
+    it('rejects a deactivated account even with a valid refresh token', async () => {
+      mockUserService.findOne.mockResolvedValue({ is_active: false });
+      await expect(service.refreshToken(mockRefreshTokenDto)).rejects.toThrow(
+        'Account is inactive or unavailable',
+      );
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+    });
+
     it('should throw error when JWT verification fails', async () => {
       mockJwtService.verifyAsync.mockRejectedValue(
         new Error('Invalid token signature'),
@@ -323,7 +442,7 @@ describe('AuthService', () => {
       expect(mockSessionService.validateRefreshToken).not.toHaveBeenCalled();
     });
 
-    it('should handle case when session service is not available', async () => {
+    it('rejects refresh when session validation is unavailable', async () => {
       const moduleWithoutSession: TestingModule =
         await Test.createTestingModule({
           providers: [
@@ -356,24 +475,23 @@ describe('AuthService', () => {
               provide: InviteModelAction,
               useValue: mockInviteModelAction,
             },
+            { provide: DataSource, useValue: mockDataSource },
           ],
         }).compile();
 
       const serviceWithoutSession =
         moduleWithoutSession.get<AuthService>(AuthService);
 
-      const result =
-        await serviceWithoutSession.refreshToken(mockRefreshTokenDto);
-
-      expect(result).toHaveProperty('access_token');
-      expect(result).toHaveProperty('refresh_token');
+      await expect(
+        serviceWithoutSession.refreshToken(mockRefreshTokenDto),
+      ).rejects.toThrow('Session validation is unavailable');
       expect(mockJwtService.verifyAsync).toHaveBeenCalled();
     });
 
     it('should generate new tokens with correct payload', async () => {
       await service.refreshToken(mockRefreshTokenDto);
 
-      expect(mockJwtService.signAsync).toHaveBeenCalledTimes(2);
+      expect(mockJwtService.signAsync).toHaveBeenCalledTimes(1);
       expect(mockJwtService.signAsync).toHaveBeenCalledWith(
         {
           sub: mockJwtPayload.sub,

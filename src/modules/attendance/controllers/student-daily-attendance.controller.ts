@@ -72,8 +72,16 @@ export class StudentDailyAttendanceController {
   @apiParentGetChildMonthlyAttendance()
   async getParentChildMonthlyAttendance(
     @Query('registration_number') matricNumber: string,
+    @Query('session_id') sessionId?: string,
+    @Query('year') year?: string,
+    @Query('month') month?: string,
   ) {
-    return this.attendanceService.getParentChildMonthlyAttendance(matricNumber);
+    return this.attendanceService.getParentChildMonthlyAttendance(
+      matricNumber,
+      sessionId,
+      year ? Number(year) : undefined,
+      month ? Number(month) : undefined,
+    );
   }
 
   // --- GET: CLASS DAILY ATTENDANCE SUMMARY (TEACHER/ADMIN) ---
@@ -122,6 +130,9 @@ export class StudentDailyAttendanceController {
   async getStudentMonthlyAttendance(
     @Req() req: IRequestWithUser,
     @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Query('session_id') sessionId?: string,
+    @Query('year') year?: string,
+    @Query('month') month?: string,
   ) {
     // Students can only view their own attendance
     if (req.user.role === UserRole.STUDENT && req.user.userId !== studentId) {
@@ -130,7 +141,12 @@ export class StudentDailyAttendanceController {
       );
     }
 
-    return this.attendanceService.getStudentMonthlyAttendance(studentId);
+    return this.attendanceService.getStudentMonthlyAttendance(
+      studentId,
+      sessionId,
+      year ? Number(year) : undefined,
+      month ? Number(month) : undefined,
+    );
   }
 
   // --- GET: STUDENT TERM ATTENDANCE SUMMARY (STUDENT/TEACHER/ADMIN) ---
@@ -166,8 +182,13 @@ export class StudentDailyAttendanceController {
   async updateStudentDailyAttendance(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStudentDailyAttendanceDto,
+    @Req() req: IRequestWithUser,
   ) {
-    return this.attendanceService.updateStudentDailyAttendance(id, dto);
+    return this.attendanceService.updateStudentDailyAttendance(
+      id,
+      dto,
+      req.user.userId,
+    );
   }
 
   // --- POST: CREATE EDIT REQUEST FOR LOCKED ATTENDANCE (TEACHER/ADMIN) ---

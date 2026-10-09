@@ -16,13 +16,22 @@ jest.mock('./decorators/installation-api.decorator', () => ({
       descriptor,
 }));
 
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
+
+import { SchoolSettingsService } from './school-settings.service';
 import { SchoolController } from './school.controller';
 import { SchoolService } from './school.service';
 
 describe('SchoolController', () => {
   let controller: SchoolController;
+  let settings: {
+    updateActivityLogRetention: jest.Mock;
+    updateSchool: jest.Mock;
+  };
+  let schoolService: { getSchoolDetails: jest.Mock };
 
   beforeEach(async () => {
     const mockSchoolService = {
@@ -35,17 +44,54 @@ describe('SchoolController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [SchoolController],
       providers: [
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: InitialSetupGuard, useValue: { canActivate: () => true } },
         {
           provide: SchoolService,
           useValue: mockSchoolService,
+        },
+        {
+          provide: SchoolSettingsService,
+          useValue: {
+            updateSchool: jest.fn(),
+            updateActivityLogRetention: jest.fn(),
+            getLandingPageConfig: jest.fn(),
+            updateLandingPageConfig: jest.fn(),
+          },
         },
       ],
     }).compile();
 
     controller = module.get<SchoolController>(SchoolController);
+    settings = module.get(SchoolSettingsService);
+    schoolService = module.get(SchoolService);
   });
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('passes the authenticated actor to retention updates', () => {
+    controller.updateActivityLogRetention({ activity_log_retention_days: 90 }, {
+      id: 'owner-1',
+    } as never);
+    expect(settings.updateActivityLogRetention).toHaveBeenCalledWith(
+      90,
+      'owner-1',
+    );
+  });
+
+  it('passes the authenticated actor to ordinary settings updates', async () => {
+    schoolService.getSchoolDetails = jest
+      .fn()
+      .mockResolvedValue({ id: 'school-1' });
+    await controller.updateSchool({ name: 'New name' }, {
+      id: 'admin-1',
+    } as never);
+    expect(settings.updateSchool).toHaveBeenCalledWith(
+      { name: 'New name' },
+      undefined,
+      'admin-1',
+    );
   });
 });

@@ -14,6 +14,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { IRequestWithUser } from '../../common/types';
@@ -25,6 +26,8 @@ import { EmailPayload } from '../email/email.types';
 import { InviteStatus } from '../invites/entities/invites.entity';
 import { InviteModelAction } from '../invites/invite.model-action';
 import { SessionService } from '../session/session.service';
+import { Student } from '../student/entities/student.entity';
+import { User, UserRole as AccountRole } from '../user/entities/user.entity';
 import { UserService } from '../user/user.service';
 
 import {
@@ -48,6 +51,7 @@ export class AuthService {
     private readonly sessionService: SessionService,
     private readonly configService: ConfigService,
     private readonly inviteModelAction: InviteModelAction,
+    private readonly dataSource: DataSource,
   ) {
     this.logger = logger.child({ context: AuthService.name });
   }
@@ -126,14 +130,15 @@ export class AuthService {
   }
 
   async login(loginPayload: LoginDto) {
-    // Find user by email
-    const user = await this.userService.findByEmail(loginPayload.email);
+    const user = await this.userService.findByLoginIdentifier(
+      loginPayload.email,
+    );
     if (!user) {
       throw new UnauthorizedException(sysMsg.INVALID_CREDENTIALS);
     }
 
     // Check if user is active
-    if (!user.is_active) {
+    if (!user.is_active || user.deleted_at) {
       this.logger.warn('Login attempt on inactive account');
       throw new UnauthorizedException(sysMsg.USER_INACTIVE);
     }
@@ -184,50 +189,44 @@ export class AuthService {
       },
     );
 
-    // Validate refresh token against stored session
-    let oldSession = null;
-    if (this.sessionService) {
-      oldSession = await this.sessionService.validateRefreshToken(
-        payload.sub,
-        refreshToken.refresh_token,
-      );
-
-      if (!oldSession) {
-        this.logger.warn(
-          `Refresh token validation failed for user: ${payload.sub}`,
-        );
-        throw new UnauthorizedException(
-          'Invalid or expired refresh token. Please login again.',
-        );
-      }
-    }
-
-    // Generate new tokens
-    const tokens = await this.generateTokens(
+    // A signed JWT alone is insufficient: logout and deactivation must revoke
+    // the database session used by the refresh token.
+    if (!this.sessionService)
+      throw new UnauthorizedException('Session validation is unavailable');
+    const oldSession = await this.sessionService.validateRefreshToken(
       payload.sub,
-      payload.email,
-      payload.role,
+      refreshToken.refresh_token,
     );
 
-    // Update session with new refresh token
-    let sessionInfo = null;
-    if (this.sessionService && tokens.refresh_token && oldSession) {
-      // Revoke old session and create new one
-      await this.sessionService.revokeSession(oldSession.id, payload.sub);
-
-      sessionInfo = await this.sessionService.createSession(
-        payload.sub,
-        tokens.refresh_token,
+    if (!oldSession) {
+      this.logger.warn(
+        `Refresh token validation failed for user: ${payload.sub}`,
+      );
+      throw new UnauthorizedException(
+        'Invalid or expired refresh token. Please login again.',
       );
     }
+
+    const user = await this.userService.findOne(payload.sub);
+    if (!user || !user.is_active || user.deleted_at)
+      throw new UnauthorizedException('Account is inactive or unavailable');
+
+    // Keep the validated refresh token for its original seven-day lifetime.
+    // Concurrent requests after an access-token expiry can safely refresh
+    // without invalidating each other's browser session.
+    const accessToken = await this.jwtService.signAsync(
+      { sub: user.id, email: user.email, role: user.role },
+      { secret: config().jwt.secret, expiresIn: '4h' },
+    );
 
     this.logger.info(sysMsg.TOKEN_REFRESH_SUCCESS);
 
     return {
       message: sysMsg.TOKEN_REFRESH_SUCCESS,
-      ...tokens,
-      session_id: sessionInfo?.session_id,
-      session_expires_at: sessionInfo?.expires_at,
+      access_token: accessToken,
+      refresh_token: refreshToken.refresh_token,
+      session_id: oldSession?.id,
+      session_expires_at: oldSession?.expires_at,
     };
   }
 
@@ -309,6 +308,7 @@ export class AuthService {
         password: hashedPassword,
         reset_token: null,
         reset_token_expiry: null,
+        password_setup_required: false,
       },
       { id: user.id },
       { useTransaction: false },
@@ -319,26 +319,6 @@ export class AuthService {
     return { message: sysMsg.PASSWORD_RESET_SUCCESS };
   }
 
-  async activateUserAccount(id: string) {
-    const user = await this.userService.findOne(id);
-
-    if (!user) throw new NotFoundException(sysMsg.USER_NOT_FOUND);
-
-    if (user.is_active) {
-      return sysMsg.USER_IS_ACTIVATED;
-    }
-
-    await this.userService.updateUser(
-      {
-        is_active: true,
-      },
-      { id },
-      { useTransaction: false },
-    );
-
-    return sysMsg.USER_ACTIVATED;
-  }
-
   async getProfile(req: IRequestWithUser) {
     const { id, parent_id, student_id, teacher_id } = req.user;
     const user = await this.userService.findOne(id);
@@ -346,6 +326,13 @@ export class AuthService {
       this.logger.error(sysMsg.USER_NOT_FOUND);
       throw new UnauthorizedException(sysMsg.USER_NOT_FOUND);
     }
+
+    const student = student_id
+      ? await this.dataSource.getRepository(Student).findOne({
+          where: { id: student_id, is_deleted: false },
+          select: ['photo_url'],
+        })
+      : null;
 
     return {
       id: user.id,
@@ -360,6 +347,7 @@ export class AuthService {
       parent_id,
       student_id,
       teacher_id,
+      photo_url: student?.photo_url ?? null,
       is_active: user.is_active,
       created_at: user.createdAt,
       updated_at: user.updatedAt,
@@ -384,6 +372,30 @@ export class AuthService {
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
+    };
+  }
+
+  async createParentLinkSession(user: User) {
+    if (!user.is_active || !user.role.includes(AccountRole.PARENT)) {
+      throw new UnauthorizedException('Parent account is not active');
+    }
+    const tokens = await this.generateTokens(user.id, user.email, user.role);
+    const session = await this.sessionService.createSession(
+      user.id,
+      tokens.refresh_token,
+    );
+    return {
+      ...tokens,
+      session_id: session.session_id,
+      session_expires_at: session.expires_at,
+      user: {
+        id: user.id,
+        email: user.email,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        role: user.role,
+      },
+      requires_password_reset: false,
     };
   }
 
@@ -421,6 +433,8 @@ export class AuthService {
     let user = await this.userService.findByEmail(email);
 
     if (user) {
+      if (!user.is_active || user.deleted_at)
+        throw new UnauthorizedException('Account is inactive or unavailable');
       // If user exists but doesn't have google_id, update it
       if (!user.google_id) {
         await this.userService.updateUser(

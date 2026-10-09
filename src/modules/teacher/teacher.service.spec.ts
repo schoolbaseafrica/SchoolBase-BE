@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -80,6 +81,8 @@ describe('TeacherService', () => {
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
         save: mockSave,
+        query: jest.fn().mockResolvedValue([]),
+        getRepository: jest.fn(),
       },
     } as unknown as jest.Mocked<QueryRunner>;
 
@@ -90,10 +93,19 @@ describe('TeacherService', () => {
       findOne: jest.fn(),
       createQueryBuilder: jest.fn(),
     } as unknown as jest.Mocked<Repository<Teacher>>;
+    (queryRunner.manager.getRepository as jest.Mock).mockReturnValue(
+      teacherRepository,
+    );
 
     // Mock DataSource
     dataSource = {
       createQueryRunner: jest.fn().mockReturnValue(queryRunner),
+      getRepository: jest.fn().mockReturnValue({
+        findOne: jest.fn().mockResolvedValue({
+          allow_manual_teacher_ids: true,
+          teacher_id_prefix: 'EMP',
+        }),
+      }),
       transaction: jest.fn().mockImplementation(async (callback) => {
         // Simulate transaction by calling callback with queryRunner.manager
         return callback(queryRunner.manager);
@@ -217,13 +229,22 @@ describe('TeacherService', () => {
     });
 
     it('should create a teacher successfully', async () => {
-      const result = await service.create(createDto);
+      const result = await service.create(createDto, 'admin-1');
 
       expect(result).toBeDefined();
       expect(result).toHaveProperty('employment_id');
       expect(result).toHaveProperty('first_name');
       expect(result).toHaveProperty('last_name');
       expect(dataSource.transaction).toHaveBeenCalled();
+      expect(queryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining([
+          'admin-1',
+          'TEACHER',
+          mockTeacher.id,
+          'CREATE',
+        ]),
+      );
     });
 
     it('should auto-generate employment ID if not provided', async () => {
@@ -233,6 +254,17 @@ describe('TeacherService', () => {
       await service.create(dtoWithoutId);
 
       expect(generateEmploymentId).toHaveBeenCalled();
+      expect(queryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "pg_advisory_xact_lock(hashtext('schoolbase:teacher-id'))",
+        ),
+      );
+      expect(generateEmploymentId).toHaveBeenCalledWith(
+        teacherRepository,
+        undefined,
+        'EMP',
+        '',
+      );
     });
 
     it('should use provided employment ID if given', async () => {
@@ -242,6 +274,25 @@ describe('TeacherService', () => {
       await service.create(dtoWithId);
 
       expect(generateEmploymentId).not.toHaveBeenCalled();
+    });
+
+    it('trims a manual employment ID before storing it', async () => {
+      await service.create({ ...createDto, employment_id: '  EMP-2025-999  ' });
+
+      expect(teacherModelAction.get).toHaveBeenCalledWith({
+        identifierOptions: { employment_id: 'EMP-2025-999' },
+      });
+      expect(generateEmploymentId).not.toHaveBeenCalled();
+    });
+
+    it('rejects a manual ID taken while waiting for the ID lock', async () => {
+      (queryRunner.manager.query as jest.Mock)
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ present: 1 }]);
+      await expect(
+        service.create({ ...createDto, employment_id: 'EMP-2025-999' }),
+      ).rejects.toThrow(ConflictException);
+      expect(userModelAction.create).not.toHaveBeenCalled();
     });
 
     it('should throw ConflictException if email already exists', async () => {
@@ -256,9 +307,9 @@ describe('TeacherService', () => {
     it('should throw ConflictException if employment ID already exists', async () => {
       teacherModelAction.get.mockResolvedValue(mockTeacher as Teacher);
 
-      await expect(service.create(createDto)).rejects.toThrow(
-        ConflictException,
-      );
+      await expect(
+        service.create({ ...createDto, employment_id: 'EMP-2025-014' }),
+      ).rejects.toThrow(ConflictException);
       // Transaction is not called if validation fails before transaction starts
     });
 
@@ -499,6 +550,16 @@ describe('TeacherService', () => {
   });
 
   describe('update', () => {
+    it('cannot change account access for an admin who is also a teacher', async () => {
+      teacherModelAction.get.mockResolvedValue({
+        ...mockTeacher,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.TEACHER] },
+      } as Teacher);
+      await expect(
+        service.update(mockTeacherId, { is_active: true }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     const updateDto: UpdateTeacherDto = {
       first_name: 'Updated',
       last_name: 'Name',
@@ -577,6 +638,17 @@ describe('TeacherService', () => {
       teacherModelAction.get.mockResolvedValue(mockTeacher as Teacher);
       teacherModelAction.update.mockResolvedValue(mockTeacher as Teacher);
       userModelAction.update.mockResolvedValue(mockUser as User);
+    });
+
+    it('cannot remove an admin who is also a teacher', async () => {
+      teacherModelAction.get.mockResolvedValue({
+        ...mockTeacher,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.TEACHER] },
+      } as Teacher);
+      await expect(service.remove(mockTeacherId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
     });
 
     it('should deactivate teacher and user', async () => {

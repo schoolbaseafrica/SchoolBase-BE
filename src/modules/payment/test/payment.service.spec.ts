@@ -2,6 +2,7 @@ import { PaginationMeta } from '@hng-sdk/orm';
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { FetchPaymentsDto } from '../dto/get-all-payments.dto';
@@ -116,6 +117,13 @@ describe('PaymentService', () => {
   const mockPaymentValidationServiceValue = {
     validatePayment: jest.fn(),
   };
+  const transactionManager = { query: jest.fn().mockResolvedValue([]) };
+  const dataSource = {
+    transaction: jest.fn(
+      (callback: (manager: typeof transactionManager) => Promise<unknown>) =>
+        callback(transactionManager),
+    ),
+  };
 
   // Spy function to mock the behavior of the private helper method
   const mockSearchPaymentsWithQueryBuilder: jest.MockedFn<ISearchPaymentsSignature> =
@@ -133,6 +141,7 @@ describe('PaymentService', () => {
           provide: PaymentValidationService,
           useValue: mockPaymentValidationServiceValue,
         },
+        { provide: DataSource, useValue: dataSource },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: mockLogger,
@@ -173,6 +182,15 @@ describe('PaymentService', () => {
       );
 
       expect(result).toEqual(mockPaymentEntity);
+      expect(transactionManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining([
+          mockUserId,
+          'PAYMENT',
+          mockPaymentEntity.id,
+          'RECORD',
+        ]),
+      );
 
       expect(paymentValidationService.validatePayment).toHaveBeenCalledWith(
         recordPaymentDto,
@@ -188,7 +206,10 @@ describe('PaymentService', () => {
             transaction_id: expect.stringMatching(/^HNG\/\d+\/\d+$/),
             payment_date: expect.any(Date),
           }),
-          transactionOptions: { useTransaction: false },
+          transactionOptions: {
+            useTransaction: true,
+            transaction: transactionManager,
+          },
         }),
       );
 

@@ -104,6 +104,15 @@ export class StudentResponseDto {
   current_class_id: string | null;
 
   @ApiProperty({
+    description: 'Class assigned in the requested academic session',
+    type: String,
+    required: false,
+    nullable: true,
+    example: 'JSS 3 A',
+  })
+  class: string | null;
+
+  @ApiProperty({
     description: 'Created at timestamp',
     type: Date,
   })
@@ -133,6 +142,11 @@ export class StudentResponseDto {
     this.is_active = user.is_active;
     this.photo_url = student.photo_url;
     this.current_class_id = student.current_class_id;
+    this.class = student.current_class
+      ? [student.current_class.name, student.current_class.arm]
+          .filter(Boolean)
+          .join(' ')
+      : null;
     this.created_at = student.createdAt;
     this.updated_at = student.updatedAt;
   }

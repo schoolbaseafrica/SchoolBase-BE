@@ -16,6 +16,7 @@ import {
 } from 'typeorm';
 
 import { BaseEntity } from '../../../entities/base-entity';
+import { AcademicSession } from '../../academic-session/entities/academic-session.entity';
 import { Term } from '../../academic-term/entities/term.entity';
 import { Class } from '../../class/entities/class.entity';
 import { User } from '../../user/entities/user.entity';
@@ -40,13 +41,22 @@ export class Fees extends BaseEntity {
   @IsNotEmpty()
   amount: number;
 
-  @Column({ name: 'term_id', type: 'uuid' })
-  @IsNotEmpty()
-  term_id: string;
+  @Column({ name: 'period_type', type: 'varchar', default: 'TERM' })
+  period_type: 'TERM' | 'SESSION';
 
-  @ManyToOne(() => Term)
+  @Column({ name: 'term_id', type: 'uuid', nullable: true })
+  term_id: string | null;
+
+  @ManyToOne(() => Term, { nullable: true })
   @JoinColumn({ name: 'term_id' })
-  term: Term;
+  term: Term | null;
+
+  @Column({ name: 'session_id', type: 'uuid' })
+  session_id: string;
+
+  @ManyToOne(() => AcademicSession, { nullable: false })
+  @JoinColumn({ name: 'session_id' })
+  academicSession: AcademicSession;
 
   @ManyToMany(() => Class)
   @JoinTable({

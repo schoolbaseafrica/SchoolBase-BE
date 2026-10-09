@@ -39,6 +39,7 @@ describe('InviteService', () => {
   let emailService: { sendMail: jest.Mock };
   let configService: { get: jest.Mock };
   let dataSource: { transaction: jest.Mock };
+  let inviteRepository: { createQueryBuilder: jest.Mock };
 
   const mockInvite = {
     id: 'invite-uuid',
@@ -82,12 +83,9 @@ describe('InviteService', () => {
       child: jest.fn().mockReturnThis(),
     };
 
-    const inviteRepository = {
-      create: jest.fn(),
-      save: jest.fn(),
-      findOne: jest.fn(),
+    inviteRepository = {
       createQueryBuilder: jest.fn(),
-    } as unknown as jest.Mocked<Repository<Invite>>;
+    };
 
     const mockDataSource = {
       transaction: jest.fn((cb) => cb({})),
@@ -99,7 +97,12 @@ describe('InviteService', () => {
         { provide: InviteModelAction, useValue: createMockAction() }, // Isolated Mock
         { provide: UserModelAction, useValue: createMockAction() }, // Isolated Mock
         { provide: SchoolModelAction, useValue: createMockAction() }, // Isolated Mock
-        { provide: getRepositoryToken(Invite), useValue: inviteRepository },
+        {
+          provide: getRepositoryToken(Invite),
+          useValue: inviteRepository as unknown as jest.Mocked<
+            Repository<Invite>
+          >,
+        },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: EmailService, useValue: { sendMail: jest.fn() } },
         { provide: WINSTON_MODULE_PROVIDER, useValue: mockLoggerObj },
@@ -113,6 +116,59 @@ describe('InviteService', () => {
     emailService = moduleRef.get(EmailService);
     configService = moduleRef.get(ConfigService);
     dataSource = moduleRef.get(DataSource);
+  });
+
+  describe('bootstrapFirstAdmin', () => {
+    it('sends an acceptance link only when no admin or active admin invite exists', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'school-id' }])
+        .mockResolvedValueOnce([{ id: 'setup-admin-id' }])
+        .mockResolvedValueOnce([
+          { has_admin: false, has_invite: false, email_used: false },
+        ])
+        .mockResolvedValue([]);
+      dataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+      configService.get.mockImplementation((key) => {
+        if (key === 'invite.expiry') return '7';
+        if (key === 'frontend.url') return 'https://school.com';
+        return undefined;
+      });
+      emailService.sendMail.mockResolvedValue(undefined);
+
+      await expect(
+        service.bootstrapFirstAdmin({
+          email: 'FIRST@EXAMPLE.COM',
+          full_name: 'First Admin',
+        }),
+      ).resolves.toMatchObject({ email: 'first@example.com' });
+      expect(query.mock.calls[0][0]).toContain('pg_advisory_xact_lock');
+      expect(query.mock.calls[4][0]).toContain('INSERT INTO "invites"');
+      expect(
+        emailService.sendMail.mock.calls[0][0].templateData.invite_link,
+      ).toMatch(/^https:\/\/school\.com\/accept-invite\?token=[a-f0-9]{64}$/);
+    });
+
+    it('refuses another bootstrap invitation once an admin invite is pending', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'school-id' }])
+        .mockResolvedValueOnce([{ id: 'setup-admin-id' }])
+        .mockResolvedValueOnce([
+          { has_admin: false, has_invite: true, email_used: false },
+        ]);
+      dataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+      await expect(
+        service.bootstrapFirstAdmin({ email: 'another@example.com' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(emailService.sendMail).not.toHaveBeenCalled();
+    });
   });
 
   describe('inviteUser', () => {
@@ -154,7 +210,10 @@ describe('InviteService', () => {
       });
 
       expect(inviteModelAction.create).toHaveBeenCalled();
-      expect(emailService.sendMail).toHaveBeenCalled();
+      const emailPayload = emailService.sendMail.mock.calls[0][0];
+      expect(emailPayload.templateData.invite_link).toMatch(
+        /^https:\/\/example\.com\/accept-invite\?token=[a-f0-9]{64}$/,
+      );
       expect(result).toEqual({
         id: mockInvite.id,
         email: mockInvite.email,
@@ -198,6 +257,10 @@ describe('InviteService', () => {
       expect(inviteModelAction.update).toHaveBeenCalledWith(
         expect.objectContaining({
           identifierOptions: { id: existingInvite.id },
+          updatePayload: expect.objectContaining({
+            accepted: false,
+            status: InviteStatus.PENDING,
+          }),
         }),
       );
 
@@ -230,6 +293,35 @@ describe('InviteService', () => {
     });
   });
 
+  describe('findAll', () => {
+    it('returns only unaccepted records for the pending filter', async () => {
+      const queryBuilder = {
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(1),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([mockInvite]),
+      };
+      inviteRepository.createQueryBuilder.mockReturnValue(queryBuilder);
+
+      const result = await service.findAll({
+        status: InviteStatus.PENDING,
+        page: 1,
+        limit: 100,
+      });
+
+      expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+        'invite.status = :status',
+        { status: InviteStatus.PENDING },
+      );
+      expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+        'invite.accepted = false',
+      );
+      expect(result.data).toHaveLength(1);
+    });
+  });
+
   describe('acceptInvite', () => {
     const dto: AcceptInviteDto = {
       token: 'valid-token',
@@ -257,7 +349,12 @@ describe('InviteService', () => {
 
       expect(userModelAction.create).toHaveBeenCalled();
       expect(inviteModelAction.update).toHaveBeenCalledWith(
-        expect.objectContaining({ updatePayload: { accepted: true } }),
+        expect.objectContaining({
+          updatePayload: {
+            accepted: true,
+            status: InviteStatus.USED,
+          },
+        }),
       );
       expect(result.status_code).toBe(HttpStatus.CREATED);
     });
@@ -340,6 +437,27 @@ describe('InviteService', () => {
         'existing@user.com',
       ]);
       expect(emailService.sendMail).toHaveBeenCalledTimes(1);
+      expect(
+        emailService.sendMail.mock.calls[0][0].templateData.invite_link,
+      ).toMatch(/^https:\/\/[^/]+\/accept-invite\?token=[a-f0-9]{64}$/);
+    });
+
+    it('rejects oversized invite lists before any email is sent', async () => {
+      const file = {
+        buffer: Buffer.from('email,full_name\n'),
+        mimetype: 'text/csv',
+        originalname: 'bulk.csv',
+      } as Express.Multer.File;
+      jest.spyOn(csvParser, 'parseCsv').mockResolvedValue(
+        Array.from({ length: 1001 }, (_, index) => ({
+          email: `person${index}@example.com`,
+          full_name: 'Person',
+        })),
+      );
+      await expect(
+        service.uploadCsv(file, InviteRole.ADMIN),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(emailService.sendMail).not.toHaveBeenCalled();
     });
   });
 });

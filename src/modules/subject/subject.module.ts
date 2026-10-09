@@ -16,7 +16,7 @@ import { SubjectService } from './services/subject.service';
     TypeOrmModule.forFeature([Subject, ClassSubject]),
     AcademicSessionModule,
     forwardRef(() => ClassModule),
-    NotificationModule,
+    forwardRef(() => NotificationModule),
   ],
   controllers: [SubjectController],
   providers: [SubjectService, SubjectModelAction],

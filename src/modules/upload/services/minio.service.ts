@@ -1,4 +1,4 @@
-import * as path from 'path';
+import { Readable } from 'stream';
 
 import {
   Injectable,
@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import * as minio from 'minio';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import * as sharp from 'sharp';
 import { v4 as uuidv4 } from 'uuid';
 import { Logger } from 'winston';
 
@@ -20,6 +21,7 @@ export class MinioService implements OnModuleInit {
   private readonly logger: Logger;
   private minioClient: minio.Client;
   private readonly bucketName: string;
+  private readonly publicUrl?: string;
 
   constructor(
     private readonly configService: ConfigService,
@@ -27,6 +29,9 @@ export class MinioService implements OnModuleInit {
   ) {
     this.logger = baseLogger.child({ context: MinioService.name });
     this.bucketName = this.configService.get<string>('minio.bucket');
+    this.publicUrl = this.configService
+      .get<string>('minio.publicUrl')
+      ?.replace(/\/+$/, '');
 
     // Initialize MinIO client
     this.minioClient = new minio.Client({
@@ -39,7 +44,10 @@ export class MinioService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    this.logger.info('Minio service initialized');
+    const accessKey = this.configService.get<string>('minio.accessKey') || '';
+    this.logger.info(
+      `Minio service initialized (${this.storageTarget()}, accessKey=${this.maskAccessKey(accessKey)})`,
+    );
     // Optional: Check if bucket exists on startup
     try {
       const bucketExists = await this.minioClient.bucketExists(this.bucketName);
@@ -69,34 +77,98 @@ export class MinioService implements OnModuleInit {
       throw new BadRequestException(sysMsg.FILE_REQUIRED);
     }
 
+    const requestedMimeType = file.mimetype.split(';')[0].toLowerCase();
+    const mimeType =
+      requestedMimeType === 'image/jpg' ? 'image/jpeg' : requestedMimeType;
+    const signatures = new Map<
+      string,
+      { extension: string; valid: (data: Buffer) => boolean }
+    >([
+      [
+        'image/jpeg',
+        {
+          extension: '.jpg',
+          valid: (data) =>
+            data.length >= 3 &&
+            data[0] === 0xff &&
+            data[1] === 0xd8 &&
+            data[2] === 0xff,
+        },
+      ],
+      [
+        'image/png',
+        {
+          extension: '.png',
+          valid: (data) =>
+            data
+              .subarray(0, 8)
+              .equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+        },
+      ],
+      [
+        'image/webp',
+        {
+          extension: '.webp',
+          valid: (data) =>
+            data.toString('ascii', 0, 4) === 'RIFF' &&
+            data.toString('ascii', 8, 12) === 'WEBP',
+        },
+      ],
+      [
+        'application/pdf',
+        {
+          extension: '.pdf',
+          valid: (data) => data.toString('ascii', 0, 5) === '%PDF-',
+        },
+      ],
+    ]);
+    const signature = signatures.get(mimeType);
+    if (!signature?.valid(file.buffer)) {
+      throw new BadRequestException(
+        'File contents do not match a supported image or PDF',
+      );
+    }
+    if (mimeType.startsWith('image/')) {
+      try {
+        const metadata = await sharp(file.buffer, {
+          limitInputPixels: 25_000_000,
+        }).metadata();
+        const expected =
+          mimeType === 'image/jpeg' ? 'jpeg' : mimeType.slice('image/'.length);
+        if (metadata.format !== expected)
+          throw new Error('Image format mismatch');
+      } catch {
+        throw new BadRequestException(
+          'Image is corrupt or does not match its file type',
+        );
+      }
+    }
+
     try {
       // Generate a unique filename
-      const filename = `${uuidv4()}${path.extname(file.originalname)}`;
+      const filename = `${uuidv4()}${signature.extension}`;
 
       // Construct the object path (folder/filename)
       // If folder is provided, use it as a prefix.
       const objectName = folder ? `${folder}/${filename}` : filename;
 
       // Define metadata
-      const metaData = {
-        contentType: file.mimetype,
-        originalName: file.originalname,
-      };
+      const metaData: Record<string, string> = {};
+      metaData['Content-Type'] = mimeType;
 
       // Upload to Minio
       await this.minioClient.putObject(
         this.bucketName,
         objectName,
         file.buffer,
-        file.size,
+        file.buffer.length,
         metaData,
       );
 
       this.logger.info(`Image uploaded successfully to Minio: ${objectName}`);
 
-      // Construct URL manually since Minio.putObject doesn't return it
-      // Note: This assumes the bucket handles public read access.
-      // If private, you'd need presignedGetObject() here.
+      // MINIO_ENDPOINT is the private service address. Browser-visible URLs
+      // must use the separately configured public base URL.
       const protocol = this.configService.get('minio.useSSL')
         ? 'https'
         : 'http';
@@ -106,7 +178,9 @@ export class MinioService implements OnModuleInit {
       // Handle standard ports to avoid ugliness (e.g. :80 or :443)
       const portString = port === 80 || port === 443 ? '' : `:${port}`;
 
-      const url = `${protocol}://${endPoint}${portString}/${this.bucketName}/${objectName}`;
+      const internalFallback = `${protocol}://${endPoint}${portString}`;
+      const publicBaseUrl = this.publicUrl || internalFallback;
+      const url = `${publicBaseUrl}/${this.bucketName}/${objectName}`;
 
       return {
         url: url,
@@ -120,6 +194,109 @@ export class MinioService implements OnModuleInit {
         error instanceof Error ? error.stack : undefined,
       );
       throw new BadRequestException(sysMsg.IMAGE_UPLOAD_FAILED);
+    }
+  }
+
+  async uploadFile(
+    file: IMulterFile,
+    folder: string,
+  ): Promise<{ publicId: string }> {
+    if (!file?.buffer) throw new BadRequestException(sysMsg.FILE_REQUIRED);
+    const contentType = file.mimetype.split(';')[0].trim().toLowerCase();
+    const extension = this.extensionFor(contentType);
+    const objectName = `${folder}/${uuidv4()}${extension}`;
+    this.logger.info(
+      `Uploading file to Minio (${this.storageTarget()}, object=${objectName}, contentType=${contentType}, bytes=${file.size})`,
+    );
+    try {
+      const metadata: Record<string, string> = {};
+      metadata['Content-Type'] = contentType;
+      metadata['Content-Disposition'] = 'attachment';
+      await this.minioClient.putObject(
+        this.bucketName,
+        objectName,
+        file.buffer,
+        file.buffer.length,
+        metadata,
+      );
+      this.logger.info(
+        `File uploaded successfully to Minio (bucket=${this.bucketName}, object=${objectName})`,
+      );
+      return { publicId: objectName };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown upload error';
+      const storageError = this.storageErrorDetails(error);
+      this.logger.error(
+        `Failed to upload file to Minio (${this.storageTarget()}, object=${objectName}, contentType=${contentType}, bytes=${file.size}, ${storageError}): ${errorMessage}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw new BadRequestException(sysMsg.FILE_UPLOAD_FAILED);
+    }
+  }
+
+  async replaceFile(publicId: string, buffer: Buffer): Promise<void> {
+    await this.minioClient.putObject(
+      this.bucketName,
+      publicId,
+      buffer,
+      buffer.length,
+    );
+  }
+
+  async downloadFile(publicId: string): Promise<Buffer> {
+    this.logger.info(
+      `Downloading file from Minio (${this.storageTarget()}, object=${publicId})`,
+    );
+    try {
+      const stream = await this.minioClient.getObject(
+        this.bucketName,
+        publicId,
+      );
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      const buffer = Buffer.concat(chunks);
+      this.logger.info(
+        `File downloaded successfully from Minio (bucket=${this.bucketName}, object=${publicId}, bytes=${buffer.length})`,
+      );
+      return buffer;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unknown download error';
+      this.logger.error(
+        `Failed to download file from Minio (${this.storageTarget()}, object=${publicId}, ${this.storageErrorDetails(error)}): ${message}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+      throw error;
+    }
+  }
+
+  async statFile(publicId: string): Promise<{ size: number }> {
+    const stat = await this.minioClient.statObject(this.bucketName, publicId);
+    return { size: stat.size };
+  }
+
+  async streamFile(publicId: string): Promise<Readable> {
+    return this.minioClient.getObject(this.bucketName, publicId);
+  }
+
+  private extensionFor(mimeType: string) {
+    switch (mimeType.split(';')[0].toLowerCase()) {
+      case 'audio/webm':
+        return '.webm';
+      case 'audio/ogg':
+        return '.ogg';
+      case 'audio/mp4':
+        return '.m4a';
+      case 'audio/mpeg':
+        return '.mp3';
+      case 'audio/wav':
+      case 'audio/x-wav':
+        return '.wav';
+      default:
+        return '.bin';
     }
   }
 
@@ -140,5 +317,33 @@ export class MinioService implements OnModuleInit {
       );
       throw new BadRequestException('Failed to delete image');
     }
+  }
+
+  private storageTarget() {
+    const endpoint = this.configService.get<string>('minio.endPoint');
+    const port = this.configService.get<number>('minio.port');
+    const useSSL = this.configService.get<boolean>('minio.useSSL');
+    return `endpoint=${endpoint}:${port}, ssl=${Boolean(useSSL)}, bucket=${this.bucketName}`;
+  }
+
+  private maskAccessKey(accessKey: string) {
+    if (!accessKey) return 'missing';
+    if (accessKey.length <= 4) return '****';
+    return `${accessKey.slice(0, 2)}***${accessKey.slice(-2)}`;
+  }
+
+  private storageErrorDetails(error: unknown) {
+    if (!error || typeof error !== 'object') return 'code=unknown';
+    const details = error as Record<string, unknown>;
+    return [
+      ['code', details.code],
+      ['statusCode', details.statusCode],
+      ['requestId', details.requestid ?? details.requestId],
+      ['resource', details.resource],
+      ['region', details.region],
+    ]
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([key, value]) => `${key}=${String(value)}`)
+      .join(', ');
   }
 }

@@ -84,11 +84,17 @@ export const studentGrowthDecorator = () => {
   return applyDecorators(
     ApiBearerAuth(),
     ApiOperation({
-      summary: 'Get all students growth metrics (ADMIN only)',
+      summary: 'Get enrollment growth for an academic period (ADMIN only)',
+    }),
+    ApiQuery({ name: 'session_id', required: false, type: String }),
+    ApiQuery({ name: 'term_id', required: false, type: String }),
+    ApiQuery({
+      name: 'interval',
+      required: false,
+      enum: ['month', 'term'],
     }),
     ApiOkResponse({
-      description:
-        'Returns the student growth report for a given academic year',
+      description: 'Returns new and cumulative enrollments by month or term',
       type: StudentGrowthReportResponseDto,
     }),
   );

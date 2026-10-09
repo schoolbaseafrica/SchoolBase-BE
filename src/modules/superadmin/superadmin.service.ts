@@ -15,6 +15,10 @@ import { Logger } from 'winston';
 import { EmailTemplateID } from 'src/constants/email-constants';
 
 import config from '../../config/config';
+import {
+  resolveTenantLogo,
+  resolveTenantName,
+} from '../../config/tenant-identity';
 import * as sysMsg from '../../constants/system.messages';
 import { EmailService } from '../email/email.service';
 
@@ -62,14 +66,16 @@ export class SuperadminService {
   }
 
   private async sendWelcomeEmail(userName: string, email: string) {
+    const schoolName = resolveTenantName(this.configService);
+
     await this.emailService.sendMail({
       to: [{ email: email, name: userName }],
-      subject: 'Welcome to Open School Portal',
+      subject: `Welcome to ${schoolName}`,
       templateNameID: EmailTemplateID.SUPERADMIN_WELCOME,
       templateData: {
         first_name: userName,
-        school_name: 'Open School Portal',
-        logo_url: 'https://staging.schoolbase.africa/assets/logo.svg',
+        school_name: schoolName,
+        logo_url: resolveTenantLogo(this.configService),
         role: Role.SUPERADMIN,
         invite_link: `
           ${this.configService.get<string>('frontend.superadmin_login_url')}
@@ -86,57 +92,31 @@ export class SuperadminService {
       throw new ConflictException(sysMsg.SUPERADMIN_PASSWORDS_REQUIRED);
     }
 
-    const existing = await this.superadminModelAction.get({
-      identifierOptions: { role: Role.SUPERADMIN },
-    });
+    // Serialize first-account creation within this school's database. Checking
+    // outside the transaction would let two concurrent setup requests succeed.
+    const createdSuperadmin = await this.dataSource.transaction(
+      async (manager) => {
+        await manager.query('SELECT pg_advisory_xact_lock(908230504)');
+        const existing = await this.superadminModelAction.get({
+          identifierOptions: { role: Role.SUPERADMIN },
+        });
+        if (existing) {
+          throw new ConflictException(sysMsg.SUPERADMIN_ALREADY_EXISTS);
+        }
 
-    const passwordHash: string = await bcrypt.hash(password, 10);
-
-    const createNewRecord = async (manager) => {
-      const updatedSuperadminRecord = await this.superadminModelAction.create({
-        createPayload: {
-          ...restData,
-          email,
-          password: passwordHash,
-          role: Role.SUPERADMIN,
-          is_active: createSuperadminDto.school_name ? true : false,
-        },
-        transactionOptions: { useTransaction: true, transaction: manager },
-      });
-      return updatedSuperadminRecord;
-    };
-
-    const updateRecord = async (manager) => {
-      const updatedSuperadminRecord = await this.superadminModelAction.update({
-        updatePayload: {
-          ...restData,
-          email,
-          password: passwordHash,
-          role: Role.SUPERADMIN,
-          is_active: createSuperadminDto.school_name ? true : false,
-        },
-        identifierOptions: { role: Role.SUPERADMIN },
-        transactionOptions: { useTransaction: true, transaction: manager },
-      });
-      return updatedSuperadminRecord;
-    };
-
-    if (existing) {
-      const updatedSuperadmin = await this.dataSource.transaction(updateRecord);
-
-      if (updatedSuperadmin.password) delete updatedSuperadmin.password;
-
-      this.logger.info(sysMsg.SUPERADMIN_ACCOUNT_UPDATED);
-
-      return {
-        message: sysMsg.SUPERADMIN_ACCOUNT_UPDATED,
-        status_code: HttpStatus.OK,
-        data: updatedSuperadmin,
-      };
-    }
-
-    const createdSuperadmin =
-      await this.dataSource.transaction(createNewRecord);
+        const passwordHash = await bcrypt.hash(password, 10);
+        return this.superadminModelAction.create({
+          createPayload: {
+            ...restData,
+            email,
+            password: passwordHash,
+            role: Role.SUPERADMIN,
+            is_active: true,
+          },
+          transactionOptions: { useTransaction: true, transaction: manager },
+        });
+      },
+    );
 
     if (createdSuperadmin.password) delete createdSuperadmin.password;
 
@@ -167,6 +147,13 @@ export class SuperadminService {
    * @param loginSuperadminDto - requires data with which a superadmin is logged on
    */
   async login(loginSuperadminDto: LoginSuperadminDto) {
+    const activeAdmins = (await this.dataSource.query(
+      `SELECT EXISTS (SELECT 1 FROM "users" WHERE 'ADMIN' = ANY("role") AND "deleted_at" IS NULL) AS "has_admin"`,
+    )) as { has_admin: boolean }[];
+    if (activeAdmins[0]?.has_admin) {
+      throw new UnauthorizedException('Initial setup access has ended');
+    }
+
     // Find superadmin by email
     const superadmin = await this.superadminModelAction.get({
       identifierOptions: { email: loginSuperadminDto.email },

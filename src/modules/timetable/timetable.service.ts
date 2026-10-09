@@ -50,6 +50,9 @@ export class TimetableService {
       if (!dto.subject_id) {
         throw new BadRequestException(sysMsg.SUBJECT_REQUIRED_FOR_LESSON);
       }
+      if (!dto.teacher_id) {
+        throw new BadRequestException('Teacher is required for lessons');
+      }
     }
     await this.validationService.validateNewSchedule(dto);
 

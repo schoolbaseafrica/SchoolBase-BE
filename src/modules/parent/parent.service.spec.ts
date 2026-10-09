@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -117,6 +118,7 @@ describe('ParentService', () => {
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
         save: mockSave,
+        query: jest.fn().mockResolvedValue([]),
       },
     } as unknown as jest.Mocked<QueryRunner>;
 
@@ -252,6 +254,35 @@ describe('ParentService', () => {
     jest.clearAllMocks();
   });
 
+  describe('bulkCreate', () => {
+    it('creates valid rows and reports invalid rows without creating them', async () => {
+      const create = jest
+        .spyOn(service, 'create')
+        .mockResolvedValue({ id: 'parent-1' } as never);
+      const result = await service.bulkCreate([
+        {
+          first_name: 'Ada',
+          last_name: 'Okafor',
+          email: 'ada@example.com',
+          phone: '+2348012345678',
+          date_of_birth: '1985-01-01',
+          gender: 'Female',
+        },
+        {
+          first_name: 'Bad',
+          last_name: 'Row',
+          email: 'invalid',
+          phone: '+2348012345678',
+          date_of_birth: '1985-01-01',
+          gender: 'Female',
+        },
+      ]);
+      expect(result).toMatchObject({ total: 2, successful: 1, failed: 1 });
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(result.results[1].error).toContain('email');
+    });
+  });
+
   describe('create', () => {
     const createDto: CreateParentDto = {
       first_name: 'John',
@@ -283,6 +314,15 @@ describe('ParentService', () => {
       expect(dataSource.transaction).toHaveBeenCalled();
     });
 
+    it('records creation with the acting admin in the same transaction', async () => {
+      await service.create(createDto, 'admin-id');
+
+      expect(queryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining(['admin-id', 'PARENT', mockParentId, 'CREATE']),
+      );
+    });
+
     it('should hash the password before creating user', async () => {
       await service.create(createDto);
 
@@ -303,6 +343,17 @@ describe('ParentService', () => {
         expect.objectContaining({
           createPayload: expect.objectContaining({
             role: [UserRole.PARENT],
+          }),
+        }),
+      );
+    });
+
+    it('marks a new parent as needing first password setup', async () => {
+      await service.create(createDto);
+      expect(userModelAction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createPayload: expect.objectContaining({
+            password_setup_required: true,
           }),
         }),
       );
@@ -567,6 +618,16 @@ describe('ParentService', () => {
   });
 
   describe('update', () => {
+    it('cannot change account access for an admin who is also a parent', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.PARENT] },
+      } as Parent);
+      await expect(
+        service.update(mockParentId, { is_active: true }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     const updateDto: UpdateParentDto = {
       first_name: 'Updated',
       last_name: 'Name',
@@ -856,6 +917,16 @@ describe('ParentService', () => {
   });
 
   describe('remove', () => {
+    it('cannot remove an admin who is also a parent', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.PARENT] },
+      } as Parent);
+      await expect(service.remove(mockParentId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
       parentModelAction.get.mockResolvedValue(mockParent as Parent);
       parentModelAction.update.mockResolvedValue(mockParent as Parent);

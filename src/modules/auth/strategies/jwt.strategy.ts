@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -9,6 +9,7 @@ import { Parent } from '../../parent/entities/parent.entity';
 import { UserRole } from '../../shared/enums';
 import { Student } from '../../student/entities/student.entity';
 import { Teacher } from '../../teacher/entities/teacher.entity';
+import { User } from '../../user/entities/user.entity';
 
 interface IJwtPayload {
   sub: string;
@@ -25,6 +26,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly studentRepository: Repository<Student>,
     @InjectRepository(Parent)
     private readonly parentRepository: Repository<Parent>,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -34,6 +37,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: IJwtPayload) {
+    const account = await this.userRepository.findOne({
+      where: { id: payload.sub },
+    });
+    if (!account || !account.is_active || account.deleted_at)
+      throw new UnauthorizedException('Account is inactive or unavailable');
     const userData: {
       id: string;
       userId: string;
@@ -45,12 +53,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     } = {
       id: payload.sub,
       userId: payload.sub,
-      email: payload.email,
-      roles: payload.role,
+      email: account.email,
+      roles: account.role,
     };
 
     // If user has TEACHER role, fetch teacher_id
-    if (payload.role.includes(UserRole.TEACHER)) {
+    if (account.role.includes(UserRole.TEACHER)) {
       const teacher = await this.teacherRepository.findOne({
         where: { user_id: payload.sub },
         select: ['id'],
@@ -61,7 +69,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     // If user has STUDENT role, fetch student_id
-    if (payload.role.includes(UserRole.STUDENT)) {
+    if (account.role.includes(UserRole.STUDENT)) {
       const student = await this.studentRepository.findOne({
         where: { user: { id: payload.sub } },
         select: ['id'],
@@ -72,7 +80,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     // If user has PARENT role, fetch parent_id
-    if (payload.role.includes(UserRole.PARENT)) {
+    if (account.role.includes(UserRole.PARENT)) {
       const parent = await this.parentRepository.findOne({
         where: { user_id: payload.sub },
         select: ['id'],
