@@ -81,9 +81,15 @@ export class SchoolSettingsService {
         school.logo_url = uploaded.url;
         uploadedKey = uploaded.publicId;
       }
-      const values = dto as Record<string, string | undefined>;
+      const values = dto as Record<string, string | null | undefined>;
       for (const [key, value] of Object.entries(values)) {
         if (value === undefined) continue;
+        if (
+          value === null &&
+          key !== 'secondary_color' &&
+          key !== 'accent_color'
+        )
+          continue;
         if (key === 'activity_log_retention_days') continue;
         if (key.startsWith('allow_manual_') || key.startsWith('email_alert_')) {
           (school as unknown as Record<string, unknown>)[key] =

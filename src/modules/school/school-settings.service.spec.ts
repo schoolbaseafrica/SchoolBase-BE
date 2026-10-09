@@ -1,5 +1,8 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
 
+import { UpdateSchoolSettingsDto } from './dto/update-school-settings.dto';
 import { SchoolSettingsService } from './school-settings.service';
 
 describe('SchoolSettingsService', () => {
@@ -11,6 +14,8 @@ describe('SchoolSettingsService', () => {
     activity_log_retention_days: null as number | null | undefined,
     owner_user_id: 'owner-1',
     allow_manual_student_ids: true,
+    secondary_color: null as string | null,
+    accent_color: null as string | null,
   };
   const schools = {
     findOne: jest.fn().mockResolvedValue(school),
@@ -48,6 +53,8 @@ describe('SchoolSettingsService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     school.activity_log_retention_days = null;
+    school.secondary_color = null;
+    school.accent_color = null;
   });
 
   it('persists ordinary school settings without touching retention', async () => {
@@ -69,6 +76,24 @@ describe('SchoolSettingsService', () => {
     );
     expect(minio.uploadImage).toHaveBeenCalledTimes(1);
     expect(dataSource.transaction).not.toHaveBeenCalled();
+  });
+
+  it('clears optional brand colors when their fields are emptied', async () => {
+    const dto = plainToInstance(UpdateSchoolSettingsDto, {
+      secondary_color: '',
+      accent_color: '',
+    });
+    expect(validateSync(dto)).toHaveLength(0);
+    expect(dto.secondary_color).toBeNull();
+    expect(dto.accent_color).toBeNull();
+
+    await service.updateSchool(dto);
+    expect(schools.save).toHaveBeenCalledWith(
+      expect.objectContaining({
+        secondary_color: null,
+        accent_color: null,
+      }),
+    );
   });
 
   it('audits ordinary school settings through the same transaction as the save', async () => {

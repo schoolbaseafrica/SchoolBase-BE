@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBooleanString,
   IsEmail,
@@ -17,8 +18,14 @@ export class UpdateSchoolSettingsDto {
   @IsOptional() @IsEmail() email?: string;
   @IsOptional() @IsString() @MaxLength(20) phone?: string;
   @IsOptional() @Matches(/^#[0-9A-Fa-f]{6}$/) primary_color?: string;
-  @IsOptional() @Matches(/^#[0-9A-Fa-f]{6}$/) secondary_color?: string;
-  @IsOptional() @Matches(/^#[0-9A-Fa-f]{6}$/) accent_color?: string;
+  @Transform(({ value }: { value: unknown }) => (value === '' ? null : value))
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  secondary_color?: string | null;
+  @Transform(({ value }: { value: unknown }) => (value === '' ? null : value))
+  @IsOptional()
+  @Matches(/^#[0-9A-Fa-f]{6}$/)
+  accent_color?: string | null;
   // Accepted for cached older clients; retention changes use the owner-only endpoint.
   @IsOptional() @Matches(/^(|[1-9]\d*)$/) activity_log_retention_days?: string;
   @IsOptional() @IsString() @MaxLength(20) school_code?: string;
