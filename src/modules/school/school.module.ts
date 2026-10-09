@@ -8,6 +8,8 @@ import { UploadModule } from '../upload/upload.module';
 
 import { School } from './entities/school.entity';
 import { SchoolModelAction } from './model-actions/school.action';
+import { SchoolMobileAppController } from './school-mobile-app.controller';
+import { SchoolMobileAppService } from './school-mobile-app.service';
 import { SchoolSettingsService } from './school-settings.service';
 import { SchoolController } from './school.controller';
 import { SchoolService } from './school.service';
@@ -19,11 +21,12 @@ import { SchoolService } from './school.service';
     SuperadminModule,
     UploadModule,
   ],
-  controllers: [SchoolController],
+  controllers: [SchoolController, SchoolMobileAppController],
   providers: [
     SchoolService,
     SchoolSettingsService,
     SchoolModelAction,
+    SchoolMobileAppService,
     InitialSetupGuard,
   ],
   exports: [SchoolModelAction, SchoolService],

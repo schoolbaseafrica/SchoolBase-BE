@@ -1,3 +1,5 @@
+import { Readable } from 'stream';
+
 import {
   Injectable,
   BadRequestException,
@@ -269,6 +271,15 @@ export class MinioService implements OnModuleInit {
       );
       throw error;
     }
+  }
+
+  async statFile(publicId: string): Promise<{ size: number }> {
+    const stat = await this.minioClient.statObject(this.bucketName, publicId);
+    return { size: stat.size };
+  }
+
+  async streamFile(publicId: string): Promise<Readable> {
+    return this.minioClient.getObject(this.bucketName, publicId);
   }
 
   private extensionFor(mimeType: string) {
