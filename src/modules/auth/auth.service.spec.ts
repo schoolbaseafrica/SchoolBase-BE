@@ -362,6 +362,7 @@ describe('AuthService', () => {
     const mockOldSession = {
       id: 'session-id-456',
       user_id: 'user-id-123',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
     };
 
     beforeEach(() => {
@@ -374,9 +375,7 @@ describe('AuthService', () => {
         deleted_at: null,
       });
       mockJwtService.verifyAsync.mockResolvedValue(mockJwtPayload);
-      mockJwtService.signAsync
-        .mockResolvedValueOnce('new-access-token')
-        .mockResolvedValueOnce('new-refresh-token');
+      mockJwtService.signAsync.mockResolvedValue('new-access-token');
       mockSessionService.validateRefreshToken.mockResolvedValue(mockOldSession);
       mockSessionService.revokeSession.mockResolvedValue({
         revoked: true,
@@ -399,16 +398,15 @@ describe('AuthService', () => {
         mockJwtPayload.sub,
         mockRefreshTokenDto.refresh_token,
       );
-      expect(mockSessionService.revokeSession).toHaveBeenCalledWith(
-        mockOldSession.id,
-        mockJwtPayload.sub,
-      );
-      expect(mockSessionService.createSession).toHaveBeenCalledWith(
-        mockJwtPayload.sub,
-        'new-refresh-token',
-      );
+      expect(mockSessionService.revokeSession).not.toHaveBeenCalled();
+      expect(mockSessionService.createSession).not.toHaveBeenCalled();
       expect(result).toHaveProperty('access_token', 'new-access-token');
-      expect(result).toHaveProperty('refresh_token', 'new-refresh-token');
+      expect(result).toHaveProperty('refresh_token', 'valid-refresh-token');
+      expect(result).toHaveProperty('session_id', mockOldSession.id);
+      expect(result).toHaveProperty(
+        'session_expires_at',
+        mockOldSession.expires_at,
+      );
       expect(result).toHaveProperty('message');
     });
 
@@ -444,7 +442,7 @@ describe('AuthService', () => {
       expect(mockSessionService.validateRefreshToken).not.toHaveBeenCalled();
     });
 
-    it('should handle case when session service is not available', async () => {
+    it('rejects refresh when session validation is unavailable', async () => {
       const moduleWithoutSession: TestingModule =
         await Test.createTestingModule({
           providers: [
@@ -484,18 +482,16 @@ describe('AuthService', () => {
       const serviceWithoutSession =
         moduleWithoutSession.get<AuthService>(AuthService);
 
-      const result =
-        await serviceWithoutSession.refreshToken(mockRefreshTokenDto);
-
-      expect(result).toHaveProperty('access_token');
-      expect(result).toHaveProperty('refresh_token');
+      await expect(
+        serviceWithoutSession.refreshToken(mockRefreshTokenDto),
+      ).rejects.toThrow('Session validation is unavailable');
       expect(mockJwtService.verifyAsync).toHaveBeenCalled();
     });
 
     it('should generate new tokens with correct payload', async () => {
       await service.refreshToken(mockRefreshTokenDto);
 
-      expect(mockJwtService.signAsync).toHaveBeenCalledTimes(2);
+      expect(mockJwtService.signAsync).toHaveBeenCalledTimes(1);
       expect(mockJwtService.signAsync).toHaveBeenCalledWith(
         {
           sub: mockJwtPayload.sub,

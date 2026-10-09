@@ -189,50 +189,44 @@ export class AuthService {
       },
     );
 
-    // Validate refresh token against stored session
-    let oldSession = null;
-    if (this.sessionService) {
-      oldSession = await this.sessionService.validateRefreshToken(
-        payload.sub,
-        refreshToken.refresh_token,
-      );
+    // A signed JWT alone is insufficient: logout and deactivation must revoke
+    // the database session used by the refresh token.
+    if (!this.sessionService)
+      throw new UnauthorizedException('Session validation is unavailable');
+    const oldSession = await this.sessionService.validateRefreshToken(
+      payload.sub,
+      refreshToken.refresh_token,
+    );
 
-      if (!oldSession) {
-        this.logger.warn(
-          `Refresh token validation failed for user: ${payload.sub}`,
-        );
-        throw new UnauthorizedException(
-          'Invalid or expired refresh token. Please login again.',
-        );
-      }
+    if (!oldSession) {
+      this.logger.warn(
+        `Refresh token validation failed for user: ${payload.sub}`,
+      );
+      throw new UnauthorizedException(
+        'Invalid or expired refresh token. Please login again.',
+      );
     }
 
     const user = await this.userService.findOne(payload.sub);
     if (!user || !user.is_active || user.deleted_at)
       throw new UnauthorizedException('Account is inactive or unavailable');
 
-    // Generate new tokens
-    const tokens = await this.generateTokens(user.id, user.email, user.role);
-
-    // Update session with new refresh token
-    let sessionInfo = null;
-    if (this.sessionService && tokens.refresh_token && oldSession) {
-      // Revoke old session and create new one
-      await this.sessionService.revokeSession(oldSession.id, payload.sub);
-
-      sessionInfo = await this.sessionService.createSession(
-        payload.sub,
-        tokens.refresh_token,
-      );
-    }
+    // Keep the validated refresh token for its original seven-day lifetime.
+    // Concurrent requests after an access-token expiry can safely refresh
+    // without invalidating each other's browser session.
+    const accessToken = await this.jwtService.signAsync(
+      { sub: user.id, email: user.email, role: user.role },
+      { secret: config().jwt.secret, expiresIn: '4h' },
+    );
 
     this.logger.info(sysMsg.TOKEN_REFRESH_SUCCESS);
 
     return {
       message: sysMsg.TOKEN_REFRESH_SUCCESS,
-      ...tokens,
-      session_id: sessionInfo?.session_id,
-      session_expires_at: sessionInfo?.expires_at,
+      access_token: accessToken,
+      refresh_token: refreshToken.refresh_token,
+      session_id: oldSession?.id,
+      session_expires_at: oldSession?.expires_at,
     };
   }
 
