@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ClassModule } from '../class/class.module';
+import { ClassSubject } from '../class/entities/class-subject.entity';
 import { Class } from '../class/entities/class.entity';
 import { NotificationModule } from '../notification/notification.module';
 import { Room } from '../room/entities/room.entity';
@@ -22,6 +23,7 @@ import { TimetableService } from './timetable.service';
       Timetable,
       Schedule,
       Class,
+      ClassSubject,
       Subject,
       Teacher,
       Room,
