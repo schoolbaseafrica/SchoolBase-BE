@@ -234,6 +234,16 @@ export class GradeSubmissionService {
     }
 
     if (
+      !(await this.verifyTeacherSubjectAssignment(
+        teacherId,
+        submission.subject_id,
+        submission.class_id,
+      ))
+    ) {
+      throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
+    }
+
+    if (
       submission.status !== GradeSubmissionStatus.DRAFT &&
       submission.status !== GradeSubmissionStatus.REJECTED
     ) {

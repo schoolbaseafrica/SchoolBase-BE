@@ -231,6 +231,9 @@ describe('GradeService', () => {
   });
 
   describe('submitForApproval', () => {
+    beforeEach(() => {
+      mockClassSubjectRepo.findOne.mockResolvedValue({ id: 'assignment-1' });
+    });
     const mockSubmission = {
       id: mockSubmissionId,
       teacher_id: mockTeacherId,
@@ -317,6 +320,18 @@ describe('GradeService', () => {
       await expect(
         service.submitForApproval(mockTeacherId, mockSubmissionId),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects resubmission after the subject is transferred to another teacher', async () => {
+      (gradeSubmissionModelAction.get as jest.Mock).mockResolvedValue(
+        mockSubmission,
+      );
+      mockClassSubjectRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.submitForApproval(mockTeacherId, mockSubmissionId),
+      ).rejects.toThrow(ForbiddenException);
+      expect(gradeSubmissionModelAction.update).not.toHaveBeenCalled();
     });
   });
 
