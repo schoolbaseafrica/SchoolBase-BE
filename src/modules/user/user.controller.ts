@@ -3,6 +3,8 @@ import {
   Controller,
   Get,
   Param,
+  DefaultValuePipe,
+  ParseIntPipe,
   Post,
   HttpCode,
   HttpStatus,
@@ -60,6 +62,28 @@ export class UserController {
     @CurrentUser() actor: User,
   ) {
     return this.userService.getOwnerOverview(actor.id, query);
+  }
+
+  @Get('owner/inactive-people')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  listInactivePeople(
+    @CurrentUser() actor: User,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('search') search?: string,
+  ) {
+    return this.userService.listInactivePeople(actor.id, page, search);
+  }
+
+  @Post('owner/inactive-people/:role/:id/deidentify')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  deidentifyInactivePerson(
+    @Param('role') role: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: User,
+  ) {
+    return this.userService.deidentifyInactivePerson(role, id, actor.id);
   }
 
   @Get('owner')

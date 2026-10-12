@@ -65,6 +65,124 @@ describe('UserService', () => {
     expect(service).toBeDefined();
   });
 
+  describe('inactive profile de-identification', () => {
+    it('requires the active school owner before listing inactive people', async () => {
+      mockDataSource.query.mockResolvedValueOnce([]);
+      await expect(service.listInactivePeople('another-admin')).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(mockDataSource.query).toHaveBeenCalledTimes(1);
+    });
+
+    it('pages and searches the owner-only inactive list', async () => {
+      mockDataSource.query
+        .mockResolvedValueOnce([{ allowed: 1 }])
+        .mockResolvedValueOnce([{ total: 61 }])
+        .mockResolvedValueOnce([{ id: 'student-1', role: 'student' }]);
+      await expect(
+        service.listInactivePeople('owner-1', 2, 'DemoQA'),
+      ).resolves.toEqual({
+        items: [{ id: 'student-1', role: 'student' }],
+        total: 61,
+        page: 2,
+        page_size: 50,
+      });
+      expect(mockDataSource.query).toHaveBeenLastCalledWith(
+        expect.stringContaining('LIMIT 50 OFFSET $2'),
+        ['%DemoQA%', 50],
+      );
+    });
+
+    it('removes identifying profile fields in one owner-authorized transaction', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([{ allowed: 1 }])
+        .mockResolvedValueOnce([
+          {
+            id: 'student-1',
+            user_id: 'user-1',
+            email: 'qa@example.test',
+            role: ['STUDENT'],
+          },
+        ])
+        .mockResolvedValue([]);
+      mockDataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+      await expect(
+        service.deidentifyInactivePerson('student', 'student-1', 'owner-1'),
+      ).resolves.toEqual({
+        id: 'student-1',
+        role: 'student',
+        deidentified: true,
+      });
+      expect(
+        query.mock.calls.some(([sql]) =>
+          sql.includes('UPDATE "class_students"'),
+        ),
+      ).toBe(true);
+      expect(
+        query.mock.calls.some(([sql]) =>
+          sql.includes('"registration_number" = $2'),
+        ),
+      ).toBe(true);
+      const userUpdate = query.mock.calls.find(([sql]) =>
+        sql.includes('UPDATE "users"'),
+      );
+      expect(userUpdate?.[1]).toEqual(
+        expect.arrayContaining([
+          'user-1',
+          'erased-user-1@invalid.schoolbase.africa',
+        ]),
+      );
+      expect(
+        query.mock.calls.some(([sql]) =>
+          sql.includes('DELETE FROM "sessions"'),
+        ),
+      ).toBe(true);
+      expect(
+        query.mock.calls.some(([sql]) =>
+          sql.includes('INSERT INTO "activity_logs"'),
+        ),
+      ).toBe(true);
+    });
+
+    it('does not mutate an active account', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([{ allowed: 1 }])
+        .mockResolvedValueOnce([]);
+      mockDataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+      await expect(
+        service.deidentifyInactivePerson('student', 'active-1', 'owner-1'),
+      ).rejects.toThrow(NotFoundException);
+      expect(query).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses to erase an account that also has another role', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([{ allowed: 1 }])
+        .mockResolvedValueOnce([
+          {
+            id: 'student-1',
+            user_id: 'user-1',
+            email: 'qa@example.test',
+            role: ['STUDENT', 'ADMIN'],
+          },
+        ]);
+      mockDataSource.transaction.mockImplementation((callback) =>
+        callback({ query }),
+      );
+      await expect(
+        service.deidentifyInactivePerson('student', 'student-1', 'owner-1'),
+      ).rejects.toThrow(ConflictException);
+      expect(query).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('findOne', () => {
     it('should return a user when found', async () => {
       const fakeUser = {

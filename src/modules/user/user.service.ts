@@ -1,4 +1,7 @@
+import { randomBytes } from 'crypto';
+
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -7,6 +10,8 @@ import {
 import { DataSource } from 'typeorm';
 
 import { UserNotFoundException } from '../../common/exceptions/domain.exceptions';
+import { writeActivityLog } from '../activity-log/write-activity-log';
+import { hashPassword } from '../shared/utils';
 import { Student } from '../student/entities/student.entity';
 
 import { CreateUserDto } from './dto/create-user.dto';
@@ -27,6 +32,182 @@ export class UserService {
     // this.logger = logger.child({
     //   context: UserService.name,
     // });
+  }
+
+  private async assertOwner(
+    actorUserId: string,
+    query: DataSource['query'] = this.dataSource.query.bind(this.dataSource),
+  ): Promise<void> {
+    const rows = (await query(
+      `SELECT 1 FROM "schools" school
+       INNER JOIN "users" owner ON owner."id" = school."owner_user_id"
+       WHERE school."installation_completed" = true
+         AND school."owner_user_id" = $1
+         AND owner."is_active" = true AND owner."deleted_at" IS NULL
+       LIMIT 1`,
+      [actorUserId],
+    )) as unknown[];
+    if (!rows.length)
+      throw new ForbiddenException(
+        'Only the school owner can manage inactive records',
+      );
+  }
+
+  async listInactivePeople(actorUserId: string, page = 1, search = '') {
+    await this.assertOwner(actorUserId);
+    if (!Number.isSafeInteger(page) || page < 1)
+      throw new BadRequestException('Page must be a positive integer');
+    if (search.length > 100)
+      throw new BadRequestException('Search is too long');
+    const union = `SELECT 'student' AS role, student.id, usr.first_name, usr.last_name, usr.email
+       FROM students student INNER JOIN users usr ON usr.id = student.user_id
+       WHERE (student.is_deleted = true OR usr.is_active = false)
+         AND usr.email NOT LIKE 'erased-%@invalid.schoolbase.africa'
+       UNION ALL
+       SELECT 'parent', parent.id, usr.first_name, usr.last_name, usr.email
+       FROM parents parent INNER JOIN users usr ON usr.id = parent.user_id
+       WHERE (parent.deleted_at IS NOT NULL OR parent.is_active = false)
+         AND usr.email NOT LIKE 'erased-%@invalid.schoolbase.africa'
+       UNION ALL
+       SELECT 'teacher', teacher.id, usr.first_name, usr.last_name, usr.email
+       FROM teachers teacher INNER JOIN users usr ON usr.id = teacher.user_id
+       WHERE teacher.is_active = false AND usr.email NOT LIKE 'erased-%@invalid.schoolbase.africa'`;
+    const predicate = search.trim()
+      ? `WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR email ILIKE $1`
+      : '';
+    const parameters = search.trim() ? [`%${search.trim()}%`] : [];
+    const countRows = (await this.dataSource.query(
+      `WITH inactive AS (${union}) SELECT COUNT(*)::int AS total FROM inactive ${predicate}`,
+      parameters,
+    )) as Array<{ total: number }>;
+    const rows = (await this.dataSource.query(
+      `WITH inactive AS (${union}) SELECT * FROM inactive ${predicate}
+       ORDER BY role, last_name, first_name, id
+       LIMIT 50 OFFSET $${parameters.length + 1}`,
+      [...parameters, (page - 1) * 50],
+    )) as Array<{
+      role: string;
+      id: string;
+      first_name: string;
+      last_name: string;
+      email: string;
+    }>;
+    return {
+      items: rows,
+      total: countRows[0]?.total ?? 0,
+      page,
+      page_size: 50,
+    };
+  }
+
+  async deidentifyInactivePerson(
+    role: string,
+    id: string,
+    actorUserId: string,
+  ) {
+    if (!['student', 'parent', 'teacher'].includes(role)) {
+      throw new BadRequestException('Choose a student, parent, or teacher');
+    }
+    const table = {
+      student: 'students',
+      parent: 'parents',
+      teacher: 'teachers',
+    }[role];
+    const inactiveClause =
+      role === 'student'
+        ? '(person.is_deleted = true OR usr.is_active = false)'
+        : role === 'parent'
+          ? '(person.deleted_at IS NOT NULL OR person.is_active = false)'
+          : 'person.is_active = false';
+    return this.dataSource.transaction(async (manager) => {
+      await this.assertOwner(actorUserId, manager.query.bind(manager));
+      const rows = (await manager.query(
+        `SELECT person.id, person.user_id, usr.email, usr.role
+         FROM "${table}" person INNER JOIN "users" usr ON usr.id = person.user_id
+         WHERE person.id = $1 AND ${inactiveClause} FOR UPDATE OF person, usr`,
+        [id],
+      )) as Array<{
+        id: string;
+        user_id: string;
+        email: string;
+        role: string[];
+      }>;
+      const person = rows[0];
+      if (!person) throw new NotFoundException('Inactive account not found');
+      if (
+        person.email.startsWith('erased-') &&
+        person.email.endsWith('@invalid.schoolbase.africa')
+      ) {
+        throw new ConflictException('Account has already been de-identified');
+      }
+      if (person.role.length !== 1 || person.role[0] !== role.toUpperCase()) {
+        throw new ConflictException(
+          'This account has another role and cannot be de-identified here',
+        );
+      }
+      const randomPassword = await hashPassword(
+        randomBytes(32).toString('hex'),
+      );
+      if (role === 'student') {
+        await manager.query(
+          `UPDATE "class_students" SET "is_active" = false, "updated_at" = now()
+           WHERE "student_id" = $1 AND "is_active" = true`,
+          [id],
+        );
+        await manager.query(
+          `UPDATE "students" SET "registration_number" = $2, "photo_url" = NULL,
+           "face_photo_object_key" = NULL, "face_photo_approved_at" = NULL,
+           "face_photo_approved_by" = NULL, "nfc_card_id" = NULL,
+           "current_class_id" = NULL, "is_deleted" = true,
+           "deleted_at" = COALESCE("deleted_at", now()), "updated_at" = now()
+           WHERE "id" = $1`,
+          [id, `ERASED-${id}`],
+        );
+      } else if (role === 'teacher') {
+        await manager.query(
+          `UPDATE "teachers" SET "employment_id" = $2, "photo_url" = NULL,
+           "updated_at" = now() WHERE "id" = $1`,
+          [id, `ERASED-${id}`],
+        );
+      } else {
+        await manager.query(
+          `UPDATE "parents" SET "photo_url" = NULL, "is_active" = false,
+           "deleted_at" = COALESCE("deleted_at", now()), "updated_at" = now()
+           WHERE "id" = $1`,
+          [id],
+        );
+      }
+      await manager.query(
+        `UPDATE "users" SET "first_name" = 'Former', "last_name" = $2,
+         "middle_name" = NULL, "gender" = NULL, "dob" = NULL,
+         "email" = $3, "phone" = NULL, "google_id" = NULL,
+         "home_address" = NULL, "password" = $4, "reset_token" = NULL,
+         "reset_token_expiry" = NULL, "last_login_at" = NULL,
+         "password_setup_required" = false, "is_active" = false,
+         "deleted_at" = COALESCE("deleted_at", now()), "updated_at" = now()
+         WHERE "id" = $1`,
+        [
+          person.user_id,
+          role,
+          `erased-${person.user_id}@invalid.schoolbase.africa`,
+          randomPassword,
+        ],
+      );
+      await manager.query(`DELETE FROM "sessions" WHERE "user_id" = $1`, [
+        person.user_id,
+      ]);
+      await manager.query(`DELETE FROM "user_2fa" WHERE "user_id" = $1`, [
+        person.user_id,
+      ]);
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: role.toUpperCase(),
+        entityId: id,
+        action: 'DEIDENTIFY',
+        description: 'Inactive account profile de-identified by school owner',
+      });
+      return { id, role, deidentified: true };
+    });
   }
 
   async create(createPayload: CreateUserDto): Promise<User> {
