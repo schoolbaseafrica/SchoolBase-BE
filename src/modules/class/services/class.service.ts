@@ -104,18 +104,23 @@ export class ClassService {
     });
 
     // Map to DTO
-    return assignments.payload.map((assignment) => {
-      const streamList: Stream[] = assignment.class.streams || [];
-      const streamNames = streamList.map((s) => s.name).join(', ');
-      return {
-        teacher_id: assignment.teacher.id,
-        name: assignment.teacher.user
-          ? `${assignment.teacher.user.first_name} ${assignment.teacher.user.last_name}`
-          : `Teacher ${assignment.teacher.employment_id}`,
-        assignment_date: assignment.assignment_date,
-        streams: streamNames,
-      };
-    });
+    return assignments.payload
+      .filter(
+        (assignment) =>
+          assignment.teacher?.is_active && assignment.teacher.user?.is_active,
+      )
+      .map((assignment) => {
+        const streamList: Stream[] = assignment.class.streams || [];
+        const streamNames = streamList.map((s) => s.name).join(', ');
+        return {
+          teacher_id: assignment.teacher.id,
+          name: assignment.teacher.user
+            ? `${assignment.teacher.user.first_name} ${assignment.teacher.user.last_name}`
+            : `Teacher ${assignment.teacher.employment_id}`,
+          assignment_date: assignment.assignment_date,
+          streams: streamNames,
+        };
+      });
   }
 
   /**
@@ -928,20 +933,27 @@ export class ClassService {
     });
 
     // 4. Map to DTO
-    return assignments.payload.map((assignment) => {
-      const student = assignment.student;
-      const user = student.user;
-      const fullName = user
-        ? `${user.first_name} ${user.last_name}`
-        : `Student ${student.registration_number}`;
-      return {
-        student_id: student.id,
-        registration_number: student.registration_number,
-        name: fullName,
-        enrollment_date: assignment.enrollment_date,
-        is_active: assignment.is_active,
-      };
-    });
+    return assignments.payload
+      .filter(
+        (assignment) =>
+          assignment.student &&
+          !assignment.student.is_deleted &&
+          assignment.student.user?.is_active,
+      )
+      .map((assignment) => {
+        const student = assignment.student;
+        const user = student.user;
+        const fullName = user
+          ? `${user.first_name} ${user.last_name}`
+          : `Student ${student.registration_number}`;
+        return {
+          student_id: student.id,
+          registration_number: student.registration_number,
+          name: fullName,
+          enrollment_date: assignment.enrollment_date,
+          is_active: assignment.is_active,
+        };
+      });
   }
 
   /**

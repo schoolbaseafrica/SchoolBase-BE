@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -9,6 +10,7 @@ import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { SessionStatus } from '../../academic-session/entities/academic-session.entity';
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
 import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { ClassModelAction } from '../../class/model-actions/class.actions';
@@ -38,6 +40,7 @@ const mockLogger = {
 const mockStudentModelAction = {
   get: jest.fn(),
   create: jest.fn(),
+  update: jest.fn(),
   generateRegistrationNumber: jest.fn(),
   repository: undefined as { createQueryBuilder: jest.Mock } | undefined,
 };
@@ -45,6 +48,7 @@ const mockStudentModelAction = {
 const mockUserModelAction = {
   get: jest.fn(),
   create: jest.fn(),
+  update: jest.fn(),
 };
 
 const mockDataSource = {
@@ -57,7 +61,7 @@ const mockFileService = {
   validatePhotoUrl: jest.fn(),
 } as unknown as jest.Mocked<FileService>;
 
-const mockClassStudentModelAction = { list: jest.fn() };
+const mockClassStudentModelAction = { list: jest.fn(), create: jest.fn() };
 const mockClassModelAction = { find: jest.fn() };
 const mockAcademicSessionModelAction = { find: jest.fn(), get: jest.fn() };
 
@@ -209,6 +213,116 @@ describe('StudentService', () => {
     expect(manager.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO "activity_logs"'),
       expect.arrayContaining(['admin-1', 'STUDENT', 'student-id', 'CREATE']),
+    );
+  });
+
+  it('creates the selected current-session class enrollment in the student transaction', async () => {
+    const manager = {
+      query: jest.fn().mockResolvedValue([]),
+      getRepository: jest.fn().mockReturnValue({
+        findOne: jest.fn().mockResolvedValue({
+          id: 'class-1',
+          academicSession: { id: 'session-1', status: SessionStatus.ACTIVE },
+        }),
+      }),
+    };
+    mockDataSource.transaction.mockImplementation(async (callback) =>
+      callback(manager),
+    );
+    mockDataSource.getRepository.mockReturnValue({
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ student_id_prefix: 'STU', school_code: '' }),
+    });
+    mockUserModelAction.get.mockResolvedValue(null);
+    mockUserModelAction.create.mockResolvedValue({
+      id: 'user-1',
+      first_name: 'Ada',
+      last_name: 'QA',
+      email: 'ada@example.test',
+    });
+    mockStudentModelAction.create.mockResolvedValue({
+      id: 'student-1',
+      registration_number: '0043',
+      current_class_id: null,
+    });
+    mockStudentModelAction.update.mockResolvedValue({});
+    const result = await service.create({
+      first_name: 'Ada',
+      last_name: 'QA',
+      email: 'ada@example.test',
+      password: 'Password123!',
+      date_of_birth: '2010-01-01',
+      class_id: 'class-1',
+    } as never);
+    expect(mockClassStudentModelAction.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createPayload: expect.objectContaining({
+          class: { id: 'class-1' },
+          student: { id: 'student-1' },
+          session_id: 'session-1',
+          is_active: true,
+        }),
+        transactionOptions: { useTransaction: true, transaction: manager },
+      }),
+    );
+    expect(mockStudentModelAction.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updatePayload: { current_class_id: 'class-1' },
+        transactionOptions: { useTransaction: true, transaction: manager },
+      }),
+    );
+    expect(result.current_class_id).toBe('class-1');
+  });
+
+  it('rejects an archived class before creating a student account', async () => {
+    const manager = {
+      getRepository: jest
+        .fn()
+        .mockReturnValue({ findOne: jest.fn().mockResolvedValue(null) }),
+    };
+    mockDataSource.transaction.mockImplementation(async (callback) =>
+      callback(manager),
+    );
+    mockUserModelAction.get.mockResolvedValue(null);
+    await expect(
+      service.create({
+        email: 'ada@example.test',
+        password: 'Password123!',
+        date_of_birth: '2010-01-01',
+        class_id: 'class-1',
+      } as never),
+    ).rejects.toThrow(BadRequestException);
+    expect(mockUserModelAction.create).not.toHaveBeenCalled();
+  });
+
+  it('deactivates class enrollment and clears the current class with the student account', async () => {
+    const manager = { query: jest.fn().mockResolvedValue([]) };
+    mockDataSource.transaction.mockImplementation(async (callback) =>
+      callback(manager),
+    );
+    mockStudentModelAction.get.mockResolvedValue({
+      id: 'student-1',
+      is_deleted: false,
+      user: { id: 'user-1' },
+    });
+    mockUserModelAction.update.mockResolvedValue({});
+    mockStudentModelAction.update.mockResolvedValue({});
+    await service.remove('student-1', 'admin-1');
+    expect(manager.query).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'UPDATE "class_students" SET "is_active" = false',
+      ),
+      ['student-1'],
+    );
+    expect(mockStudentModelAction.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        updatePayload: expect.objectContaining({
+          is_deleted: true,
+          current_class_id: null,
+        }),
+        transactionOptions: { useTransaction: true, transaction: manager },
+      }),
     );
   });
 

@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -14,6 +15,14 @@ import {
 import { Gender } from '../../shared/enums';
 
 export class CreateStudentDto {
+  @ApiProperty({
+    required: false,
+    description: 'Active class to enroll the student in during creation',
+  })
+  @IsOptional()
+  @IsUUID()
+  class_id?: string;
+
   @ApiProperty({
     required: false,
     description: 'Custom registration number when manual IDs are enabled',

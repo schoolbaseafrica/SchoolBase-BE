@@ -666,18 +666,41 @@ describe('FeesService', () => {
 
   // ================= GET STUDENTS FOR FEE =================
   describe('getStudentsForFee', () => {
+    it('excludes deleted students from class and direct fee assignments', async () => {
+      const deleted = {
+        id: 'deleted-student',
+        is_deleted: true,
+        user: { first_name: 'Demo', last_name: 'QA', is_active: false },
+      };
+      (
+        feesModelAction.getFeeWithStudentAssignments as jest.Mock
+      ).mockResolvedValue({
+        ...mockFee,
+        classes: [
+          {
+            name: 'Class 1',
+            student_assignments: [{ student: deleted, is_active: true }],
+          },
+        ],
+        direct_assignments: [{ student: deleted }],
+      });
+      expect(await service.getStudentsForFee('fee-123')).toEqual([]);
+    });
+
     it('should return students from linked classes and direct assignments', async () => {
       const mockStudent1 = {
         id: 'student-1',
+        is_deleted: false,
         registration_number: 'REG001',
         photo_url: 'photo1.jpg',
-        user: { first_name: 'John', last_name: 'Doe' },
+        user: { first_name: 'John', last_name: 'Doe', is_active: true },
       };
       const mockStudent2 = {
         id: 'student-2',
+        is_deleted: false,
         registration_number: 'REG002',
         photo_url: 'photo2.jpg',
-        user: { first_name: 'Jane', last_name: 'Smith' },
+        user: { first_name: 'Jane', last_name: 'Smith', is_active: true },
       };
 
       const mockFeeWithStudents = {
@@ -686,7 +709,7 @@ describe('FeesService', () => {
           {
             name: 'Class 1',
             academicSession: { academicYear: '2023/2024' },
-            student_assignments: [{ student: mockStudent1 }],
+            student_assignments: [{ student: mockStudent1, is_active: true }],
           },
         ],
         direct_assignments: [{ student: mockStudent2 }],
@@ -720,9 +743,10 @@ describe('FeesService', () => {
     it('should deduplicate students present in both class and direct assignments', async () => {
       const mockStudent1 = {
         id: 'student-1',
+        is_deleted: false,
         registration_number: 'REG001',
         photo_url: 'photo1.jpg',
-        user: { first_name: 'John', last_name: 'Doe' },
+        user: { first_name: 'John', last_name: 'Doe', is_active: true },
       };
 
       const mockFeeWithDuplicates = {
@@ -731,7 +755,7 @@ describe('FeesService', () => {
           {
             name: 'Class 1',
             academicSession: { academicYear: '2023/2024' },
-            student_assignments: [{ student: mockStudent1 }],
+            student_assignments: [{ student: mockStudent1, is_active: true }],
           },
         ],
         direct_assignments: [{ student: mockStudent1 }],

@@ -67,10 +67,12 @@ const mockTeacherAssignment = {
   is_active: true,
   teacher: {
     id: 'teacher-uuid-101',
+    is_active: true,
     employment_id: 'EMP-2025-001',
     user: {
       first_name: 'John',
       last_name: 'Doe',
+      is_active: true,
     },
   },
   class: mockClass,
@@ -1050,6 +1052,27 @@ describe('ClassService', () => {
   });
 
   describe('getStudentsByClass', () => {
+    it('omits deactivated students even if an old enrollment remains active', async () => {
+      classModelAction.get.mockResolvedValue({
+        id: 'class-1',
+        academicSession: { id: 'session-1' },
+      } as unknown as Class);
+      mockClassStudentModelAction.list.mockResolvedValue({
+        payload: [
+          {
+            student: {
+              id: 'student-1',
+              is_deleted: true,
+              user: { first_name: 'Demo', last_name: 'QA', is_active: false },
+            },
+            is_active: true,
+          },
+        ],
+        paginationMeta: {},
+      } as never);
+      expect(await service.getStudentsByClass('class-1')).toEqual([]);
+    });
+
     it('should return students for a class', async () => {
       const classId = 'class-uuid-1';
       const sessionId = 'session-uuid-1';
@@ -1063,8 +1086,9 @@ describe('ClassService', () => {
         {
           student: {
             id: 'student-1',
+            is_deleted: false,
             registration_number: 'REG-001',
-            user: { first_name: 'John', last_name: 'Doe' },
+            user: { first_name: 'John', last_name: 'Doe', is_active: true },
           },
           enrollment_date: new Date(),
           is_active: true,

@@ -1,6 +1,7 @@
 import { PaginationMeta } from '@hng-sdk/orm';
 import {
   ConflictException,
+  BadRequestException,
   HttpStatus,
   ForbiddenException,
   Inject,
@@ -13,6 +14,7 @@ import { Logger } from 'winston';
 
 import { SessionStatus } from 'src/modules/academic-session/entities/academic-session.entity';
 import { AcademicSessionModelAction } from 'src/modules/academic-session/model-actions/academic-session-actions';
+import { Class } from 'src/modules/class/entities/class.entity';
 import { ClassStudentModelAction } from 'src/modules/class/model-actions/class-student.action';
 import { ClassModelAction } from 'src/modules/class/model-actions/class.actions';
 
@@ -103,6 +105,21 @@ export class StudentService {
 
     const { savedUser, savedStudent } = await this.dataSource.transaction(
       async (manager) => {
+        const selectedClass = createStudentDto.class_id
+          ? await manager.getRepository(Class).findOne({
+              where: {
+                id: createStudentDto.class_id,
+                is_deleted: false,
+                academicSession: { status: SessionStatus.ACTIVE },
+              },
+              relations: { academicSession: true },
+            })
+          : null;
+        if (createStudentDto.class_id && !selectedClass) {
+          throw new BadRequestException(
+            'Select a class in the current academic session',
+          );
+        }
         await manager.query(
           `SELECT pg_advisory_xact_lock(hashtext('schoolbase:student-id'))`,
         );
@@ -151,6 +168,25 @@ export class StudentService {
             transaction: manager,
           },
         });
+
+        if (selectedClass) {
+          await this.classStudentModelAction.create({
+            createPayload: {
+              class: { id: selectedClass.id },
+              student: { id: savedStudent.id },
+              session_id: selectedClass.academicSession.id,
+              is_active: true,
+              enrollment_date: new Date(),
+            },
+            transactionOptions: { useTransaction: true, transaction: manager },
+          });
+          await this.studentModelAction.update({
+            identifierOptions: { id: savedStudent.id },
+            updatePayload: { current_class_id: selectedClass.id },
+            transactionOptions: { useTransaction: true, transaction: manager },
+          });
+          savedStudent.current_class_id = selectedClass.id;
+        }
 
         if (actorUserId) {
           await writeActivityLog(manager, {
@@ -371,6 +407,11 @@ export class StudentService {
     if (!existingStudent || existingStudent.is_deleted)
       throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
     return this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `UPDATE "class_students" SET "is_active" = false, "updated_at" = now()
+         WHERE "student_id" = $1 AND "is_active" = true`,
+        [id],
+      );
       await this.userModelAction.update({
         identifierOptions: { id: existingStudent.user.id },
         updatePayload: {
@@ -388,6 +429,7 @@ export class StudentService {
         updatePayload: {
           is_deleted: true,
           deleted_at: new Date(),
+          current_class_id: null,
         },
         transactionOptions: {
           useTransaction: true,

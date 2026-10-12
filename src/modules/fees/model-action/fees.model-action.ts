@@ -19,7 +19,11 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
     return this.feeRepository
       .createQueryBuilder('fee')
       .leftJoinAndSelect('fee.classes', 'classes')
-      .leftJoinAndSelect('classes.student_assignments', 'class_assignments')
+      .leftJoinAndSelect(
+        'classes.student_assignments',
+        'class_assignments',
+        'class_assignments.is_active = true',
+      )
       .leftJoinAndSelect('class_assignments.student', 'class_student')
       .leftJoinAndSelect('class_student.user', 'class_student_user')
       .leftJoinAndSelect('classes.academicSession', 'academicSession')

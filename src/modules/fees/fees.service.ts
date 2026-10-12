@@ -438,7 +438,12 @@ export class FeesService {
       for (const cls of fee.classes) {
         if (cls.student_assignments) {
           for (const assignment of cls.student_assignments) {
-            if (assignment.student && assignment.student.user) {
+            if (
+              assignment.is_active &&
+              assignment.student &&
+              !assignment.student.is_deleted &&
+              assignment.student.user?.is_active
+            ) {
               const student = assignment.student;
               studentMap.set(student.id, {
                 id: student.id,
@@ -459,7 +464,11 @@ export class FeesService {
 
     if (fee.direct_assignments) {
       for (const assignment of fee.direct_assignments) {
-        if (assignment.student && assignment.student.user) {
+        if (
+          assignment.student &&
+          !assignment.student.is_deleted &&
+          assignment.student.user?.is_active
+        ) {
           const student = assignment.student;
           if (!studentMap.has(student.id)) {
             studentMap.set(student.id, {
