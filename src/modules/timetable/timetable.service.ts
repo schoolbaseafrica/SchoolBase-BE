@@ -1,8 +1,19 @@
-import { Injectable, BadRequestException, Inject } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+  Inject,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { Repository } from 'typeorm';
 import { Logger } from 'winston';
 
+import { IRequestWithUser } from '../../common/types';
 import * as sysMsg from '../../constants/system.messages';
+import { SessionStatus } from '../academic-session/entities/academic-session.entity';
+import { ClassSubject } from '../class/entities/class-subject.entity';
 import { ClassStudentModelAction } from '../class/model-actions/class-student.action';
 import { ClassTeacherModelAction } from '../class/model-actions/class-teacher.action';
 import { ClassModelAction } from '../class/model-actions/class.actions';
@@ -11,6 +22,7 @@ import {
   NotificationType,
   NotificationMetadata,
 } from '../notification/types/notification.types';
+import { UserRole } from '../shared/enums';
 
 import {
   AddScheduleDto,
@@ -33,6 +45,8 @@ export class TimetableService {
     private readonly notificationService: NotificationService,
     private readonly classStudentModelAction: ClassStudentModelAction,
     private readonly classTeacherModelAction: ClassTeacherModelAction,
+    @InjectRepository(ClassSubject)
+    private readonly classSubjects: Repository<ClassSubject>,
     @Inject(WINSTON_MODULE_PROVIDER) private readonly logger: Logger,
   ) {}
 
@@ -42,7 +56,45 @@ export class TimetableService {
     return 'returns create response';
   }
 
-  async addSchedule(dto: AddScheduleDto) {
+  private async assertCanManageClass(
+    classId: string,
+    actor: IRequestWithUser['user'],
+  ): Promise<void> {
+    if (actor.roles.includes(UserRole.ADMIN)) return;
+    if (!actor.roles.includes(UserRole.TEACHER) || !actor.teacher_id) {
+      throw new ForbiddenException(
+        'Only an assigned class teacher can edit this timetable',
+      );
+    }
+    const schoolClass = await this.classModelAction.get({
+      identifierOptions: { id: classId },
+      relations: { academicSession: true },
+    });
+    if (!schoolClass || schoolClass.is_deleted) {
+      throw new NotFoundException('Class not found');
+    }
+    if (schoolClass.academicSession?.status !== SessionStatus.ACTIVE) {
+      throw new ForbiddenException(
+        'Past and inactive session timetables are read-only for teachers',
+      );
+    }
+    const assignments = await this.classTeacherModelAction.list({
+      filterRecordOptions: {
+        class: { id: classId },
+        teacher: { id: actor.teacher_id },
+        session_id: schoolClass.academicSession.id,
+        is_active: true,
+      },
+    });
+    if (!assignments.payload?.length) {
+      throw new ForbiddenException(
+        'Only an assigned class teacher can edit this timetable',
+      );
+    }
+  }
+
+  async addSchedule(dto: AddScheduleDto, actor: IRequestWithUser['user']) {
+    await this.assertCanManageClass(dto.class_id, actor);
     if (dto.period_type === PeriodType.BREAK) {
       dto.teacher_id = null;
       dto.subject_id = null;
@@ -94,6 +146,32 @@ export class TimetableService {
     });
 
     return schedule;
+  }
+
+  async getClassScheduleOptions(
+    classId: string,
+    actor: IRequestWithUser['user'],
+  ) {
+    await this.assertCanManageClass(classId, actor);
+    const assignments = await this.classSubjects.find({
+      where: { class: { id: classId } },
+      relations: { subject: true, teacher: { user: true } },
+    });
+    return assignments
+      .filter(
+        (assignment) =>
+          assignment.teacher?.is_active && assignment.teacher.user?.is_active,
+      )
+      .map((assignment) => ({
+        subject: {
+          id: assignment.subject.id,
+          name: assignment.subject.name,
+        },
+        teacher: {
+          id: assignment.teacher.id,
+          name: `${assignment.teacher.user.first_name} ${assignment.teacher.user.last_name}`.trim(),
+        },
+      }));
   }
 
   private async notifyAffectedUsers(
@@ -214,7 +292,15 @@ export class TimetableService {
     return 'returns remove response';
   }
 
-  async editSchedule(scheduleId: string, dto: UpdateScheduleDto) {
+  async editSchedule(
+    scheduleId: string,
+    dto: UpdateScheduleDto,
+    actor: IRequestWithUser['user'],
+  ) {
+    const existing =
+      await this.scheduleModelAction.getScheduleWithTimetable(scheduleId);
+    if (!existing) throw new NotFoundException(sysMsg.RESOURCE_NOT_FOUND);
+    await this.assertCanManageClass(existing.timetable.class_id, actor);
     // Validate the update
     await this.validationService.validateUpdateSchedule(scheduleId, dto);
 
