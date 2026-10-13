@@ -150,6 +150,9 @@ describe('InviteService', () => {
       expect(
         emailService.sendMail.mock.calls[0][0].templateData.invite_link,
       ).toMatch(/^https:\/\/school\.com\/accept-invite\?token=[a-f0-9]{64}$/);
+      expect(emailService.sendMail.mock.calls[0][0].templateData.logo_url).toBe(
+        '',
+      );
     });
 
     it('refuses another bootstrap invitation once an admin invite is pending', async () => {
@@ -213,6 +216,9 @@ describe('InviteService', () => {
       const emailPayload = emailService.sendMail.mock.calls[0][0];
       expect(emailPayload.templateData.invite_link).toMatch(
         /^https:\/\/example\.com\/accept-invite\?token=[a-f0-9]{64}$/,
+      );
+      expect(emailPayload.templateData.logo_url).toBe(
+        'https://example.com/logo.png',
       );
       expect(result).toEqual({
         id: mockInvite.id,

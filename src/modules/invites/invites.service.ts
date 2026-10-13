@@ -16,6 +16,10 @@ import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, FindOptionsWhere, In, Repository } from 'typeorm';
 import { Logger } from 'winston';
 
+import {
+  resolveTenantLogo,
+  resolveTenantName,
+} from '../../config/tenant-identity';
 import { EmailTemplateID } from '../../constants/email-constants';
 import * as sysMsg from '../../constants/system.messages';
 import { EmailService } from '../email/email.service';
@@ -104,9 +108,8 @@ export class InviteService {
         templateNameID: EmailTemplateID.INVITE,
         templateData: {
           first_name: fullName.split(' ')[0],
-          school_name:
-            this.configService.get<string>('app.name') || 'School Base',
-          logo_url: this.configService.get<string>('app.logo_url') || '',
+          school_name: resolveTenantName(this.configService),
+          logo_url: resolveTenantLogo(this.configService),
           role: 'ADMIN',
           invite_link: `${frontendUrl}/accept-invite?token=${token}`,
         },
@@ -208,11 +211,8 @@ export class InviteService {
 
   private async sendInvitationEmail(inviteDto: InviteUserDto, token: string) {
     const frontend_url = this.configService.get<string>('frontend.url');
-    const school_name =
-      this.configService.get<string>('app.name') || 'School Base';
-    const logo_url =
-      this.configService.get<string>('app.logo_url') ||
-      'https://via.placeholder.com/100';
+    const school_name = resolveTenantName(this.configService);
+    const logo_url = resolveTenantLogo(this.configService);
 
     const invite_link = `${frontend_url}/accept-invite?token=${token}`;
     const first_name = inviteDto.full_name?.split(' ')[0] || 'User';
@@ -465,18 +465,13 @@ export class InviteService {
     const createdInvites: InviteUserDto[] = [];
 
     const frontendUrl = this.configService.get<string>('frontend.url');
-    const schoolName =
-      this.configService.get<string>('school.name') || 'School Base';
-    const schoolLogoUrl =
-      this.configService.get<string>('school.logoUrl') ||
-      'https://via.placeholder.com/100';
+    const schoolName = resolveTenantName(this.configService);
+    const schoolLogoUrl = resolveTenantLogo(this.configService);
     const senderEmail = this.configService.get<string>('mail.from.address');
     const senderName = this.configService.get<string>('mail.from.name');
 
-    if (!frontendUrl || !schoolName || !schoolLogoUrl) {
-      throw new InternalServerErrorException(
-        'Missing SCHOOL_NAME, SCHOOL_LOGO_URL or FRONTEND_URL in config',
-      );
+    if (!frontendUrl) {
+      throw new InternalServerErrorException('Missing FRONTEND_URL in config');
     }
 
     // ✅ Changed: wrap invite creation + email sending in a transaction
