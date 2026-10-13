@@ -9,9 +9,10 @@ import { DataSource } from 'typeorm';
 
 import { ResultService } from 'src/modules/result/services';
 
+import { ClassStudent } from '../../class/entities/class-student.entity';
 import { StudentModelAction } from '../../student/model-actions';
 import { CreateGradeSubmissionDto } from '../dto';
-import { GradeSubmissionStatus } from '../entities';
+import { Grade, GradeSubmission, GradeSubmissionStatus } from '../entities';
 import { GradeModelAction, GradeSubmissionModelAction } from '../model-actions';
 
 import { GradeSubmissionService } from './grade-submission.service';
@@ -164,6 +165,121 @@ describe('GradeService', () => {
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('updateDraft', () => {
+    const makeService = (status: GradeSubmissionStatus) => {
+      const submission = {
+        id: mockSubmissionId,
+        teacher_id: mockTeacherId,
+        class_id: mockClassId,
+        subject_id: mockSubjectId,
+        status,
+      };
+      const savedGrades = [
+        {
+          id: 'grade-1',
+          student_id: 'student-1',
+          ca_score: 20,
+          exam_score: 50,
+          student: { id: 'student-1' },
+        },
+      ];
+      const gradeRepo = {
+        find: jest.fn().mockImplementation(async () => [...savedGrades]),
+        create: jest.fn((value) => value),
+        save: jest.fn((value) => {
+          const index = savedGrades.findIndex(
+            (grade) => grade.student_id === value.student_id,
+          );
+          if (index >= 0) savedGrades[index] = value;
+          else savedGrades.push(value);
+          return Promise.resolve(value);
+        }),
+      };
+      const submissionRepo = {
+        findOne: jest.fn().mockResolvedValue(submission),
+      };
+      const studentRepo = {
+        findOne: jest.fn().mockResolvedValue({ id: 'enrollment-1' }),
+      };
+      const manager = {
+        getRepository: jest.fn((entity) => {
+          if (entity === GradeSubmission) return submissionRepo;
+          if (entity === Grade) return gradeRepo;
+          if (entity === ClassStudent) return studentRepo;
+          throw new Error('Unexpected repository');
+        }),
+      };
+      const dataSource = {
+        transaction: jest.fn((callback) => callback(manager)),
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue({ id: 'assignment-1' }),
+        }),
+      };
+      const instance = new GradeSubmissionService(
+        mockLogger as never,
+        {} as never,
+        {} as never,
+        {} as never,
+        dataSource as never,
+        {} as never,
+      );
+      return { instance, gradeRepo, studentRepo, savedGrades };
+    };
+
+    it('adds another student to a draft without deleting an existing grade', async () => {
+      const { instance, gradeRepo, savedGrades } = makeService(
+        GradeSubmissionStatus.DRAFT,
+      );
+      await instance.updateDraft(mockTeacherId, mockSubmissionId, {
+        grades: [{ student_id: 'student-2', ca_score: 0, exam_score: 60 }],
+      });
+      expect(savedGrades).toHaveLength(2);
+      expect(savedGrades[0].student_id).toBe('student-1');
+      expect(gradeRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          student_id: 'student-2',
+          total_score: 60,
+          grade_letter: 'C',
+        }),
+      );
+    });
+
+    it('rejects changes after a draft is submitted', async () => {
+      const { instance, gradeRepo } = makeService(
+        GradeSubmissionStatus.SUBMITTED,
+      );
+      await expect(
+        instance.updateDraft(mockTeacherId, mockSubmissionId, {
+          grades: [{ student_id: 'student-2', ca_score: 20 }],
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(gradeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a different teacher before changing grades', async () => {
+      const { instance, gradeRepo } = makeService(GradeSubmissionStatus.DRAFT);
+      await expect(
+        instance.updateDraft('other-teacher', mockSubmissionId, {
+          grades: [{ student_id: 'student-2', ca_score: 20 }],
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(gradeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects a student outside the class roster', async () => {
+      const { instance, gradeRepo, studentRepo } = makeService(
+        GradeSubmissionStatus.DRAFT,
+      );
+      studentRepo.findOne.mockResolvedValue(null);
+      await expect(
+        instance.updateDraft(mockTeacherId, mockSubmissionId, {
+          grades: [{ student_id: 'student-3', ca_score: 20 }],
+        }),
+      ).rejects.toThrow('Student is not enrolled in this class');
+      expect(gradeRepo.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('createSubmission', () => {

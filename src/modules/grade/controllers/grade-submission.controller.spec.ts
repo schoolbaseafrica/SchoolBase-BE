@@ -55,6 +55,7 @@ describe('GradeController', () => {
           provide: GradeSubmissionService,
           useValue: {
             createSubmission: jest.fn(),
+            updateDraft: jest.fn(),
             listGradeSubmissions: jest.fn(),
             getSubmission: jest.fn(),
             submitForApproval: jest.fn(),
@@ -104,6 +105,27 @@ describe('GradeController', () => {
         createDto,
       );
     });
+  });
+
+  it('routes a teacher draft update to the teacher-owned submission', async () => {
+    const dto = {
+      grades: [{ student_id: 'student-2', ca_score: 20, exam_score: 50 }],
+    };
+    const response = { id: mockSubmissionId } as GradeSubmissionResponseDto;
+    service.updateDraft.mockResolvedValue(response);
+
+    await expect(
+      controller.updateDraft(
+        mockRequest as unknown as IRequestWithUser,
+        mockSubmissionId,
+        dto,
+      ),
+    ).resolves.toBe(response);
+    expect(service.updateDraft).toHaveBeenCalledWith(
+      mockTeacherId,
+      mockSubmissionId,
+      dto,
+    );
   });
 
   describe('listGradeSubmissions', () => {

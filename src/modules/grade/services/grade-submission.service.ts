@@ -15,12 +15,14 @@ import { ResultService } from 'src/modules/result/services';
 
 import * as sysMsg from '../../../constants/system.messages';
 import { ClassSubject } from '../../class/entities';
+import { ClassStudent } from '../../class/entities/class-student.entity';
 import { StudentModelAction } from '../../student/model-actions';
 import {
   CreateGradeSubmissionDto,
   GradeResponseDto,
   GradeSubmissionResponseDto,
   ListGradeSubmissionsDto,
+  UpdateGradeSubmissionDto,
 } from '../dto';
 import {
   GradeSubmission,
@@ -204,6 +206,103 @@ export class GradeSubmissionService {
         submissionWithRelations || submission,
         gradesWithRelations || grades,
       );
+    });
+  }
+
+  async updateDraft(
+    teacherId: string,
+    submissionId: string,
+    dto: UpdateGradeSubmissionDto,
+  ): Promise<GradeSubmissionResponseDto> {
+    if (
+      new Set(dto.grades.map((grade) => grade.student_id)).size !==
+      dto.grades.length
+    ) {
+      throw new BadRequestException('Each student can appear only once');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(GradeSubmission).findOne({
+        where: { id: submissionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!submission)
+        throw new NotFoundException(sysMsg.GRADE_SUBMISSION_NOT_FOUND);
+      if (submission.teacher_id !== teacherId) {
+        throw new ForbiddenException(sysMsg.UNAUTHORIZED_GRADE_ACCESS);
+      }
+      if (
+        !(await this.verifyTeacherSubjectAssignment(
+          teacherId,
+          submission.subject_id,
+          submission.class_id,
+        ))
+      ) {
+        throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
+      }
+      if (
+        submission.status !== GradeSubmissionStatus.DRAFT &&
+        submission.status !== GradeSubmissionStatus.REJECTED
+      ) {
+        throw new BadRequestException(sysMsg.GRADE_INVALID_STATUS_TRANSITION);
+      }
+
+      const gradesRepo = manager.getRepository(Grade);
+      const existing = await gradesRepo.find({
+        where: { submission_id: submissionId },
+        relations: { student: { user: true } },
+      });
+      const byStudent = new Map(
+        existing.map((grade) => [grade.student_id, grade]),
+      );
+      for (const entry of dto.grades) {
+        const enrolled = await manager.getRepository(ClassStudent).findOne({
+          where: {
+            class: { id: submission.class_id },
+            student: { id: entry.student_id },
+          },
+        });
+        if (!enrolled) {
+          throw new BadRequestException(
+            'Student is not enrolled in this class',
+          );
+        }
+        const grade =
+          byStudent.get(entry.student_id) ??
+          gradesRepo.create({
+            submission_id: submissionId,
+            student_id: entry.student_id,
+          });
+        grade.ca_score = entry.ca_score ?? null;
+        grade.exam_score = entry.exam_score ?? null;
+        grade.total_score =
+          grade.ca_score !== null && grade.exam_score !== null
+            ? Number(grade.ca_score) + Number(grade.exam_score)
+            : null;
+        grade.grade_letter =
+          grade.total_score !== null
+            ? this.calculateGradeLetter(grade.total_score)
+            : null;
+        grade.comment = entry.comment ?? null;
+        await gradesRepo.save(grade);
+      }
+
+      const grades = await gradesRepo.find({
+        where: { submission_id: submissionId },
+        relations: { student: { user: true } },
+      });
+      const withRelations = await manager
+        .getRepository(GradeSubmission)
+        .findOne({
+          where: { id: submissionId },
+          relations: {
+            teacher: { user: true },
+            class: true,
+            subject: true,
+            term: true,
+          },
+        });
+      return this.transformToResponse(withRelations ?? submission, grades);
     });
   }
 
