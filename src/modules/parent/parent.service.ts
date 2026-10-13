@@ -14,6 +14,7 @@ import { Logger } from 'winston';
 
 import { IPaginationMeta } from '../../common/types/base-response.interface';
 import * as sysMsg from '../../constants/system.messages';
+import { SessionStatus } from '../academic-session/entities/academic-session.entity';
 import { writeActivityLog } from '../activity-log/write-activity-log';
 import { ClassStudentModelAction } from '../class/model-actions/class-student.action';
 import { ClassSubjectModelAction } from '../class/model-actions/class-subject.action';
@@ -784,16 +785,7 @@ export class ParentService {
         parent: { id: parentId },
         is_deleted: false,
       },
-      relations: {
-        user: true,
-        stream: {
-          class: {
-            academicSession: true,
-            classSubjects: { subject: true, teacher: { user: true } },
-            timetable: true,
-          },
-        },
-      },
+      relations: { user: true },
     });
 
     if (!student) {
@@ -802,11 +794,35 @@ export class ParentService {
       throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
     }
 
-    const { user, stream } = student;
+    const { user } = student;
 
     if (!user) {
       throw new Error('User relation not loaded for student');
     }
+
+    const { payload: enrollments } = await this.classStudentModelAction.list({
+      filterRecordOptions: {
+        student: { id: studentId },
+        is_active: true,
+        class: {
+          is_deleted: false,
+          academicSession: { status: SessionStatus.ACTIVE },
+        },
+      },
+      relations: {
+        class: {
+          academicSession: true,
+          classSubjects: { subject: true, teacher: { user: true } },
+          timetable: true,
+        },
+      },
+    });
+    if (enrollments.length > 1) {
+      throw new ConflictException(
+        'Student has multiple active class enrollments',
+      );
+    }
+    const assignedClass = enrollments[0]?.class;
 
     return plainToInstance(
       StudentProfileDto,
@@ -819,7 +835,7 @@ export class ParentService {
         full_name: `${user.first_name}${user.middle_name ? ' ' + user.middle_name : ''} ${user.last_name}`,
         photo_url: student.photo_url,
         class_subjects:
-          stream?.class?.classSubjects?.map((cs) => ({
+          assignedClass?.classSubjects?.map((cs) => ({
             id: cs.id,
             subject_id: cs.subject.id,
             subject_name: cs.subject.name,
@@ -829,16 +845,19 @@ export class ParentService {
               : null,
             teacher_assignment_date: cs.teacher_assignment_date || null,
           })) || null,
-        timetable: stream?.class?.timetable
-          ? { id: stream.class.timetable.id }
+        timetable: assignedClass?.timetable
+          ? { id: assignedClass.timetable.id }
           : null,
-        class_details: stream?.class
-          ? { id: stream.class.id, name: stream.class.name }
-          : null,
-        academic_details: stream?.class?.academicSession
+        class_details: assignedClass
           ? {
-              id: stream.class.academicSession.id,
-              session: stream.class.academicSession.name,
+              id: assignedClass.id,
+              name: `${assignedClass.name}${assignedClass.arm ? ` ${assignedClass.arm}` : ''}`,
+            }
+          : null,
+        academic_details: assignedClass?.academicSession
+          ? {
+              id: assignedClass.academicSession.id,
+              session: assignedClass.academicSession.name,
             }
           : null,
       },

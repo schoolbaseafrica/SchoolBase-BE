@@ -16,6 +16,7 @@ import {
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../constants/system.messages';
+import { SessionStatus } from '../academic-session/entities/academic-session.entity';
 import { ClassStudent } from '../class/entities/class-student.entity';
 import { ClassSubject } from '../class/entities/class-subject.entity';
 import { ClassStudentModelAction } from '../class/model-actions/class-student.action';
@@ -181,6 +182,7 @@ describe('ParentService', () => {
 
     classStudentModelAction = {
       get: jest.fn(),
+      list: jest.fn(),
     } as unknown as jest.Mocked<ClassStudentModelAction>;
 
     classSubjectModelAction = {
@@ -1650,6 +1652,9 @@ describe('ParentService', () => {
       // Default mocks for success case
       parentModelAction.get.mockResolvedValue(mockParent as Parent);
       studentModelAction.get.mockResolvedValue(mockStudent as Student);
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [{ class: mockClass }],
+      } as never);
     });
 
     it('should return a student profile if linked to the parent', async () => {
@@ -1670,9 +1675,38 @@ describe('ParentService', () => {
       expect(result.timetable?.id).toBe('timetable-uuid');
     });
 
-    it('should return a student profile with null academic details if not available', async () => {
-      const studentWithoutStream = { ...mockStudent, stream: null };
-      studentModelAction.get.mockResolvedValue(studentWithoutStream as Student);
+    it('uses the active enrollment when the legacy stream points to an old class', async () => {
+      studentModelAction.get.mockResolvedValue({
+        ...mockStudent,
+        stream: { class: { id: 'old-class', name: 'Old class' } },
+      } as Student);
+
+      const result = await service.getLinkedStudentProfileForParent(
+        mockParentId,
+        mockStudentId,
+      );
+
+      expect(result.class_details).toEqual({
+        id: 'class-uuid',
+        name: 'JSS 1A',
+      });
+    });
+
+    it('refuses to present an arbitrary class when two active enrollments exist', async () => {
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [
+          { class: mockClass },
+          { class: { ...mockClass, id: 'other' } },
+        ],
+      } as never);
+
+      await expect(
+        service.getLinkedStudentProfileForParent(mockParentId, mockStudentId),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should return no current class when there is no active enrollment', async () => {
+      classStudentModelAction.list.mockResolvedValue({ payload: [] } as never);
 
       const result = await service.getLinkedStudentProfileForParent(
         mockParentId,
@@ -1704,17 +1738,20 @@ describe('ParentService', () => {
           parent: { id: mockParentId },
           is_deleted: false,
         },
-        relations: {
-          user: true,
-          stream: {
+        relations: { user: true },
+      });
+      expect(classStudentModelAction.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filterRecordOptions: {
+            student: { id: mockStudentId },
+            is_active: true,
             class: {
-              academicSession: true,
-              classSubjects: { subject: true, teacher: { user: true } },
-              timetable: true,
+              is_deleted: false,
+              academicSession: { status: SessionStatus.ACTIVE },
             },
           },
-        },
-      });
+        }),
+      );
     });
 
     it('should throw NotFoundException if parent not found', async () => {
