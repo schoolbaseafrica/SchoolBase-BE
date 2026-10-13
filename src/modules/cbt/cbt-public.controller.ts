@@ -7,9 +7,16 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags } from '@nestjs/swagger';
 
+import { IMulterFile } from '../../common/types/multer.types';
+
+import { UploadCbtScreenClipDto } from './cbt-screen-recording.dto';
+import { CbtScreenRecordingService } from './cbt-screen-recording.service';
 import { CbtService } from './cbt.service';
 import {
   RecordCbtIntegrityEventDto,
@@ -21,7 +28,28 @@ import { CbtAttemptEventType } from './entities';
 @ApiTags('Public CBT')
 @Controller('public/cbt')
 export class CbtPublicController {
-  constructor(private readonly cbtService: CbtService) {}
+  constructor(
+    private readonly cbtService: CbtService,
+    private readonly recordings: CbtScreenRecordingService,
+  ) {}
+
+  @Post('attempts/:attemptId/screen-clips')
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024 } }),
+  )
+  uploadScreenClip(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Headers('x-cbt-access-token') accessToken: string,
+    @UploadedFile() file: IMulterFile,
+    @Body() dto: UploadCbtScreenClipDto,
+  ) {
+    return this.recordings.uploadForApplicant(
+      attemptId,
+      accessToken,
+      file,
+      dto,
+    );
+  }
 
   @Get('exams')
   listExams() {

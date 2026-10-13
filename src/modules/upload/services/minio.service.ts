@@ -284,6 +284,10 @@ export class MinioService implements OnModuleInit {
 
   private extensionFor(mimeType: string) {
     switch (mimeType.split(';')[0].toLowerCase()) {
+      case 'video/webm':
+        return '.webm';
+      case 'video/mp4':
+        return '.mp4';
       case 'audio/webm':
         return '.webm';
       case 'audio/ogg':

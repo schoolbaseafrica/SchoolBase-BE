@@ -10,15 +10,25 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Response } from 'express';
 
+import { SkipWrap } from '../../common/decorators/skip-wrap.decorator';
+import { IMulterFile } from '../../common/types/multer.types';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../shared/enums';
 
+import { UploadCbtScreenClipDto } from './cbt-screen-recording.dto';
+import { CbtScreenRecordingService } from './cbt-screen-recording.service';
 import { CbtService } from './cbt.service';
 import {
   CreateCbtBankQuestionDto,
@@ -59,7 +69,54 @@ interface ICbtRequest extends Request {
 @Controller('cbt')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CbtController {
-  constructor(private readonly cbtService: CbtService) {}
+  constructor(
+    private readonly cbtService: CbtService,
+    private readonly recordings: CbtScreenRecordingService,
+  ) {}
+
+  @Get('attempts/:attemptId/recordings')
+  @Roles(UserRole.ADMIN)
+  listScreenRecordings(@Param('attemptId', ParseUUIDPipe) attemptId: string) {
+    return this.recordings.listForAdmin(attemptId);
+  }
+
+  @Get('attempts/:attemptId/recordings/:clipId')
+  @Roles(UserRole.ADMIN)
+  @SkipWrap()
+  async streamScreenRecording(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Param('clipId', ParseUUIDPipe) clipId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const { clip, stream } = await this.recordings.streamForAdmin(
+      attemptId,
+      clipId,
+    );
+    response.setHeader('Content-Type', clip.mimeType);
+    response.setHeader('Content-Length', String(clip.byteSize));
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    return new StreamableFile(stream);
+  }
+
+  @Post('student/attempts/:attemptId/screen-clips')
+  @Roles(UserRole.STUDENT)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 15 * 1024 * 1024 } }),
+  )
+  uploadStudentScreenClip(
+    @Param('attemptId', ParseUUIDPipe) attemptId: string,
+    @Req() request: ICbtRequest,
+    @UploadedFile() file: IMulterFile,
+    @Body() dto: UploadCbtScreenClipDto,
+  ) {
+    return this.recordings.uploadForStudent(
+      attemptId,
+      this.studentId(request),
+      file,
+      dto,
+    );
+  }
 
   @Post('exams')
   @Roles(UserRole.ADMIN)

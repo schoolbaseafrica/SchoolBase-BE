@@ -4,8 +4,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { Class } from '../class/entities/class.entity';
 import { InviteModule } from '../invites/invites.module';
 import { Student } from '../student/entities/student.entity';
+import { UploadModule } from '../upload/upload.module';
 
 import { CbtPublicController } from './cbt-public.controller';
+import { CbtScreenRecordingService } from './cbt-screen-recording.service';
 import { CbtController } from './cbt.controller';
 import { CbtService } from './cbt.service';
 import {
@@ -18,15 +20,18 @@ import {
   CbtExamSection,
   CbtIntake,
   CbtQuestion,
+  CbtScreenRecording,
 } from './entities';
 
 @Module({
   imports: [
     InviteModule,
+    UploadModule,
     TypeOrmModule.forFeature([
       CbtExam,
       CbtExamSection,
       CbtQuestion,
+      CbtScreenRecording,
       CbtAttempt,
       CbtAnswer,
       CbtAttemptEvent,
@@ -38,7 +43,7 @@ import {
     ]),
   ],
   controllers: [CbtController, CbtPublicController],
-  providers: [CbtService],
+  providers: [CbtService, CbtScreenRecordingService],
   exports: [CbtService],
 })
 export class CbtModule {}
