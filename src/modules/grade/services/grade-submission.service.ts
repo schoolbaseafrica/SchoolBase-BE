@@ -147,13 +147,15 @@ export class GradeSubmissionService {
       const grades: Grade[] = [];
       for (const studentGrade of createDto.grades) {
         const totalScore =
-          studentGrade.ca_score && studentGrade.exam_score
-            ? studentGrade.ca_score + studentGrade.exam_score
+          studentGrade.ca_score !== null &&
+          studentGrade.ca_score !== undefined &&
+          studentGrade.exam_score !== null &&
+          studentGrade.exam_score !== undefined
+            ? Number(studentGrade.ca_score) + Number(studentGrade.exam_score)
             : null;
 
-        const gradeLetter = totalScore
-          ? this.calculateGradeLetter(totalScore)
-          : null;
+        const gradeLetter =
+          totalScore !== null ? this.calculateGradeLetter(totalScore) : null;
 
         const grade = await this.gradeModelAction.create({
           createPayload: {

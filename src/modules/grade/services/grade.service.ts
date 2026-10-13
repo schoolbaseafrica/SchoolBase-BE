@@ -100,10 +100,11 @@ export class GradeService {
     const caScore = updateDto.ca_score ?? grade.ca_score;
     const examScore = updateDto.exam_score ?? grade.exam_score;
     const totalScore =
-      caScore !== null && examScore !== null ? caScore + examScore : null;
-    const gradeLetter = totalScore
-      ? this.calculateGradeLetter(totalScore)
-      : null;
+      caScore !== null && examScore !== null
+        ? Number(caScore) + Number(examScore)
+        : null;
+    const gradeLetter =
+      totalScore !== null ? this.calculateGradeLetter(totalScore) : null;
 
     const updatedGrade = await this.gradeModelAction.update({
       identifierOptions: { id: gradeId },

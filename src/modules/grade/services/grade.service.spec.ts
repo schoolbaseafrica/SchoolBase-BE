@@ -198,6 +198,26 @@ describe('GradeService', () => {
       expect(gradeModelAction.update).toHaveBeenCalled();
     });
 
+    it('keeps a zero total as a real F grade', async () => {
+      (gradeModelAction.get as jest.Mock).mockResolvedValue({
+        ...mockGrade,
+        ca_score: 0,
+        exam_score: 0,
+      });
+      (gradeModelAction.update as jest.Mock).mockResolvedValue(mockGrade);
+
+      await service.updateGrade(mockTeacherId, mockGradeId, { ca_score: 0 });
+
+      expect(gradeModelAction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updatePayload: expect.objectContaining({
+            total_score: 0,
+            grade_letter: 'F',
+          }),
+        }),
+      );
+    });
+
     it('blocks editing a rejected grade after subject ownership changes', async () => {
       (gradeModelAction.get as jest.Mock).mockResolvedValue(mockGrade);
       mockClassSubjectRepo.findOne.mockResolvedValue(null);

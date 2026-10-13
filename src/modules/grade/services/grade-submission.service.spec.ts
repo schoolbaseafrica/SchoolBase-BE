@@ -326,6 +326,31 @@ describe('GradeService', () => {
       expect(gradeModelAction.create).toHaveBeenCalledTimes(2);
     });
 
+    it('stores zero scores as a complete F grade', async () => {
+      mockClassSubjectRepo.findOne.mockResolvedValue({ id: 'assignment-1' });
+      gradeSubmissionModelAction.get.mockResolvedValue(null);
+      (gradeSubmissionModelAction.create as jest.Mock).mockResolvedValue({
+        id: mockSubmissionId,
+      });
+      (gradeModelAction.create as jest.Mock).mockResolvedValue({
+        id: mockGradeId,
+      });
+
+      await service.createSubmission(mockTeacherId, {
+        ...createDto,
+        grades: [{ student_id: 'student-1', ca_score: 0, exam_score: 0 }],
+      });
+
+      expect(gradeModelAction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createPayload: expect.objectContaining({
+            total_score: 0,
+            grade_letter: 'F',
+          }),
+        }),
+      );
+    });
+
     it('should throw ForbiddenException if teacher not assigned to subject', async () => {
       mockClassSubjectRepo.findOne.mockResolvedValue(null);
 
