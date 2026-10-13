@@ -190,14 +190,19 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
 
   async getFeesForStudent(
     studentId: string,
-    classId: string,
+    classId: string | undefined,
     termId: string,
+    sessionId: string,
   ): Promise<Fees[]> {
     return this.feeRepository
       .createQueryBuilder('fee')
       .leftJoin('fee.classes', 'class')
       .leftJoin('fee.direct_assignments', 'assignment')
-      .where('fee.term_id = :termId', { termId })
+      .where('fee.session_id = :sessionId', { sessionId })
+      .andWhere('(fee.term_id = :termId OR fee.period_type = :sessionPeriod)', {
+        termId,
+        sessionPeriod: 'SESSION',
+      })
       .andWhere('fee.status = :status', { status: FeeStatus.ACTIVE })
       .andWhere(
         new Brackets((qb) => {

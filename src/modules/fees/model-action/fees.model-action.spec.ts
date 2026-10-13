@@ -26,3 +26,34 @@ describe('FeesModelAction.getTotalExpectedFees', () => {
     expect(query.andWhere).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('FeesModelAction.getFeesForStudent', () => {
+  it('includes session fees as well as the selected term without crossing sessions', async () => {
+    const query = {
+      leftJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      setParameters: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue([]),
+    };
+    const repository = {
+      createQueryBuilder: jest.fn().mockReturnValue(query),
+    } as unknown as Repository<Fees>;
+    const action = new FeesModelAction(repository);
+
+    await action.getFeesForStudent(
+      'student-1',
+      'class-1',
+      'term-1',
+      'session-1',
+    );
+
+    expect(query.where).toHaveBeenCalledWith('fee.session_id = :sessionId', {
+      sessionId: 'session-1',
+    });
+    expect(query.andWhere).toHaveBeenCalledWith(
+      '(fee.term_id = :termId OR fee.period_type = :sessionPeriod)',
+      { termId: 'term-1', sessionPeriod: 'SESSION' },
+    );
+  });
+});

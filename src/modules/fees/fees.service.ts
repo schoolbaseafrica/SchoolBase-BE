@@ -2,6 +2,7 @@ import {
   Inject,
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
   forwardRef,
   Optional,
@@ -17,6 +18,7 @@ import { TermService } from '../academic-term/term.service';
 import { writeActivityLog } from '../activity-log/write-activity-log';
 import { ClassModelAction } from '../class/model-actions/class.actions';
 import { FeeNotificationService } from '../notification/services/fee-notification.service';
+import { PaymentStatus } from '../payment/enums/payment.enums';
 import { PaymentService } from '../payment/services/payment.service';
 import { FeeNotificationType } from '../shared/enums';
 import { StudentModelAction } from '../student/model-actions/student-actions';
@@ -556,23 +558,56 @@ export class FeesService {
       );
     }
 
-    const currentClassAssignment = student.class_assignments?.[0];
+    const currentEnrollments = (student.class_assignments ?? []).filter(
+      (assignment) =>
+        assignment.is_active &&
+        assignment.session_id === sessionId &&
+        assignment.class &&
+        !assignment.class.is_deleted &&
+        assignment.class.academicSession?.id === sessionId,
+    );
+    if (currentEnrollments.length > 1) {
+      throw new ConflictException(
+        'Student has multiple active class enrollments',
+      );
+    }
+    const currentClassAssignment = currentEnrollments[0];
     const currentClass = currentClassAssignment?.class;
 
     const fees = await this.feesModelAction.getFeesForStudent(
       studentId,
       currentClass?.id,
       termId,
+      sessionId,
     );
 
-    const { payments } = await this.paymentService.fetchAllPayments({
-      student_id: studentId,
-      term_id: termId,
-      limit: 1000,
-    });
+    const payments: Awaited<
+      ReturnType<PaymentService['fetchAllPayments']>
+    >['payments'] = [];
+    let paymentPage = 1;
+    while (true) {
+      const batch = await this.paymentService.fetchAllPayments({
+        student_id: studentId,
+        session_id: sessionId,
+        page: paymentPage,
+        limit: 1000,
+      });
+      payments.push(...batch.payments);
+      if (!batch.payments.length || payments.length >= batch.total) break;
+      paymentPage += 1;
+    }
+
+    const visibleFees = new Map(fees.map((fee) => [fee.id, fee]));
+    const relevantPayments = payments.filter(
+      (payment) =>
+        visibleFees.has(payment.fee_component_id) &&
+        payment.status === PaymentStatus.PAID &&
+        (visibleFees.get(payment.fee_component_id)?.period_type === 'SESSION' ||
+          payment.term_id === termId),
+    );
 
     const feeBreakdown = fees.map((fee) => {
-      const paidForComponent = payments
+      const paidForComponent = relevantPayments
         .filter((p) => p.fee_component_id === fee.id)
         .reduce((sum, p) => sum + Number(p.amount_paid), 0);
 
@@ -606,7 +641,7 @@ export class FeesService {
         session: term.academicSession?.academicYear || '',
       },
       fee_breakdown: feeBreakdown,
-      payment_history: payments.map((p) => ({
+      payment_history: relevantPayments.map((p) => ({
         payment_date: p.payment_date,
         amount_paid: Number(p.amount_paid),
         payment_method: p.payment_method,
