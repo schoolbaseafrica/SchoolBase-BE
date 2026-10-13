@@ -102,6 +102,17 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     if (this.reminderTimer) clearInterval(this.reminderTimer);
   }
 
+  private assertAcceptingStudentWork(assignment: Assignment) {
+    if (
+      assignment.status !== AssignmentStatus.PUBLISHED ||
+      (assignment.dueAt && assignment.dueAt.getTime() <= Date.now())
+    ) {
+      throw new BadRequestException(
+        'This assignment is closed to student changes',
+      );
+    }
+  }
+
   private createNotification(
     recipientId: string,
     title: string,
@@ -203,10 +214,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     const assignment = await this.get(assignmentId, userId, roles);
     let student: Student | null = null;
     if (roles.includes('student')) {
-      if (assignment.status !== AssignmentStatus.PUBLISHED)
-        throw new BadRequestException(
-          'This assignment is not accepting attachments',
-        );
+      this.assertAcceptingStudentWork(assignment);
       student = await this.studentFor(userId);
       const graded = await this.submissions.exists({
         where: {
@@ -568,7 +576,8 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
           status: AssignmentSubmissionStatus.GRADED,
         },
       });
-      if (assignment?.status !== AssignmentStatus.PUBLISHED || graded)
+      if (assignment) this.assertAcceptingStudentWork(assignment);
+      if (graded)
         throw new BadRequestException(
           'Attachments cannot be changed after the assignment closes or is graded',
         );
@@ -807,10 +816,7 @@ export class AssignmentService implements OnModuleInit, OnModuleDestroy {
     userId: string,
   ) {
     const assignment = await this.get(assignmentId, userId, ['student']);
-    if (assignment.status !== AssignmentStatus.PUBLISHED)
-      throw new BadRequestException(
-        'This assignment is not accepting submissions',
-      );
+    this.assertAcceptingStudentWork(assignment);
     const student = await this.studentFor(userId);
     let submission = await this.submissions.findOne({
       where: { assignment: { id: assignmentId }, student: { id: student.id } },

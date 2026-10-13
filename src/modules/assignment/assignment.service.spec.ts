@@ -1,5 +1,63 @@
 import { AssignmentService } from './assignment.service';
-import { AssignmentStatus } from './entities/assignment.entity';
+import {
+  AssignmentStatus,
+  AssignmentSubmissionStatus,
+} from './entities/assignment.entity';
+
+describe('AssignmentService student deadline', () => {
+  const assignment = {
+    id: 'assignment-1',
+    status: AssignmentStatus.PUBLISHED,
+    dueAt: new Date(Date.now() - 60_000),
+  };
+  const getService = () => {
+    const minio = { uploadFile: jest.fn() };
+    const submissions = { save: jest.fn() };
+    const service = new AssignmentService(
+      {} as never,
+      submissions as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      minio as never,
+      {} as never,
+    );
+    jest.spyOn(service, 'get').mockResolvedValue(assignment as never);
+    return { service, minio, submissions };
+  };
+
+  it('rejects both draft saves and final submissions after the deadline', async () => {
+    const { service, submissions } = getService();
+    for (const status of [
+      AssignmentSubmissionStatus.DRAFT,
+      AssignmentSubmissionStatus.SUBMITTED,
+    ]) {
+      await expect(
+        service.saveSubmission('assignment-1', { status }, 'student-user'),
+      ).rejects.toThrow('closed to student changes');
+    }
+    expect(submissions.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects student attachment upload before sending the file to storage', async () => {
+    const { service, minio } = getService();
+    await expect(
+      service.uploadAttachment('assignment-1', {} as never, 'student-user', [
+        'student',
+      ]),
+    ).rejects.toThrow('closed to student changes');
+    expect(minio.uploadFile).not.toHaveBeenCalled();
+  });
+});
 
 describe('AssignmentService reminder processing', () => {
   it('sends overdue student and parent notifications only once', async () => {
