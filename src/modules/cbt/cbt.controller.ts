@@ -208,6 +208,21 @@ export class CbtController {
     return this.cbtService.listAssignedProctorExams(request.user.userId);
   }
 
+  @Get('teacher/exams')
+  @Roles(UserRole.TEACHER)
+  listTeacherExams(@Req() request: ICbtRequest) {
+    return this.cbtService.listTeacherExams(request.user.userId);
+  }
+
+  @Get('teacher/exams/:examId/results')
+  @Roles(UserRole.TEACHER)
+  getTeacherExamResults(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.getTeacherExamAttempts(examId, request.user.userId);
+  }
+
   @Get('proctor/exams/:examId/attempts')
   @Roles(UserRole.TEACHER, UserRole.ADMIN)
   getAssignedExamAttempts(

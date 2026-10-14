@@ -632,6 +632,62 @@ export class CbtService {
     return this.getExamAttempts(examId, classIds);
   }
 
+  private async teacherExamClassIds(
+    examId: string,
+    userId: string,
+  ): Promise<string[]> {
+    const rows = (await this.dataSource.query(
+      `SELECT DISTINCT class.id
+       FROM cbt_exams exam
+       JOIN cbt_exam_classes exam_class ON exam_class.exam_id = exam.id
+       JOIN "class" class ON class.id = exam_class.class_id AND class.is_deleted = false
+       JOIN teachers teacher ON teacher.user_id = $2 AND teacher.is_active = true
+       WHERE exam.id = $1 AND exam.exam_type = 'in_school'
+         AND (
+           EXISTS (SELECT 1 FROM class_teachers assignment
+                   WHERE assignment.class_id = class.id AND assignment.teacher_id = teacher.id
+                     AND assignment.session_id = exam.session_id AND assignment.is_active = true)
+           OR (exam.subject_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM class_subjects subject_assignment
+             WHERE subject_assignment.class_id = class.id
+               AND subject_assignment.teacher_id = teacher.id
+               AND subject_assignment.subject_id = exam.subject_id))
+         )`,
+      [examId, userId],
+    )) as Array<{ id: string }>;
+    if (!rows.length)
+      throw new ForbiddenException('You are not assigned to this examination');
+    return rows.map((row) => row.id);
+  }
+
+  async listTeacherExams(userId: string) {
+    return this.dataSource.query(
+      `SELECT DISTINCT exam.id, exam.name, exam.status,
+         exam.available_from AS "availableFrom", exam.available_to AS "availableTo",
+         exam.subject_id AS "subjectId"
+       FROM cbt_exams exam
+       JOIN cbt_exam_classes exam_class ON exam_class.exam_id = exam.id
+       JOIN "class" class ON class.id = exam_class.class_id AND class.is_deleted = false
+       JOIN teachers teacher ON teacher.user_id = $1 AND teacher.is_active = true
+       WHERE exam.exam_type = 'in_school' AND (
+         EXISTS (SELECT 1 FROM class_teachers assignment
+                 WHERE assignment.class_id = class.id AND assignment.teacher_id = teacher.id
+                   AND assignment.session_id = exam.session_id AND assignment.is_active = true)
+         OR (exam.subject_id IS NOT NULL AND EXISTS (
+           SELECT 1 FROM class_subjects subject_assignment
+           WHERE subject_assignment.class_id = class.id
+             AND subject_assignment.teacher_id = teacher.id
+             AND subject_assignment.subject_id = exam.subject_id))
+       ) ORDER BY exam.available_from DESC NULLS LAST`,
+      [userId],
+    );
+  }
+
+  async getTeacherExamAttempts(examId: string, userId: string) {
+    const classIds = await this.teacherExamClassIds(examId, userId);
+    return this.getExamAttempts(examId, classIds);
+  }
+
   async acknowledgeAssignedAttemptEvent(eventId: string, userId: string) {
     const rows = (await this.dataSource.query(
       `SELECT event.id, attempt.exam_id AS "examId", attempt.student_id AS "studentId"
