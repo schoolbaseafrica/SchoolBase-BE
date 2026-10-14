@@ -1,3 +1,5 @@
+import * as crypto from 'crypto';
+
 import { PaginationMeta } from '@hng-sdk/orm';
 import {
   ConflictException,
@@ -227,6 +229,43 @@ export class StudentService {
       savedUser,
       sysMsg.STUDENT_CREATED,
     );
+  }
+
+  async resetPasswordWithoutEmail(id: string, actorUserId: string) {
+    const student = await this.studentModelAction.get({
+      identifierOptions: { id },
+      relations: { user: true },
+    });
+    if (!student || student.is_deleted || !student.user?.is_active)
+      throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
+    if (student.user.email)
+      throw new BadRequestException(
+        'Use email password reset for this student',
+      );
+
+    const password = crypto.randomBytes(18).toString('base64url');
+    const hashedPassword = await hashPassword(password);
+    await this.dataSource.transaction(async (manager) => {
+      await manager.query(
+        `UPDATE "users" SET "password" = $1, "reset_token" = NULL,
+          "reset_token_expiry" = NULL, "updated_at" = now() WHERE "id" = $2`,
+        [hashedPassword, student.user.id],
+      );
+      await manager.query(
+        `UPDATE "sessions" SET "is_active" = false, "revoked_at" = now()
+         WHERE "user_id" = $1 AND "is_active" = true`,
+        [student.user.id],
+      );
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: 'STUDENT',
+        entityId: student.id,
+        action: 'UPDATE',
+        description: 'Student password reset by administrator',
+        newValues: { password_reset: true },
+      });
+    });
+    return { registration_number: student.registration_number, password };
   }
 
   // --- FIND ALL (with pagination and search) ---

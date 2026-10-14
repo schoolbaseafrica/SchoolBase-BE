@@ -266,6 +266,34 @@ describe('StudentService', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('resets a no-email student password without logging the new secret', async () => {
+    mockStudentModelAction.get.mockResolvedValue({
+      id: 'student-1',
+      registration_number: 'STU-2026-0001',
+      is_deleted: false,
+      user: { id: 'user-1', email: null, is_active: true },
+    });
+    const manager = { query: jest.fn().mockResolvedValue([]) };
+    mockDataSource.transaction.mockImplementation(async (callback) =>
+      callback(manager),
+    );
+    const result = await service.resetPasswordWithoutEmail(
+      'student-1',
+      'admin-1',
+    );
+    expect(result.registration_number).toBe('STU-2026-0001');
+    expect(result.password.length).toBeGreaterThanOrEqual(20);
+    expect(manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE "sessions"'),
+      ['user-1'],
+    );
+    const auditCall = manager.query.mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO "activity_logs"'),
+    );
+    expect(auditCall).toBeDefined();
+    expect(JSON.stringify(auditCall)).not.toContain(result.password);
+  });
+
   it('creates the selected current-session class enrollment in the student transaction', async () => {
     const manager = {
       query: jest.fn().mockResolvedValue([]),

@@ -131,6 +131,16 @@ export class StudentController {
     return this.studentService.create(createStudentDto, actor.id);
   }
 
+  @Post(':id/reset-password-without-email')
+  @Roles(UserRole.ADMIN)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  resetPasswordWithoutEmail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: { id: string },
+  ) {
+    return this.studentService.resetPasswordWithoutEmail(id, actor.id);
+  }
+
   // --- GET: LIST ALL STUDENTS (with pagination and search) ---
   @Get()
   @ListStudentsDocs()
