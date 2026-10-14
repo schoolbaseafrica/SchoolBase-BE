@@ -214,6 +214,99 @@ export class CbtController {
     return this.cbtService.listTeacherExams(request.user.userId);
   }
 
+  @Get('teacher/exam-options')
+  @Roles(UserRole.TEACHER)
+  teacherExamOptions(@Req() request: ICbtRequest) {
+    return this.cbtService.teacherExamOptions(request.user.userId);
+  }
+
+  @Get('teacher/manage-exams')
+  @Roles(UserRole.TEACHER)
+  listTeacherManagedExams(@Req() request: ICbtRequest) {
+    return this.cbtService.listTeacherManagedExams(request.user.userId);
+  }
+
+  @Post('teacher/manage-exams')
+  @Roles(UserRole.TEACHER)
+  createTeacherExam(
+    @Body() dto: CreateCbtExamDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.createTeacherExam(dto, request.user.userId);
+  }
+
+  @Get('teacher/manage-exams/:examId')
+  @Roles(UserRole.TEACHER)
+  getTeacherManagedExam(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.getTeacherExamForManagement(
+      examId,
+      request.user.userId,
+    );
+  }
+
+  @Patch('teacher/manage-exams/:examId')
+  @Roles(UserRole.TEACHER)
+  updateTeacherExam(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: UpdateCbtExamDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.updateTeacherExam(examId, dto, request.user.userId);
+  }
+
+  @Post('teacher/manage-exams/:examId/questions')
+  @Roles(UserRole.TEACHER)
+  addTeacherQuestion(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: CreateCbtQuestionDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.addTeacherQuestion(examId, dto, request.user.userId);
+  }
+
+  @Post('teacher/manage-exams/:examId/sections')
+  @Roles(UserRole.TEACHER)
+  createTeacherSection(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Body() dto: CreateCbtSectionDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.createTeacherSection(
+      examId,
+      dto,
+      request.user.userId,
+    );
+  }
+
+  @Patch('teacher/manage-questions/:questionId')
+  @Roles(UserRole.TEACHER)
+  updateTeacherQuestion(
+    @Param('questionId', ParseUUIDPipe) questionId: string,
+    @Body() dto: UpdateCbtQuestionDto,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.updateTeacherQuestion(
+      questionId,
+      dto,
+      request.user.userId,
+    );
+  }
+
+  @Post('teacher/manage-exams/:examId/submit-review')
+  @Roles(UserRole.TEACHER)
+  submitTeacherExamForReview(
+    @Param('examId', ParseUUIDPipe) examId: string,
+    @Req() request: ICbtRequest,
+  ) {
+    return this.cbtService.submitTeacherExamForReview(
+      examId,
+      request.user.userId,
+    );
+  }
+
   @Get('teacher/exams/:examId/results')
   @Roles(UserRole.TEACHER)
   getTeacherExamResults(

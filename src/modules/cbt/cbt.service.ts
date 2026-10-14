@@ -206,6 +206,149 @@ export class CbtService {
     return this.examRepository.save(exam);
   }
 
+  async teacherExamOptions(userId: string) {
+    return this.dataSource.query(
+      `SELECT class.id AS "classId", class.name AS "className", class.arm,
+         subject.id AS "subjectId", subject.name AS "subjectName",
+         session.id AS "sessionId"
+       FROM class_subjects assignment
+       JOIN teachers teacher ON teacher.id = assignment.teacher_id AND teacher.is_active = true
+       JOIN "class" class ON class.id = assignment.class_id AND class.is_deleted = false
+       JOIN academic_sessions session ON session.id = class.academic_session_id AND session.status = 'Active'
+       JOIN subjects subject ON subject.id = assignment.subject_id
+       WHERE teacher.user_id = $1
+       ORDER BY class.name, class.arm, subject.name`,
+      [userId],
+    );
+  }
+
+  private async assertTeacherExamAssignment(
+    userId: string,
+    sessionId: string,
+    subjectId: string,
+    classIds: string[],
+  ) {
+    if (!classIds.length)
+      throw new BadRequestException('Select at least one assigned class');
+    const options = (await this.teacherExamOptions(userId)) as Array<{
+      classId: string;
+      subjectId: string;
+      sessionId: string;
+    }>;
+    if (
+      [...new Set(classIds)].some(
+        (classId) =>
+          !options.some(
+            (option) =>
+              option.classId === classId &&
+              option.subjectId === subjectId &&
+              option.sessionId === sessionId,
+          ),
+      )
+    ) {
+      throw new ForbiddenException(
+        'You may create exams only for subjects assigned to you in the current session',
+      );
+    }
+  }
+
+  async createTeacherExam(dto: CreateCbtExamDto, userId: string) {
+    if (dto.examType && dto.examType !== CbtExamType.IN_SCHOOL)
+      throw new ForbiddenException('Teachers can create only internal exams');
+    if (dto.intakeId)
+      throw new ForbiddenException('Teachers cannot create entrance exams');
+    if (!dto.sessionId || !dto.subjectId)
+      throw new BadRequestException('Select a session and assigned subject');
+    await this.assertTeacherExamAssignment(
+      userId,
+      dto.sessionId,
+      dto.subjectId,
+      dto.classIds ?? [],
+    );
+    return this.createExam({ ...dto, examType: CbtExamType.IN_SCHOOL }, userId);
+  }
+
+  async listTeacherManagedExams(userId: string) {
+    return this.examRepository.find({
+      where: { createdBy: userId, examType: CbtExamType.IN_SCHOOL },
+      relations: { classes: true, questions: true },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  private async assertTeacherOwnsExam(examId: string, userId: string) {
+    const exam = await this.examRepository.findOne({
+      where: { id: examId, createdBy: userId, examType: CbtExamType.IN_SCHOOL },
+      relations: { classes: true },
+    });
+    if (!exam)
+      throw new ForbiddenException('You cannot manage this examination');
+    await this.assertTeacherExamAssignment(
+      userId,
+      exam.sessionId!,
+      exam.subjectId!,
+      exam.classes.map((item) => item.id),
+    );
+    return exam;
+  }
+
+  async getTeacherExamForManagement(examId: string, userId: string) {
+    await this.assertTeacherOwnsExam(examId, userId);
+    return this.getExamForManagement(examId);
+  }
+
+  async updateTeacherExam(
+    examId: string,
+    dto: UpdateCbtExamDto,
+    userId: string,
+  ) {
+    const exam = await this.assertTeacherOwnsExam(examId, userId);
+    if (dto.classIds)
+      await this.assertTeacherExamAssignment(
+        userId,
+        exam.sessionId!,
+        exam.subjectId!,
+        dto.classIds,
+      );
+    return this.updateExam(examId, dto);
+  }
+
+  async addTeacherQuestion(
+    examId: string,
+    dto: CreateCbtQuestionDto,
+    userId: string,
+  ) {
+    await this.assertTeacherOwnsExam(examId, userId);
+    return this.addQuestion(examId, dto);
+  }
+
+  async updateTeacherQuestion(
+    questionId: string,
+    dto: UpdateCbtQuestionDto,
+    userId: string,
+  ) {
+    const question = await this.questionRepository.findOne({
+      where: { id: questionId },
+    });
+    if (!question?.examId) throw new NotFoundException('Question not found');
+    await this.assertTeacherOwnsExam(question.examId, userId);
+    return this.updateQuestion(questionId, dto);
+  }
+
+  async createTeacherSection(
+    examId: string,
+    dto: CreateCbtSectionDto,
+    userId: string,
+  ) {
+    await this.assertTeacherOwnsExam(examId, userId);
+    return this.createSection(examId, dto);
+  }
+
+  async submitTeacherExamForReview(examId: string, userId: string) {
+    await this.assertTeacherOwnsExam(examId, userId);
+    return this.transitionExam(examId, { status: CbtExamStatus.REVIEW });
+  }
+
   async listExams(query: ListCbtExamsDto) {
     const period = await this.resolveCbtPeriod(query);
     const builder = this.examRepository
