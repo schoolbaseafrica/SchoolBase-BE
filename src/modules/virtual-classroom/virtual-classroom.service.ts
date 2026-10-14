@@ -34,6 +34,7 @@ import {
   VirtualClassroomAttendanceAdjustment,
   VirtualClassroomHealthEvent,
 } from './entities/virtual-classroom.entity';
+import { isWithinLessonSlot, ILessonSlot } from './lesson-slot';
 import {
   CreateVirtualClassroomDto,
   CreateClassroomHealthEventDto,
@@ -63,6 +64,30 @@ export class VirtualClassroomService {
     private readonly minio: MinioService,
     private readonly config: ConfigService,
   ) {}
+
+  private async lessonSlot(scheduleId: string): Promise<ILessonSlot> {
+    const rows = (await this.dataSource.query(
+      `SELECT day, start_time AS "startTime", end_time AS "endTime"
+       FROM schedules WHERE id = $1 LIMIT 1`,
+      [scheduleId],
+    )) as ILessonSlot[];
+    if (!rows[0]) throw new NotFoundException('Timetable schedule not found');
+    return rows[0];
+  }
+
+  private async assertStudentLessonIsLive(
+    room: VirtualClassroomSession,
+  ): Promise<void> {
+    const now = new Date();
+    const slot = await this.lessonSlot(room.scheduleId);
+    if (
+      !isWithinLessonSlot(slot, now) ||
+      now < room.startsAt ||
+      now >= room.endsAt
+    ) {
+      throw new BadRequestException('This lesson is not in progress');
+    }
+  }
 
   async create(
     dto: CreateVirtualClassroomDto,
@@ -112,6 +137,12 @@ export class VirtualClassroomService {
       throw new BadRequestException(
         'Classroom end time must be after its start time',
       );
+    const slot = await this.lessonSlot(dto.scheduleId);
+    if (!isWithinLessonSlot(slot, new Date(dto.startsAt))) {
+      throw new BadRequestException(
+        'Classroom start must be within the scheduled lesson time',
+      );
+    }
     return this.sessions.save(
       this.sessions.create({
         ...dto,
@@ -133,7 +164,19 @@ export class VirtualClassroomService {
   }
 
   async get(id: string, userId: string, roles: string[]) {
-    return this.authorize(id, userId, roles);
+    const room = await this.authorize(id, userId, roles);
+    if (roles.includes('student') && room.status === 'live') {
+      const now = new Date();
+      const slot = await this.lessonSlot(room.scheduleId);
+      if (
+        !isWithinLessonSlot(slot, now) ||
+        now < room.startsAt ||
+        now >= room.endsAt
+      ) {
+        return { ...room, status: 'scheduled' as const };
+      }
+    }
+    return room;
   }
 
   async updateStatus(
@@ -156,6 +199,20 @@ export class VirtualClassroomService {
       throw new BadRequestException(
         `A ${room.status} classroom cannot transition to ${status}`,
       );
+
+    if (status === 'live') {
+      const slot = await this.lessonSlot(room.scheduleId);
+      const now = new Date();
+      if (
+        !isWithinLessonSlot(slot, now) ||
+        now < room.startsAt ||
+        now >= room.endsAt
+      ) {
+        throw new BadRequestException(
+          'This lesson can only go live during its scheduled day and time',
+        );
+      }
+    }
 
     room.status = status;
     if (status === 'ended' || status === 'cancelled') {
@@ -188,7 +245,31 @@ export class VirtualClassroomService {
         `EXISTS (SELECT 1 FROM students student JOIN class_students cs ON cs.student_id = student.id AND cs.is_active = true WHERE student.user_id = :userId AND cs.class_id = room.class_id AND cs.session_id = CAST(room.session_id AS text))`,
         { userId },
       );
-    return qb.getMany();
+    const rooms = await qb.getMany();
+    const liveIds = [
+      ...new Set(
+        rooms
+          .filter((room) => room.status === 'live')
+          .map((room) => room.scheduleId),
+      ),
+    ];
+    if (!liveIds.length) return rooms;
+    const slots = (await this.dataSource.query(
+      `SELECT id, day, start_time AS "startTime", end_time AS "endTime"
+       FROM schedules WHERE id = ANY($1::uuid[])`,
+      [liveIds],
+    )) as Array<ILessonSlot & { id: string }>;
+    const byId = new Map(slots.map((slot) => [slot.id, slot]));
+    const now = new Date();
+    return rooms.map((room) =>
+      room.status === 'live' &&
+      (!byId.has(room.scheduleId) ||
+        !isWithinLessonSlot(byId.get(room.scheduleId)!, now) ||
+        now < room.startsAt ||
+        now >= room.endsAt)
+        ? { ...room, status: 'scheduled' as const }
+        : room,
+    );
   }
 
   async join(id: string, userId: string, roles: string[]) {
@@ -199,6 +280,9 @@ export class VirtualClassroomService {
           ? 'This classroom has not started yet'
           : 'This classroom is no longer open',
       );
+    if (roles.includes('student')) {
+      await this.assertStudentLessonIsLive(room);
+    }
     const role = roles.includes('admin')
       ? 'admin'
       : roles.includes('teacher')
@@ -239,6 +323,7 @@ export class VirtualClassroomService {
     const room = await this.authorize(id, userId, roles);
     if (room.status !== 'live')
       throw new BadRequestException('This classroom is not live');
+    if (roles.includes('student')) await this.assertStudentLessonIsLive(room);
     const active = await this.participants.findOne({
       where: { classroomId: id, userId, leftAt: null },
     });
@@ -787,6 +872,7 @@ export class VirtualClassroomService {
       throw new BadRequestException(
         'Live audio is available only while the classroom is live',
       );
+    if (roles.includes('student')) await this.assertStudentLessonIsLive(room);
     const settings = this.liveKitSettings();
     if (!settings)
       throw new ServiceUnavailableException(
