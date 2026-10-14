@@ -85,4 +85,16 @@ describe('StudentBulkImportService', () => {
     expect(result).toMatchObject({ total: 1, successful: 0, failed: 1 });
     expect(students.create).not.toHaveBeenCalled();
   });
+
+  it('accepts a student CSV row without email', async () => {
+    findOne.mockResolvedValue({ id: 'class-1' });
+    students.create.mockResolvedValue({ id: 'student-1' });
+    classes.assignStudentToClass.mockResolvedValue({});
+    const result = await service.import([{ ...row, email: '' }]);
+    expect(result).toMatchObject({ successful: 1, failed: 0 });
+    expect(students.create).toHaveBeenCalledWith(
+      expect.objectContaining({ email: undefined }),
+      undefined,
+    );
+  });
 });

@@ -36,8 +36,8 @@ export class User extends BaseEntity {
   @Column({ type: 'date', nullable: true })
   dob: Date;
 
-  @Column()
-  email: string;
+  @Column({ nullable: true })
+  email: string | null;
 
   @Column({ nullable: true })
   phone: string;

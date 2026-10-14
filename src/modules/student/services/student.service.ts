@@ -64,9 +64,12 @@ export class StudentService {
     createStudentDto: CreateStudentDto,
     actorUserId?: string,
   ): Promise<StudentResponseDto> {
-    const existingUser = await this.userModelAction.get({
-      identifierOptions: { email: createStudentDto.email },
-    });
+    const studentEmail = createStudentDto.email?.trim().toLowerCase() || null;
+    const existingUser = studentEmail
+      ? await this.userModelAction.get({
+          identifierOptions: { email: studentEmail },
+        })
+      : null;
 
     if (existingUser) {
       this.logger.warn(
@@ -140,7 +143,7 @@ export class StudentService {
             first_name: createStudentDto.first_name,
             last_name: createStudentDto.last_name,
             middle_name: createStudentDto.middle_name,
-            email: createStudentDto.email,
+            email: studentEmail,
             phone: createStudentDto.phone,
             gender: createStudentDto.gender,
             dob: new Date(createStudentDto.date_of_birth),
@@ -209,13 +212,15 @@ export class StudentService {
       },
     );
 
-    await this.accountCreationService.sendAccountCreationEmail(
-      `${savedUser.first_name} ${savedUser.last_name}`,
-      savedUser.email,
-      createStudentDto.password,
-      UserRole.STUDENT,
-      resetToken,
-    );
+    if (savedUser.email) {
+      await this.accountCreationService.sendAccountCreationEmail(
+        `${savedUser.first_name} ${savedUser.last_name}`,
+        savedUser.email,
+        createStudentDto.password,
+        UserRole.STUDENT,
+        resetToken,
+      );
+    }
 
     return new StudentResponseDto(
       savedStudent,

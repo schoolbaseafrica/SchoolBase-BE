@@ -354,7 +354,11 @@ export class AuthService {
     };
   }
 
-  private async generateTokens(userId: string, email: string, role: string[]) {
+  private async generateTokens(
+    userId: string,
+    email: string | null,
+    role: string[],
+  ) {
     const { jwt } = config();
     const payload = { sub: userId, email, role };
 

@@ -13,7 +13,7 @@ import { User } from '../../user/entities/user.entity';
 
 interface IJwtPayload {
   sub: string;
-  email: string;
+  email: string | null;
   role: UserRole[];
 }
 
@@ -45,7 +45,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const userData: {
       id: string;
       userId: string;
-      email: string;
+      email: string | null;
       roles: UserRole[];
       teacher_id?: string;
       student_id?: string;

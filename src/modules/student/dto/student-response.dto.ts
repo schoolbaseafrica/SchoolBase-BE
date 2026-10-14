@@ -50,8 +50,9 @@ export class StudentResponseDto {
   @ApiProperty({
     description: 'Email address',
     example: 'chinaza110@gmail.com',
+    nullable: true,
   })
-  email: string;
+  email: string | null;
 
   @ApiProperty({ description: 'Gender', example: 'Female' })
   gender: string;

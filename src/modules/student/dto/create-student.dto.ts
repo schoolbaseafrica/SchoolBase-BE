@@ -69,10 +69,11 @@ export class CreateStudentDto {
   @ApiProperty({
     description: 'Email address',
     example: 'chinaza110@gmail.com',
+    required: false,
   })
+  @IsOptional()
   @IsEmail()
-  @IsNotEmpty()
-  email: string;
+  email?: string;
 
   @ApiProperty({
     description: 'Password (minimum 8 characters)',

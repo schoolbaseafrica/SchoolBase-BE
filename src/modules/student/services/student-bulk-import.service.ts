@@ -80,7 +80,7 @@ export class StudentBulkImportService {
         first_name: row.first_name,
         last_name: row.last_name,
         middle_name: row.middle_name || undefined,
-        email: row.email,
+        email: row.email?.trim() || undefined,
         phone: row.phone,
         registration_number: row.registration_number || undefined,
         date_of_birth: row.date_of_birth,
@@ -107,7 +107,7 @@ export class StudentBulkImportService {
             await this.classes.assignStudentToClass(classEntity.id, student.id);
           } catch (error) {
             results.push({
-              email: dto.email,
+              email: dto.email ?? '',
               success: true,
               student,
               error: `Student created, but class assignment failed: ${error instanceof Error ? error.message : 'unknown error'}`,
@@ -115,10 +115,10 @@ export class StudentBulkImportService {
             continue;
           }
         }
-        results.push({ email: dto.email, success: true, student });
+        results.push({ email: dto.email ?? '', success: true, student });
       } catch (error) {
         results.push({
-          email: dto.email,
+          email: dto.email ?? '',
           success: false,
           error:
             error instanceof Error ? error.message : 'Unable to create student',

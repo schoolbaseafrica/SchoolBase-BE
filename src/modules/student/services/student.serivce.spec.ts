@@ -216,6 +216,56 @@ describe('StudentService', () => {
     );
   });
 
+  it('creates a student without email and does not attempt to send an invitation', async () => {
+    const manager = {
+      query: jest
+        .fn()
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ last: 0 }]),
+    };
+    mockDataSource.getRepository.mockReturnValue({
+      findOne: jest
+        .fn()
+        .mockResolvedValue({ student_id_prefix: 'STU', school_code: '' }),
+    });
+    mockDataSource.transaction.mockImplementation(async (callback) =>
+      callback(manager),
+    );
+    mockUserModelAction.get.mockResolvedValue(null);
+    mockStudentModelAction.get.mockResolvedValue(null);
+    mockUserModelAction.create.mockResolvedValue({
+      id: 'user-no-email',
+      first_name: 'A',
+      last_name: 'B',
+      email: null,
+    });
+    mockStudentModelAction.create.mockResolvedValue({
+      id: 'student-no-email',
+      registration_number: 'STU-2026-0001',
+    });
+    await service.create({
+      first_name: 'A',
+      last_name: 'B',
+      password: 'Password123!',
+      date_of_birth: '2010-01-01',
+    } as never);
+    expect(mockUserModelAction.get).not.toHaveBeenCalled();
+    expect(mockUserModelAction.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        createPayload: expect.objectContaining({ email: null }),
+      }),
+    );
+    const accountCreationService = Reflect.get(
+      service,
+      'accountCreationService',
+    ) as {
+      sendAccountCreationEmail: jest.Mock;
+    };
+    expect(
+      accountCreationService.sendAccountCreationEmail,
+    ).not.toHaveBeenCalled();
+  });
+
   it('creates the selected current-session class enrollment in the student transaction', async () => {
     const manager = {
       query: jest.fn().mockResolvedValue([]),
