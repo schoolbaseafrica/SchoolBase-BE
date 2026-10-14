@@ -94,6 +94,81 @@ export class AttendanceService {
     return dayMap[dayNumber];
   }
 
+  async assertClassTeacherAccess(
+    userId: string,
+    classId: string,
+    sessionId?: string,
+  ): Promise<void> {
+    const assignment = await this.dataSource.manager.findOne(ClassTeacher, {
+      where: {
+        teacher: { user_id: userId, is_active: true },
+        class: { id: classId },
+        ...(sessionId ? { session_id: sessionId } : {}),
+        is_active: true,
+      },
+    });
+    if (!assignment) {
+      throw new ForbiddenException(
+        'Only the class teacher can access daily attendance for this class',
+      );
+    }
+  }
+
+  async assertStudentClassTeacherAccess(
+    userId: string,
+    studentId: string,
+    sessionId?: string,
+  ): Promise<void> {
+    const rows = (await this.dataSource.query(
+      `SELECT 1 FROM class_students enrollment
+       JOIN class_teachers assignment ON assignment.class_id = enrollment.class_id
+         AND assignment.session_id = enrollment.session_id AND assignment.is_active = true
+       JOIN teachers teacher ON teacher.id = assignment.teacher_id
+       WHERE enrollment.student_id = $1 AND enrollment.is_active = true
+         AND teacher.user_id = $2 AND teacher.is_active = true
+         AND ($3::text IS NULL OR enrollment.session_id = $3)
+       LIMIT 1`,
+      [studentId, userId, sessionId ?? null],
+    )) as Array<Record<string, unknown>>;
+    if (!rows.length) {
+      throw new ForbiddenException(
+        'You are not the class teacher for this student',
+      );
+    }
+  }
+
+  async assertCanEditDailyAttendance(
+    userId: string,
+    attendanceId: string,
+  ): Promise<void> {
+    const rows = (await this.dataSource.query(
+      `SELECT 1 FROM student_daily_attendance attendance
+       JOIN class_teachers assignment ON assignment.class_id = attendance.class_id
+         AND assignment.session_id = attendance.session_id AND assignment.is_active = true
+       JOIN teachers teacher ON teacher.id = assignment.teacher_id
+       WHERE attendance.id = $1 AND teacher.user_id = $2 AND teacher.is_active = true
+       LIMIT 1`,
+      [attendanceId, userId],
+    )) as Array<Record<string, unknown>>;
+    if (!rows.length) {
+      throw new ForbiddenException(
+        'Only the class teacher can edit daily attendance',
+      );
+    }
+  }
+
+  async assertScheduleTeacherAccess(
+    userId: string,
+    scheduleId: string,
+  ): Promise<void> {
+    const schedule = await this.dataSource.manager.findOne(Schedule, {
+      where: { id: scheduleId, teacher: { user_id: userId, is_active: true } },
+    });
+    if (!schedule) {
+      throw new ForbiddenException('You are not assigned to this lesson');
+    }
+  }
+
   /**
    * Unified method to mark attendance (both schedule-based and daily)
    * Handles both types based on schedule_id or class_id in the DTO
@@ -349,6 +424,7 @@ export class AttendanceService {
         where: {
           teacher: { id: teacherId },
           class: { id: classId },
+          session_id: sessionId,
           is_active: true,
         },
       },

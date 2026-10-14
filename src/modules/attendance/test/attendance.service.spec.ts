@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, EntityManager, SelectQueryBuilder } from 'typeorm';
@@ -100,6 +104,7 @@ describe('AttendanceService', () => {
     };
 
     const mockDataSource = {
+      query: jest.fn().mockResolvedValue([]),
       transaction: jest.fn((callback) => callback(mockEntityManager)),
       manager: {
         findOne: mockFindOne,
@@ -160,6 +165,31 @@ describe('AttendanceService', () => {
       StudentDailyAttendanceModelAction,
     );
     academicSessionService = module.get(AcademicSessionService);
+  });
+
+  describe('daily attendance access', () => {
+    it('rejects a teacher who is not assigned to the class', async () => {
+      mockFindOne.mockResolvedValueOnce(null);
+      await expect(
+        service.assertClassTeacherAccess('user-1', 'class-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows the assigned class teacher', async () => {
+      mockFindOne.mockResolvedValueOnce({ id: 'assignment-1' });
+      await expect(
+        service.assertClassTeacherAccess('user-1', 'class-1', 'session-1'),
+      ).resolves.toBeUndefined();
+      expect(mockFindOne).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          where: expect.objectContaining({
+            session_id: 'session-1',
+            is_active: true,
+          }),
+        }),
+      );
+    });
   });
 
   afterEach(async () => {

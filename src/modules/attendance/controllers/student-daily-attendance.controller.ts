@@ -91,8 +91,15 @@ export class StudentDailyAttendanceController {
   @ApiGetClassDailyAttendance()
   async getClassDailyAttendance(
     @Param('classId', ParseUUIDPipe) classId: string,
+    @Req() req: IRequestWithUser,
     @Query('date') date?: string,
   ) {
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertClassTeacherAccess(
+        req.user.userId,
+        classId,
+      );
+    }
     // Default to today if no date provided
     const targetDate = date || new Date().toISOString().split('T')[0];
     return this.attendanceService.getClassDailyAttendance(classId, targetDate);
@@ -107,7 +114,15 @@ export class StudentDailyAttendanceController {
     @Param('classId', ParseUUIDPipe) classId: string,
     @Query('session_id') sessionId: string,
     @Query('term') termKey: string,
+    @Req() req: IRequestWithUser,
   ) {
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertClassTeacherAccess(
+        req.user.userId,
+        classId,
+        sessionId,
+      );
+    }
     // Convert enum key (e.g., "SECOND") to enum value (e.g., "Second term")
     const term = TermName[termKey as keyof typeof TermName];
 
@@ -141,6 +156,14 @@ export class StudentDailyAttendanceController {
       );
     }
 
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertStudentClassTeacherAccess(
+        req.user.userId,
+        studentId,
+        sessionId,
+      );
+    }
+
     return this.attendanceService.getStudentMonthlyAttendance(
       studentId,
       sessionId,
@@ -167,6 +190,14 @@ export class StudentDailyAttendanceController {
       );
     }
 
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertStudentClassTeacherAccess(
+        req.user.userId,
+        studentId,
+        sessionId,
+      );
+    }
+
     return this.attendanceService.getStudentTermAttendanceSummary(
       studentId,
       sessionId,
@@ -184,6 +215,12 @@ export class StudentDailyAttendanceController {
     @Body() dto: UpdateStudentDailyAttendanceDto,
     @Req() req: IRequestWithUser,
   ) {
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertCanEditDailyAttendance(
+        req.user.userId,
+        id,
+      );
+    }
     return this.attendanceService.updateStudentDailyAttendance(
       id,
       dto,

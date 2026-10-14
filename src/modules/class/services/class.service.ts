@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpStatus,
   Inject,
   Injectable,
@@ -954,6 +955,66 @@ export class ClassService {
           is_active: assignment.is_active,
         };
       });
+  }
+
+  async assertTeacherCanViewClass(
+    classId: string,
+    teacherId: string,
+  ): Promise<void> {
+    const assignments = (await this.dataSource.query(
+      `SELECT 1 FROM "class" c
+       WHERE c.id = $1 AND c.is_deleted = false AND (
+         EXISTS (SELECT 1 FROM class_teachers ct
+                 WHERE ct.class_id = c.id AND ct.teacher_id = $2
+                   AND ct.session_id = c.academic_session_id AND ct.is_active = true)
+         OR EXISTS (SELECT 1 FROM class_subjects cs
+                    JOIN teachers teacher ON teacher.id = cs.teacher_id
+                    WHERE cs.class_id = c.id AND cs.teacher_id = $2
+                      AND teacher.is_active = true)
+       ) LIMIT 1`,
+      [classId, teacherId],
+    )) as Array<Record<string, unknown>>;
+    if (assignments.length === 0) {
+      throw new ForbiddenException('You are not assigned to this class');
+    }
+  }
+
+  async getTeachingClasses(
+    teacherId: string,
+    sessionId?: string,
+  ): Promise<ClassResponseDto[]> {
+    const targetSession = sessionId || (await this.getActiveSession());
+    const targetSessionId =
+      typeof targetSession === 'string' ? targetSession : targetSession.id;
+    const classes = await this.dataSource
+      .getRepository(Class)
+      .createQueryBuilder('class')
+      .leftJoinAndSelect('class.academicSession', 'academicSession')
+      .where('class.academicSession = :sessionId', {
+        sessionId: targetSessionId,
+      })
+      .andWhere('class.is_deleted = false')
+      .andWhere(
+        `(
+        EXISTS (SELECT 1 FROM class_teachers ct WHERE ct.class_id = class.id
+          AND ct.teacher_id = :teacherId AND ct.session_id = :sessionId AND ct.is_active = true)
+        OR EXISTS (SELECT 1 FROM class_subjects cs JOIN teachers teacher ON teacher.id = cs.teacher_id
+          WHERE cs.class_id = class.id AND cs.teacher_id = :teacherId AND teacher.is_active = true)
+      )`,
+        { teacherId, sessionId: targetSessionId },
+      )
+      .orderBy('class.name', 'ASC')
+      .addOrderBy('class.arm', 'ASC')
+      .getMany();
+    return classes.map((item) => ({
+      id: item.id,
+      name: item.name,
+      arm: item.arm,
+      academicSession: {
+        id: item.academicSession.id,
+        name: item.academicSession.name,
+      },
+    }));
   }
 
   /**

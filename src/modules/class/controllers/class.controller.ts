@@ -133,6 +133,18 @@ export class ClassController {
     return this.classService.getClassesByTeacher(teacherId, sessionId);
   }
 
+  @Get('teacher/teaching')
+  @Roles(UserRole.TEACHER)
+  async getTeachingClasses(
+    @Req() req: IRequestWithUser,
+    @Query('session_id') sessionId?: string,
+  ): Promise<ClassResponseDto[]> {
+    if (!req.user.teacher_id) {
+      throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);
+    }
+    return this.classService.getTeachingClasses(req.user.teacher_id, sessionId);
+  }
+
   // --- GET: GET CLASSES ASSIGNED TO SPECIFIC TEACHER ---
   @Get('teacher/:teacherId')
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
@@ -221,7 +233,20 @@ export class ClassController {
   async getStudents(
     @Param('id', ParseUUIDPipe) classId: string,
     @Query() query: GetStudentsQueryDto,
+    @Req() req: IRequestWithUser,
   ): Promise<StudentAssignmentResponseDto[]> {
+    if (
+      req.user.roles.includes(UserRole.TEACHER) &&
+      !req.user.roles.includes(UserRole.ADMIN)
+    ) {
+      if (!req.user.teacher_id) {
+        throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);
+      }
+      await this.classService.assertTeacherCanViewClass(
+        classId,
+        req.user.teacher_id,
+      );
+    }
     return this.classService.getStudentsByClass(classId, query.session_id);
   }
 

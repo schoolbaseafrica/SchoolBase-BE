@@ -11,6 +11,8 @@ import {
   HttpStatus,
   Query,
   ParseUUIDPipe,
+  Req,
+  ForbiddenException,
   UploadedFile,
   Headers,
   UseInterceptors,
@@ -134,7 +136,18 @@ export class StudentController {
   @ListStudentsDocs()
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
   @UseGuards(JwtAuthGuard, RolesGuard)
-  findAll(@Query() listStudentsDto: ListStudentsDto) {
+  findAll(
+    @Query() listStudentsDto: ListStudentsDto,
+    @Req() req: { user: { roles: UserRole[] } },
+  ) {
+    if (
+      req.user.roles.includes(UserRole.TEACHER) &&
+      !req.user.roles.includes(UserRole.ADMIN)
+    ) {
+      throw new ForbiddenException(
+        'Use your assigned class roster to view students',
+      );
+    }
     return this.studentService.findAll(listStudentsDto);
   }
 

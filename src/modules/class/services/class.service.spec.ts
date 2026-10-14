@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -40,6 +41,7 @@ const mockRepository = {
 };
 
 const mockDataSource = {
+  query: jest.fn(),
   createEntityManager: jest.fn(),
   getRepository: jest.fn().mockReturnValue(mockRepository),
   transaction: jest.fn().mockImplementation(async (callback) => {
@@ -1112,6 +1114,26 @@ describe('ClassService', () => {
 
       await expect(service.getStudentsByClass('wrong-id')).rejects.toThrow(
         NotFoundException,
+      );
+    });
+  });
+
+  describe('teacher class roster authorization', () => {
+    it('rejects a teacher without a class or subject assignment', async () => {
+      mockDataSource.query.mockResolvedValueOnce([]);
+      await expect(
+        service.assertTeacherCanViewClass('class-1', 'teacher-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows a teacher with a matching assignment', async () => {
+      mockDataSource.query.mockResolvedValueOnce([{ allowed: 1 }]);
+      await expect(
+        service.assertTeacherCanViewClass('class-1', 'teacher-1'),
+      ).resolves.toBeUndefined();
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('class_subjects'),
+        ['class-1', 'teacher-1'],
       );
     });
   });
