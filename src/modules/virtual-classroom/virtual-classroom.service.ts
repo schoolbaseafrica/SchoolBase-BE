@@ -165,16 +165,12 @@ export class VirtualClassroomService {
 
   async get(id: string, userId: string, roles: string[]) {
     const room = await this.authorize(id, userId, roles);
-    if (roles.includes('student') && room.status === 'live') {
-      const now = new Date();
-      const slot = await this.lessonSlot(room.scheduleId);
-      if (
-        !isWithinLessonSlot(slot, now) ||
-        now < room.startsAt ||
-        now >= room.endsAt
-      ) {
-        return { ...room, status: 'scheduled' as const };
-      }
+    if (roles.includes('student')) {
+      if (room.status === 'scheduled' || room.status === 'cancelled')
+        throw new BadRequestException(
+          'This classroom has not opened to students',
+        );
+      if (room.status === 'live') await this.assertStudentLessonIsLive(room);
     }
     return room;
   }
@@ -246,6 +242,7 @@ export class VirtualClassroomService {
         { userId },
       );
     const rooms = await qb.getMany();
+    if (!roles.includes('student')) return rooms;
     const liveIds = [
       ...new Set(
         rooms
@@ -345,7 +342,7 @@ export class VirtualClassroomService {
   }
 
   async getWhiteboard(id: string, userId: string, roles: string[]) {
-    const room = await this.authorize(id, userId, roles);
+    const room = await this.get(id, userId, roles);
     return {
       version: room.whiteboardVersion,
       snapshot: room.whiteboardSnapshot ?? {},
@@ -360,11 +357,12 @@ export class VirtualClassroomService {
     roles: string[],
   ) {
     const room = await this.authorize(id, userId, roles);
-    if (room.status !== 'live')
-      throw new BadRequestException(
-        'The whiteboard is editable only while live',
-      );
     const isStudent = roles.includes('student');
+    if (room.status !== 'live' && !(room.status === 'scheduled' && !isStudent))
+      throw new BadRequestException(
+        'The whiteboard is editable only during preparation or a live class',
+      );
+    if (isStudent) await this.assertStudentLessonIsLive(room);
     if (isStudent && !room.allowStudentDraw)
       throw new ForbiddenException('Student drawing is disabled');
 
@@ -868,9 +866,12 @@ export class VirtualClassroomService {
 
   async createMediaToken(id: string, userId: string, roles: string[]) {
     const room = await this.authorize(id, userId, roles);
-    if (room.status !== 'live')
+    const preparing =
+      room.status === 'scheduled' &&
+      (roles.includes('admin') || roles.includes('teacher'));
+    if (room.status !== 'live' && !preparing)
       throw new BadRequestException(
-        'Live audio is available only while the classroom is live',
+        'Classroom media is available only during preparation or a live class',
       );
     if (roles.includes('student')) await this.assertStudentLessonIsLive(room);
     const settings = this.liveKitSettings();

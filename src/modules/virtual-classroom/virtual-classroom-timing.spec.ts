@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 
+import { ClassroomCollaborationService } from './classroom-collaboration.service';
 import { VirtualClassroomSession } from './entities/virtual-classroom.entity';
 import { VirtualClassroomService } from './virtual-classroom.service';
 
@@ -39,10 +40,15 @@ describe('virtual classroom timetable timing', () => {
     const service = Object.create(
       VirtualClassroomService.prototype,
     ) as VirtualClassroomService;
+    const queryBuilder = {
+      orderBy: jest.fn(),
+      andWhere: jest.fn(),
+      getMany: jest.fn().mockResolvedValue([{ ...room, status: 'live' }]),
+    };
+    queryBuilder.orderBy.mockReturnValue(queryBuilder);
+    queryBuilder.andWhere.mockReturnValue(queryBuilder);
     Reflect.set(service, 'sessions', {
-      createQueryBuilder: () => ({
-        orderBy: () => ({ getMany: async () => [{ ...room, status: 'live' }] }),
-      }),
+      createQueryBuilder: () => queryBuilder,
     });
     Reflect.set(service, 'dataSource', {
       query: jest.fn().mockResolvedValue([
@@ -55,7 +61,12 @@ describe('virtual classroom timetable timing', () => {
       ]),
     });
 
-    const listed = await service.list('student-1', [], undefined, undefined);
+    const listed = await service.list(
+      'student-1',
+      ['student'],
+      undefined,
+      undefined,
+    );
     expect(listed[0].status).toBe('scheduled');
   });
 
@@ -78,6 +89,78 @@ describe('virtual classroom timetable timing', () => {
     });
     await expect(
       service.join(room.id, 'student-1', ['student']),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('lets the assigned teacher prepare a scheduled whiteboard but keeps students out', async () => {
+    const service = Object.create(
+      VirtualClassroomService.prototype,
+    ) as VirtualClassroomService;
+    Reflect.set(service, 'authorize', jest.fn().mockResolvedValue({ ...room }));
+    const update = jest.fn().mockReturnValue({
+      set: () => ({
+        where: () => ({
+          andWhere: () => ({ execute: async () => ({ affected: 1 }) }),
+        }),
+      }),
+    });
+    Reflect.set(service, 'sessions', {
+      createQueryBuilder: () => ({ update }),
+    });
+
+    await expect(
+      service.updateWhiteboard(
+        room.id,
+        { version: 0, snapshot: { title: 'Prepared lesson' } },
+        'teacher-1',
+        ['teacher'],
+      ),
+    ).resolves.toEqual({
+      version: 1,
+      snapshot: { title: 'Prepared lesson' },
+    });
+    await expect(
+      service.get(room.id, 'student-1', ['student']),
+    ).rejects.toThrow('This classroom has not opened to students');
+
+    const collaboration = Object.create(
+      ClassroomCollaborationService.prototype,
+    ) as ClassroomCollaborationService;
+    Reflect.set(collaboration, 'classrooms', {
+      get: jest.fn().mockResolvedValue({ ...room, allowStudentDraw: false }),
+    });
+    Reflect.set(collaboration, 'dataSource', {
+      query: jest.fn().mockResolvedValue([{ name: 'Teacher' }]),
+    });
+    Reflect.set(collaboration, 'jwt', {
+      signAsync: jest.fn().mockResolvedValue('ticket'),
+    });
+    await expect(
+      collaboration.createTicket(room.id, 'teacher-1', ['teacher']),
+    ).resolves.toMatchObject({ ticket: 'ticket', canWrite: true });
+    await expect(
+      collaboration.createTicket(room.id, 'student-1', ['student']),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      collaboration.canWrite(room.id, 'student-1', ['student']),
+    ).resolves.toBe(false);
+
+    const liveKitConfig = new Map([
+      ['livekit.url', 'wss://classroom.example.test'],
+      ['livekit.apiKey', 'test-key'],
+      ['livekit.apiSecret', 'test-secret-for-signed-tokens'],
+    ]);
+    Reflect.set(service, 'config', {
+      get: (key: string) => liveKitConfig.get(key),
+    });
+    Reflect.set(service, 'dataSource', {
+      query: jest.fn().mockResolvedValue([{ name: 'Teacher' }]),
+    });
+    await expect(
+      service.createMediaToken(room.id, 'teacher-1', ['teacher']),
+    ).resolves.toMatchObject({ canPublish: true });
+    await expect(
+      service.createMediaToken(room.id, 'student-1', ['student']),
     ).rejects.toThrow(BadRequestException);
   });
 });

@@ -31,9 +31,12 @@ export class ClassroomCollaborationService {
 
   async createTicket(classroomId: string, userId: string, roles: string[]) {
     const room = await this.classrooms.get(classroomId, userId, roles);
-    if (room.status !== 'live')
+    const preparing =
+      room.status === 'scheduled' &&
+      (roles.includes('admin') || roles.includes('teacher'));
+    if (room.status !== 'live' && !preparing)
       throw new BadRequestException(
-        'Collaboration is available only while the classroom is live',
+        'Collaboration is available only during preparation or a live class',
       );
     const canWrite =
       roles.includes('admin') ||
@@ -78,10 +81,12 @@ export class ClassroomCollaborationService {
   async canWrite(classroomId: string, userId: string, roles: string[]) {
     const room = await this.classrooms.get(classroomId, userId, roles);
     return (
-      room.status === 'live' &&
-      (roles.includes('admin') ||
-        roles.includes('teacher') ||
-        (roles.includes('student') && room.allowStudentDraw))
+      (room.status === 'scheduled' &&
+        (roles.includes('admin') || roles.includes('teacher'))) ||
+      (room.status === 'live' &&
+        (roles.includes('admin') ||
+          roles.includes('teacher') ||
+          (roles.includes('student') && room.allowStudentDraw)))
     );
   }
 
@@ -147,9 +152,9 @@ export class ClassroomCollaborationService {
         `SELECT status FROM virtual_classroom_sessions WHERE id = $1 LIMIT 1`,
         [classroomId],
       )) as Array<{ status: string }>;
-      if (rooms[0]?.status !== 'live')
+      if (!['scheduled', 'live'].includes(rooms[0]?.status ?? ''))
         throw new BadRequestException(
-          'Collaboration is available only while the classroom is live',
+          'Collaboration is available only during preparation or a live class',
         );
       await this.ensurePage(classroomId, pageKey, manager);
       const rows = (await manager.query(
