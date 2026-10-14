@@ -20,7 +20,9 @@ describe('UserService', () => {
     innerJoin: jest.fn().mockReturnThis(),
     where: jest.fn().mockReturnThis(),
     andWhere: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
     getOne: jest.fn(),
+    getMany: jest.fn(),
   };
 
   const mockDataSource = {
@@ -235,19 +237,31 @@ describe('UserService', () => {
   });
 
   describe('findByLoginIdentifier', () => {
-    it('uses the existing email lookup for email identifiers', async () => {
+    it('finds stored mixed-case emails without changing the supplied password', async () => {
       const user = { id: 'user-id', email: 'student@example.com' } as User;
-      userModelAction.get.mockResolvedValue(user);
+      queryBuilder.getMany.mockResolvedValue([user]);
 
       const result = await service.findByLoginIdentifier(
         ' Student@Example.com ',
       );
 
-      expect(userModelAction.get).toHaveBeenCalledWith({
-        identifierOptions: { email: 'student@example.com' },
-      });
-      expect(mockDataSource.getRepository).not.toHaveBeenCalled();
+      expect(queryBuilder.where).toHaveBeenCalledWith(
+        'LOWER(user.email) = :email',
+        { email: 'student@example.com' },
+      );
+      expect(queryBuilder.limit).toHaveBeenCalledWith(2);
       expect(result).toBe(user);
+    });
+
+    it('refuses ambiguous legacy emails that differ only in case', async () => {
+      queryBuilder.getMany.mockResolvedValue([
+        { id: 'user-1' },
+        { id: 'user-2' },
+      ]);
+
+      await expect(
+        service.findByLoginIdentifier('Teacher@Example.com'),
+      ).resolves.toBeNull();
     });
 
     it('finds the student user by registration number without case sensitivity', async () => {

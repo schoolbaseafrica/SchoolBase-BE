@@ -254,7 +254,16 @@ export class UserService {
   async findByLoginIdentifier(identifier: string) {
     const value = identifier.trim();
     if (value.includes('@')) {
-      return this.findByEmail(value.toLowerCase());
+      // Older teacher and parent accounts may have stored mixed-case email.
+      // Refuse ambiguous legacy duplicates instead of selecting a different
+      // account when only letter case differs.
+      const matches = await this.dataSource
+        .getRepository(User)
+        .createQueryBuilder('user')
+        .where('LOWER(user.email) = :email', { email: value.toLowerCase() })
+        .limit(2)
+        .getMany();
+      return matches.length === 1 ? matches[0] : null;
     }
 
     return this.dataSource
