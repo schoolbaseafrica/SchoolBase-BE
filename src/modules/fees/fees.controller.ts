@@ -32,7 +32,7 @@ import { FeeStudentResponseDto } from './dto/fee-students-response.dto';
 import { CreateFeesDto, QueryFeesDto, UpdateFeesDto } from './dto/fees.dto';
 import { GetActiveFeesDto } from './dto/get-active-fees.dto';
 import { StudentFeeDetailsQueryDto } from './dto/student-fee-details.dto';
-import { FeesService } from './fees.service';
+import { FeesService, IFeeViewer } from './fees.service';
 
 @Controller('fees')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -150,18 +150,21 @@ export class FeesController {
   }
 
   @Get('student/:studentId')
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.PARENT, UserRole.STUDENT)
   @swaggerGetStudentFeeDetails()
   async getStudentFeeDetails(
     @Param('studentId') studentId: string,
     @Query() query: StudentFeeDetailsQueryDto,
+    @Request() req: { user: IFeeViewer },
   ) {
     const result = await this.feesService.getStudentFeeDetails(
       studentId,
       query.term_id,
       query.session_id,
+      req.user,
     );
     return {
+      status_code: 200,
       message: sysMsg.FEES_RETRIEVED_SUCCESSFULLY,
       data: result,
     };

@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, EntityManager, In } from 'typeorm';
@@ -15,6 +19,7 @@ import { Class } from '../class/entities/class.entity'; // Added Class entity
 import { ClassModelAction } from '../class/model-actions/class.actions';
 import { FeeNotificationService } from '../notification/services';
 import { PaymentService } from '../payment/services/payment.service';
+import { UserRole } from '../shared/enums';
 import { StudentModelAction } from '../student/model-actions/student-actions';
 
 import { CreateFeesDto, QueryFeesDto, UpdateFeesDto } from './dto/fees.dto';
@@ -939,6 +944,51 @@ describe('FeesService', () => {
       },
     ];
 
+    it.each([
+      { roles: [UserRole.STUDENT], student_id: 'other-student' },
+      { roles: [UserRole.PARENT], parent_id: 'other-parent' },
+      { roles: [UserRole.TEACHER] },
+    ])(
+      'refuses an unrelated viewer before reading balances',
+      async (viewer) => {
+        (studentModelAction.get as jest.Mock).mockResolvedValue({
+          ...mockStudent,
+          parent: { id: 'linked-parent' },
+        });
+
+        await expect(
+          service.getStudentFeeDetails(studentId, termId, sessionId, viewer),
+        ).rejects.toThrow(ForbiddenException);
+        expect(termModelAction.get).not.toHaveBeenCalled();
+        expect(feesModelAction.getFeesForStudent).not.toHaveBeenCalled();
+        expect(paymentService.fetchAllPayments).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { roles: [UserRole.STUDENT], student_id: studentId },
+      { roles: [UserRole.PARENT], parent_id: 'linked-parent' },
+    ])('allows the student or linked parent to view fees', async (viewer) => {
+      (studentModelAction.get as jest.Mock).mockResolvedValue({
+        ...mockStudent,
+        parent: { id: 'linked-parent' },
+      });
+      (termModelAction.get as jest.Mock).mockResolvedValue(mockTerm);
+      (feesModelAction.getFeesForStudent as jest.Mock).mockResolvedValue([]);
+      (paymentService.fetchAllPayments as jest.Mock).mockResolvedValue({
+        payments: [],
+        total: 0,
+      });
+
+      const result = await service.getStudentFeeDetails(
+        studentId,
+        termId,
+        sessionId,
+        viewer,
+      );
+      expect(result.student_info.student_id).toBe(studentId);
+    });
+
     it('should return student fee details with correct breakdown', async () => {
       (studentModelAction.get as jest.Mock).mockResolvedValue(mockStudent);
       (termModelAction.get as jest.Mock).mockResolvedValue(mockTerm);
@@ -954,6 +1004,7 @@ describe('FeesService', () => {
         studentId,
         termId,
         sessionId,
+        { roles: [UserRole.ADMIN] },
       );
 
       expect(result.student_info).toEqual({
@@ -1044,6 +1095,7 @@ describe('FeesService', () => {
         studentId,
         termId,
         sessionId,
+        { roles: [UserRole.ADMIN] },
       );
 
       expect(result.fee_breakdown[0].status).toBe('PAID');
@@ -1089,6 +1141,7 @@ describe('FeesService', () => {
         studentId,
         termId,
         sessionId,
+        { roles: [UserRole.ADMIN] },
       );
 
       expect(result.fee_breakdown[0].amount_paid).toBe(25000);
@@ -1122,7 +1175,9 @@ describe('FeesService', () => {
         total: 0,
       });
 
-      await service.getStudentFeeDetails(studentId, termId, sessionId);
+      await service.getStudentFeeDetails(studentId, termId, sessionId, {
+        roles: [UserRole.ADMIN],
+      });
 
       expect(feesModelAction.getFeesForStudent).toHaveBeenCalledWith(
         studentId,
@@ -1140,14 +1195,18 @@ describe('FeesService', () => {
       });
 
       await expect(
-        service.getStudentFeeDetails(studentId, termId, sessionId),
+        service.getStudentFeeDetails(studentId, termId, sessionId, {
+          roles: [UserRole.ADMIN],
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw NotFoundException if student not found', async () => {
       (studentModelAction.get as jest.Mock).mockResolvedValue(null);
       await expect(
-        service.getStudentFeeDetails(studentId, termId, sessionId),
+        service.getStudentFeeDetails(studentId, termId, sessionId, {
+          roles: [UserRole.ADMIN],
+        }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -1155,7 +1214,9 @@ describe('FeesService', () => {
       (studentModelAction.get as jest.Mock).mockResolvedValue(mockStudent);
       (termModelAction.get as jest.Mock).mockResolvedValue(null);
       await expect(
-        service.getStudentFeeDetails(studentId, termId, sessionId),
+        service.getStudentFeeDetails(studentId, termId, sessionId, {
+          roles: [UserRole.ADMIN],
+        }),
       ).rejects.toThrow(BadRequestException);
     });
   });

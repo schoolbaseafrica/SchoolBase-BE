@@ -3,6 +3,7 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   forwardRef,
   Optional,
@@ -20,7 +21,7 @@ import { ClassModelAction } from '../class/model-actions/class.actions';
 import { FeeNotificationService } from '../notification/services/fee-notification.service';
 import { PaymentStatus } from '../payment/enums/payment.enums';
 import { PaymentService } from '../payment/services/payment.service';
-import { FeeNotificationType } from '../shared/enums';
+import { FeeNotificationType, UserRole } from '../shared/enums';
 import { StudentModelAction } from '../student/model-actions/student-actions';
 
 import { FeeComponentResponseDto } from './dto/fee-component-response.dto';
@@ -31,6 +32,12 @@ import { StudentFeeDetailsResponseDto } from './dto/student-fee-details.dto';
 import { Fees } from './entities/fees.entity';
 import { FeeStatus } from './enums/fees.enums';
 import { FeesModelAction } from './model-action/fees.model-action';
+
+export interface IFeeViewer {
+  roles: UserRole[];
+  student_id?: string;
+  parent_id?: string;
+}
 
 @Injectable()
 export class FeesService {
@@ -529,18 +536,31 @@ export class FeesService {
     studentId: string,
     termId: string,
     sessionId: string,
+    viewer: IFeeViewer,
   ): Promise<StudentFeeDetailsResponseDto> {
     const student = await this.studentModelAction.get({
       identifierOptions: { id: studentId },
       relations: {
         user: true,
         class_assignments: { class: { academicSession: true } },
+        parent: true,
         stream: true,
       },
     });
 
-    if (!student) {
+    if (!student || student.is_deleted) {
       throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
+    }
+
+    const canView =
+      viewer.roles.includes(UserRole.ADMIN) ||
+      (viewer.roles.includes(UserRole.STUDENT) &&
+        viewer.student_id === student.id) ||
+      (viewer.roles.includes(UserRole.PARENT) &&
+        !!viewer.parent_id &&
+        viewer.parent_id === student.parent?.id);
+    if (!canView) {
+      throw new ForbiddenException('You cannot view this student’s fees');
     }
 
     const term = await this.termModelAction.get({

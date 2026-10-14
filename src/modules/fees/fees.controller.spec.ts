@@ -99,6 +99,7 @@ describe('FeesController', () => {
             deactivate: jest.fn(),
             activate: jest.fn(),
             getStudentsForFee: jest.fn(),
+            getStudentFeeDetails: jest.fn(),
           },
         },
       ],
@@ -300,6 +301,34 @@ describe('FeesController', () => {
       await expect(
         controller.createFee(mockCreateFeesDto, mockUser),
       ).rejects.toThrow(validationError);
+    });
+  });
+
+  describe('getStudentFeeDetails', () => {
+    it('passes the authenticated viewer and returns a single response envelope', async () => {
+      const viewer = { roles: [UserRole.PARENT], parent_id: 'parent-1' };
+      const details = {
+        student_info: { student_id: 'student-1' },
+        fee_breakdown: [],
+        payment_history: [],
+      };
+      service.getStudentFeeDetails.mockResolvedValue(
+        details as Awaited<ReturnType<FeesService['getStudentFeeDetails']>>,
+      );
+
+      const response = await controller.getStudentFeeDetails(
+        'student-1',
+        { term_id: 'term-1', session_id: 'session-1' },
+        { user: viewer },
+      );
+
+      expect(service.getStudentFeeDetails).toHaveBeenCalledWith(
+        'student-1',
+        'term-1',
+        'session-1',
+        viewer,
+      );
+      expect(response).toMatchObject({ status_code: 200, data: details });
     });
   });
 
