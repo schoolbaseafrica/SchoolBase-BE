@@ -152,7 +152,7 @@ export class MeetingService {
     if (term.length < 2) return { users: [], classes: [] };
     const users = await this.db.query(
       `SELECT id, concat_ws(' ', first_name, last_name) AS name,
-      email, role FROM users WHERE is_active = true AND deleted_at IS NULL
+      email, role::text[] AS role FROM users WHERE is_active = true AND deleted_at IS NULL
       AND (concat_ws(' ', first_name, last_name) ILIKE $1 OR email ILIKE $1)
       ORDER BY first_name, last_name LIMIT 30`,
       [`%${term}%`],
