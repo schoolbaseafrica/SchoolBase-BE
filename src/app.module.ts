@@ -26,6 +26,7 @@ import { FeesModule } from './modules/fees/fees.module';
 import { GradeModule } from './modules/grade/grade.module';
 import { InviteModule } from './modules/invites/invites.module';
 import { LandingPageModule } from './modules/landing-page/landing-page.module';
+import { MeetingModule } from './modules/meeting/meeting.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { ParentModule } from './modules/parent/parent.module';
 import { PaymentModule } from './modules/payment/payment.module';
@@ -137,6 +138,7 @@ import { VirtualClassroomModule } from './modules/virtual-classroom/virtual-clas
     ResultModule,
     NotificationModule,
     LandingPageModule,
+    MeetingModule,
     VirtualClassroomModule,
   ],
   controllers: [AppController, HealthController],
