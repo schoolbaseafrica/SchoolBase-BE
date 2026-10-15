@@ -1135,6 +1135,46 @@ describe('ClassService', () => {
         expect.stringContaining('class_subjects'),
         ['class-1', 'teacher-1'],
       );
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('ct.session_id = c.academic_session_id::text'),
+        ['class-1', 'teacher-1'],
+      );
+    });
+  });
+
+  describe('getTeachingClasses', () => {
+    const sessionId = 'a3b0bbf2-cc69-4811-bc13-8f32019f5e6e';
+    it('rejects a malformed session before querying the roster', async () => {
+      await expect(
+        service.getTeachingClasses('teacher-1', 'not-a-uuid'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockDataSource.query).not.toHaveBeenCalled();
+    });
+
+    it('returns class and subject teaching assignments in the selected session', async () => {
+      mockDataSource.query.mockResolvedValueOnce([
+        {
+          id: 'class-1',
+          name: 'JSS 3',
+          arm: 'A',
+          sessionId,
+          sessionName: '2026/2027',
+        },
+      ]);
+      await expect(
+        service.getTeachingClasses('teacher-1', sessionId),
+      ).resolves.toEqual([
+        {
+          id: 'class-1',
+          name: 'JSS 3',
+          arm: 'A',
+          academicSession: { id: sessionId, name: '2026/2027' },
+        },
+      ]);
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('ct.session_id = session.id::text'),
+        ['teacher-1', sessionId],
+      );
     });
   });
 

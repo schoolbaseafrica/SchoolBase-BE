@@ -59,6 +59,22 @@ describe('teacher CBT exam management', () => {
     );
   });
 
+  it('casts the exam UUID when checking text class-teacher session assignments', async () => {
+    const { service, query } = createService();
+    await service.listTeacherExams('teacher-user');
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('assignment.session_id = exam.session_id::text'),
+      ['teacher-user'],
+    );
+
+    Reflect.set(service, 'getExamAttempts', jest.fn().mockResolvedValue([]));
+    await service.getTeacherExamAttempts('exam-1', 'teacher-user');
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('assignment.session_id = exam.session_id::text'),
+      ['exam-1', 'teacher-user'],
+    );
+  });
+
   it('blocks management of exams owned by another teacher', async () => {
     const { service } = createService();
     Reflect.set(service, 'examRepository', {

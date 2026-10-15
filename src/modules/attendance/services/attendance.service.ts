@@ -144,7 +144,7 @@ export class AttendanceService {
     const rows = (await this.dataSource.query(
       `SELECT 1 FROM student_daily_attendance attendance
        JOIN class_teachers assignment ON assignment.class_id = attendance.class_id
-         AND assignment.session_id = attendance.session_id AND assignment.is_active = true
+         AND assignment.session_id = attendance.session_id::text AND assignment.is_active = true
        JOIN teachers teacher ON teacher.id = assignment.teacher_id
        WHERE attendance.id = $1 AND teacher.user_id = $2 AND teacher.is_active = true
        LIMIT 1`,

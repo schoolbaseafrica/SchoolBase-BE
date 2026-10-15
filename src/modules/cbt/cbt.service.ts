@@ -789,7 +789,7 @@ export class CbtService {
          AND (
            EXISTS (SELECT 1 FROM class_teachers assignment
                    WHERE assignment.class_id = class.id AND assignment.teacher_id = teacher.id
-                     AND assignment.session_id = exam.session_id AND assignment.is_active = true)
+                     AND assignment.session_id = exam.session_id::text AND assignment.is_active = true)
            OR (exam.subject_id IS NOT NULL AND EXISTS (
              SELECT 1 FROM class_subjects subject_assignment
              WHERE subject_assignment.class_id = class.id
@@ -815,7 +815,7 @@ export class CbtService {
        WHERE exam.exam_type = 'in_school' AND (
          EXISTS (SELECT 1 FROM class_teachers assignment
                  WHERE assignment.class_id = class.id AND assignment.teacher_id = teacher.id
-                   AND assignment.session_id = exam.session_id AND assignment.is_active = true)
+                   AND assignment.session_id = exam.session_id::text AND assignment.is_active = true)
          OR (exam.subject_id IS NOT NULL AND EXISTS (
            SELECT 1 FROM class_subjects subject_assignment
            WHERE subject_assignment.class_id = class.id

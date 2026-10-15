@@ -966,7 +966,7 @@ export class ClassService {
        WHERE c.id = $1 AND c.is_deleted = false AND (
          EXISTS (SELECT 1 FROM class_teachers ct
                  WHERE ct.class_id = c.id AND ct.teacher_id = $2
-                   AND ct.session_id = c.academic_session_id AND ct.is_active = true)
+                   AND ct.session_id = c.academic_session_id::text AND ct.is_active = true)
          OR EXISTS (SELECT 1 FROM class_subjects cs
                     JOIN teachers teacher ON teacher.id = cs.teacher_id
                     WHERE cs.class_id = c.id AND cs.teacher_id = $2
@@ -986,33 +986,39 @@ export class ClassService {
     const targetSession = sessionId || (await this.getActiveSession());
     const targetSessionId =
       typeof targetSession === 'string' ? targetSession : targetSession.id;
-    const classes = await this.dataSource
-      .getRepository(Class)
-      .createQueryBuilder('class')
-      .leftJoinAndSelect('class.academicSession', 'academicSession')
-      .where('class.academicSession = :sessionId', {
-        sessionId: targetSessionId,
-      })
-      .andWhere('class.is_deleted = false')
-      .andWhere(
-        `(
-        EXISTS (SELECT 1 FROM class_teachers ct WHERE ct.class_id = class.id
-          AND ct.teacher_id = :teacherId AND ct.session_id = :sessionId AND ct.is_active = true)
-        OR EXISTS (SELECT 1 FROM class_subjects cs JOIN teachers teacher ON teacher.id = cs.teacher_id
-          WHERE cs.class_id = class.id AND cs.teacher_id = :teacherId AND teacher.is_active = true)
-      )`,
-        { teacherId, sessionId: targetSessionId },
-      )
-      .orderBy('class.name', 'ASC')
-      .addOrderBy('class.arm', 'ASC')
-      .getMany();
+    if (!isUUID(targetSessionId)) {
+      throw new BadRequestException('Invalid academic session ID');
+    }
+    const classes = (await this.dataSource.query(
+      `SELECT c.id, c.name, c.arm,
+         session.id AS "sessionId", session.name AS "sessionName"
+       FROM "class" c
+       JOIN academic_sessions session ON session.id = c.academic_session_id
+       JOIN teachers teacher ON teacher.id = $1 AND teacher.is_active = true
+       WHERE session.id = $2::uuid AND c.is_deleted = false
+         AND (
+           EXISTS (SELECT 1 FROM class_teachers ct
+                   WHERE ct.class_id = c.id AND ct.teacher_id = teacher.id
+                     AND ct.session_id = session.id::text AND ct.is_active = true)
+           OR EXISTS (SELECT 1 FROM class_subjects cs
+                      WHERE cs.class_id = c.id AND cs.teacher_id = teacher.id)
+         )
+       ORDER BY c.name, c.arm`,
+      [teacherId, targetSessionId],
+    )) as Array<{
+      id: string;
+      name: string;
+      arm: string | null;
+      sessionId: string;
+      sessionName: string;
+    }>;
     return classes.map((item) => ({
       id: item.id,
       name: item.name,
       arm: item.arm,
       academicSession: {
-        id: item.academicSession.id,
-        name: item.academicSession.name,
+        id: item.sessionId,
+        name: item.sessionName,
       },
     }));
   }

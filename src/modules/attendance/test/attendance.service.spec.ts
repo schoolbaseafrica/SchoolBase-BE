@@ -168,6 +168,21 @@ describe('AttendanceService', () => {
   });
 
   describe('daily attendance access', () => {
+    it('compares text teacher sessions with UUID daily attendance sessions safely', async () => {
+      const query = jest
+        .spyOn(service['dataSource'], 'query')
+        .mockResolvedValueOnce([{ allowed: 1 }]);
+      await expect(
+        service.assertCanEditDailyAttendance('user-1', 'attendance-1'),
+      ).resolves.toBeUndefined();
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'assignment.session_id = attendance.session_id::text',
+        ),
+        ['attendance-1', 'user-1'],
+      );
+    });
+
     it('rejects a teacher who is not assigned to the class', async () => {
       mockFindOne.mockResolvedValueOnce(null);
       await expect(
