@@ -8,6 +8,7 @@ import { UploadModule } from '../upload/upload.module';
 
 import { School } from './entities/school.entity';
 import { SchoolModelAction } from './model-actions/school.action';
+import { OwnerEmailDigestService } from './owner-email-digest.service';
 import { SchoolMobileAppController } from './school-mobile-app.controller';
 import { SchoolMobileAppService } from './school-mobile-app.service';
 import { SchoolSettingsService } from './school-settings.service';
@@ -27,6 +28,7 @@ import { SchoolService } from './school.service';
     SchoolSettingsService,
     SchoolModelAction,
     SchoolMobileAppService,
+    OwnerEmailDigestService,
     InitialSetupGuard,
   ],
   exports: [SchoolModelAction, SchoolService],

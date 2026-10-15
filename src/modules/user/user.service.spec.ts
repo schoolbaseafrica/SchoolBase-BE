@@ -528,6 +528,10 @@ describe('UserService', () => {
         JSON.stringify({ owner_user_id: successor.id }),
       ]);
       expect(query.mock.calls[4][0]).toContain('INSERT INTO "notifications"');
+      expect(query.mock.calls[5]).toEqual([
+        expect.stringContaining('UPDATE "owner_email_digest_preferences"'),
+        ['school-id'],
+      ]);
     });
 
     it('denies the former owner after a transfer', async () => {

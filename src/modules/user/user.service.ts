@@ -508,6 +508,16 @@ export class UserService {
           `${newOwner.first_name} ${newOwner.last_name} is now the school owner.`,
         ],
       );
+      // Summary choices belong to the former owner, not their successor.
+      await manager.query(
+        `UPDATE "owner_email_digest_preferences"
+         SET "enabled" = false, "frequency" = 'daily',
+             "categories" = '["students","attendance","fees","assessments","staff"]'::jsonb,
+             "next_due_at" = NULL, "period_start_at" = NULL,
+             "last_sent_at" = NULL, "attempts" = 0, "updated_at" = now()
+         WHERE "school_id" = $1`,
+        [school.id],
+      );
       return {
         owner_user_id: newOwner.id,
         first_name: newOwner.first_name,

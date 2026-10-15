@@ -21,6 +21,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 
 import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 
+import { OwnerEmailDigestService } from './owner-email-digest.service';
 import { SchoolSettingsService } from './school-settings.service';
 import { SchoolController } from './school.controller';
 import { SchoolService } from './school.service';
@@ -32,6 +33,7 @@ describe('SchoolController', () => {
     updateSchool: jest.Mock;
   };
   let schoolService: { getSchoolDetails: jest.Mock };
+  let ownerDigest: { get: jest.Mock; update: jest.Mock };
 
   beforeEach(async () => {
     const mockSchoolService = {
@@ -46,6 +48,10 @@ describe('SchoolController', () => {
       providers: [
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: InitialSetupGuard, useValue: { canActivate: () => true } },
+        {
+          provide: OwnerEmailDigestService,
+          useValue: { get: jest.fn(), update: jest.fn() },
+        },
         {
           provide: SchoolService,
           useValue: mockSchoolService,
@@ -65,6 +71,7 @@ describe('SchoolController', () => {
     controller = module.get<SchoolController>(SchoolController);
     settings = module.get(SchoolSettingsService);
     schoolService = module.get(SchoolService);
+    ownerDigest = module.get(OwnerEmailDigestService);
   });
 
   it('should be defined', () => {
@@ -93,5 +100,18 @@ describe('SchoolController', () => {
       undefined,
       'admin-1',
     );
+  });
+
+  it('uses the signed-in owner identity for summary preferences', () => {
+    const actor = { id: 'owner-1' } as never;
+    const dto = {
+      enabled: true,
+      frequency: 'daily',
+      categories: ['fees'],
+    } as never;
+    controller.getOwnerEmailDigest(actor);
+    controller.updateOwnerEmailDigest(dto, actor);
+    expect(ownerDigest.get).toHaveBeenCalledWith('owner-1');
+    expect(ownerDigest.update).toHaveBeenCalledWith('owner-1', dto);
   });
 });

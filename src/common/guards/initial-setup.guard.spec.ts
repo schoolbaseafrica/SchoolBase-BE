@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 
+import { OwnerEmailDigestService } from '../../modules/school/owner-email-digest.service';
 import { SchoolSettingsService } from '../../modules/school/school-settings.service';
 import { SchoolController } from '../../modules/school/school.controller';
 import { SchoolService } from '../../modules/school/school.service';
@@ -28,6 +29,7 @@ describe('Initial setup HTTP boundary', () => {
         { provide: SuperadminService, useValue: { createSuperAdmin } },
         { provide: SchoolService, useValue: { processInstallation } },
         { provide: SchoolSettingsService, useValue: {} },
+        { provide: OwnerEmailDigestService, useValue: {} },
         { provide: RateLimitGuard, useValue: { canActivate: () => true } },
       ],
     })

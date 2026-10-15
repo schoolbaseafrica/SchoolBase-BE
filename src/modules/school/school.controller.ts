@@ -29,6 +29,7 @@ import {
   DocsGetSetupStatus,
 } from './docs/school.decorator';
 import { CreateInstallationDto } from './dto/create-installation.dto';
+import { OwnerEmailDigestDto } from './dto/owner-email-digest.dto';
 import { UpdateMarketingSiteDto } from './dto/update-marketing-site.dto';
 import {
   UpdateActivityLogRetentionDto,
@@ -36,6 +37,7 @@ import {
   UpdateSchoolSettingsDto,
 } from './dto/update-school-settings.dto';
 import { UpdateWebsiteLayoutDto } from './dto/update-website-layout.dto';
+import { OwnerEmailDigestService } from './owner-email-digest.service';
 import { SchoolSettingsService } from './school-settings.service';
 import { SchoolService } from './school.service';
 
@@ -45,6 +47,7 @@ export class SchoolController {
   constructor(
     private readonly schoolService: SchoolService,
     private readonly settings: SchoolSettingsService,
+    private readonly ownerDigest: OwnerEmailDigestService,
   ) {}
 
   @Post('installation')
@@ -95,6 +98,25 @@ export class SchoolController {
   @Get('landing-page')
   getLandingPageConfig() {
     return this.settings.getLandingPageConfig();
+  }
+
+  @Get('owner-email-digest')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN)
+  getOwnerEmailDigest(@CurrentUser() actor: User) {
+    return this.ownerDigest.get(actor.id);
+  }
+
+  @Patch('owner-email-digest')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @ApiBearerAuth()
+  @Roles(UserRole.ADMIN)
+  updateOwnerEmailDigest(
+    @Body() dto: OwnerEmailDigestDto,
+    @CurrentUser() actor: User,
+  ) {
+    return this.ownerDigest.update(actor.id, dto);
   }
 
   @Patch('landing-page')

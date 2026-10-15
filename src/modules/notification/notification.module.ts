@@ -10,6 +10,7 @@ import { Notification } from './entities/notification.entity';
 import { NotificationModelAction } from './model-actions/notification.model-action';
 import { NotificationPreferenceModule } from './notification-preference.module';
 import { NotificationService, FeeNotificationService } from './services';
+import { OwnerEmailDigestDeliveryService } from './services/owner-email-digest-delivery.service';
 import { SchoolEmailAlertService } from './services/school-email-alert.service';
 
 @Module({
@@ -26,6 +27,7 @@ import { SchoolEmailAlertService } from './services/school-email-alert.service';
     NotificationModelAction,
     FeeNotificationService,
     SchoolEmailAlertService,
+    OwnerEmailDigestDeliveryService,
   ],
   exports: [
     NotificationModelAction,
