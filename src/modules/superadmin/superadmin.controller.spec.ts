@@ -1,6 +1,8 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import * as sysMsg from '../../constants/system.messages';
 
 import { CreateSuperadminDto } from './dto/create-superadmin.dto';
@@ -23,6 +25,8 @@ describe('SuperadminController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [SuperadminController],
       providers: [
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: InitialSetupGuard, useValue: { canActivate: () => true } },
         {
           provide: SuperadminService,
           useValue: mockService,

@@ -73,8 +73,11 @@ describe('FeesController', () => {
     component_name: 'Tuition Fee',
     amount: 500,
     description: 'Tuition fee for semester',
+    period_type: 'TERM',
     term_id: mockTerm.id,
     term: mockTerm,
+    session_id: mockTerm.sessionId,
+    academicSession: mockTerm.academicSession,
     classes: [],
     direct_assignments: [],
     status: FeeStatus.ACTIVE,
@@ -96,6 +99,7 @@ describe('FeesController', () => {
             deactivate: jest.fn(),
             activate: jest.fn(),
             getStudentsForFee: jest.fn(),
+            getStudentFeeDetails: jest.fn(),
           },
         },
       ],
@@ -297,6 +301,34 @@ describe('FeesController', () => {
       await expect(
         controller.createFee(mockCreateFeesDto, mockUser),
       ).rejects.toThrow(validationError);
+    });
+  });
+
+  describe('getStudentFeeDetails', () => {
+    it('passes the authenticated viewer and returns a single response envelope', async () => {
+      const viewer = { roles: [UserRole.PARENT], parent_id: 'parent-1' };
+      const details = {
+        student_info: { student_id: 'student-1' },
+        fee_breakdown: [],
+        payment_history: [],
+      };
+      service.getStudentFeeDetails.mockResolvedValue(
+        details as Awaited<ReturnType<FeesService['getStudentFeeDetails']>>,
+      );
+
+      const response = await controller.getStudentFeeDetails(
+        'student-1',
+        { term_id: 'term-1', session_id: 'session-1' },
+        { user: viewer },
+      );
+
+      expect(service.getStudentFeeDetails).toHaveBeenCalledWith(
+        'student-1',
+        'term-1',
+        'session-1',
+        viewer,
+      );
+      expect(response).toMatchObject({ status_code: 200, data: details });
     });
   });
 
@@ -511,9 +543,17 @@ describe('FeesController', () => {
     it('should update a fee successfully', async () => {
       service.update.mockResolvedValue(mockFee);
 
-      const result = await controller.updateFee('fee-123', mockUpdateFeesDto);
+      const result = await controller.updateFee(
+        'fee-123',
+        mockUpdateFeesDto,
+        mockUser,
+      );
 
-      expect(service.update).toHaveBeenCalledWith('fee-123', mockUpdateFeesDto);
+      expect(service.update).toHaveBeenCalledWith(
+        'fee-123',
+        mockUpdateFeesDto,
+        mockUser.user.userId,
+      );
       expect(result).toEqual({
         message: sysMsg.FEE_UPDATED_SUCCESSFULLY,
         fee: mockFee,
@@ -525,7 +565,7 @@ describe('FeesController', () => {
       service.update.mockRejectedValue(notFoundError);
 
       await expect(
-        controller.updateFee('invalid-id', mockUpdateFeesDto),
+        controller.updateFee('invalid-id', mockUpdateFeesDto, mockUser),
       ).rejects.toThrow(notFoundError);
     });
   });

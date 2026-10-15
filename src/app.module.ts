@@ -9,11 +9,15 @@ import { GlobalExceptionFilter } from './common/exceptions/filters/global-except
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import { LoggerModule } from './common/logger.module';
 import configuration from './config/config';
+import { HealthController } from './health.controller';
 import { LoggingInterceptor } from './middleware/logging.interceptor';
 import { AcademicSessionModule } from './modules/academic-session/academic-session.module';
 import { TermModule } from './modules/academic-term/term.module';
+import { ActivityLogModule } from './modules/activity-log/activity-log.module';
+import { AssignmentModule } from './modules/assignment/assignment.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CbtModule } from './modules/cbt/cbt.module';
 import { ClassModule } from './modules/class/class.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DatabaseModule } from './modules/database-setup/database.module';
@@ -22,6 +26,7 @@ import { FeesModule } from './modules/fees/fees.module';
 import { GradeModule } from './modules/grade/grade.module';
 import { InviteModule } from './modules/invites/invites.module';
 import { LandingPageModule } from './modules/landing-page/landing-page.module';
+import { MeetingModule } from './modules/meeting/meeting.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { ParentModule } from './modules/parent/parent.module';
 import { PaymentModule } from './modules/payment/payment.module';
@@ -38,6 +43,7 @@ import { TeacherSubjectModule } from './modules/teacher-subject/teacher-subject.
 import { TimetableModule } from './modules/timetable/timetable.module';
 import { UploadModule } from './modules/upload/upload.module';
 import { UserModule } from './modules/user/user.module';
+import { VirtualClassroomModule } from './modules/virtual-classroom/virtual-classroom.module';
 @Module({
   imports: [
     LoggerModule,
@@ -108,9 +114,12 @@ import { UserModule } from './modules/user/user.module';
     TeachersModule,
     ParentModule,
     ClassModule,
+    CbtModule,
     InviteModule,
     AcademicSessionModule,
+    ActivityLogModule,
     AttendanceModule,
+    AssignmentModule,
     SubjectModule,
     UploadModule,
     TermModule,
@@ -129,8 +138,10 @@ import { UserModule } from './modules/user/user.module';
     ResultModule,
     NotificationModule,
     LandingPageModule,
+    MeetingModule,
+    VirtualClassroomModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [
     AppService,
     LoggingInterceptor,

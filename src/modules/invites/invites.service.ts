@@ -16,6 +16,10 @@ import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, FindOptionsWhere, In, Repository } from 'typeorm';
 import { Logger } from 'winston';
 
+import {
+  resolveTenantLogo,
+  resolveTenantName,
+} from '../../config/tenant-identity';
 import { EmailTemplateID } from '../../constants/email-constants';
 import * as sysMsg from '../../constants/system.messages';
 import { EmailService } from '../email/email.service';
@@ -25,6 +29,7 @@ import { UserRole } from '../user/entities/user.entity';
 import { UserModelAction } from '../user/model-actions/user-actions';
 
 import { AcceptInviteDto } from './dto/accept-invite.dto';
+import { BootstrapAdminDto } from './dto/bootstrap-admin.dto';
 import { InviteQueryDto } from './dto/get-invites.dto';
 import {
   InviteUserDto,
@@ -50,6 +55,67 @@ export class InviteService {
     private readonly inviteRepository: Repository<Invite>,
   ) {
     this.logger = baseLogger.child({ context: InviteService.name });
+  }
+
+  async bootstrapFirstAdmin(dto: BootstrapAdminDto) {
+    const email = dto.email.trim().toLowerCase();
+    const fullName = dto.full_name?.trim() || email.split('@')[0];
+    return this.dataSource.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(908230505)');
+      const schools = (await manager.query(
+        `SELECT "id" FROM "schools" WHERE "installation_completed" = true LIMIT 1`,
+      )) as { id: string }[];
+      const setupAdmins = (await manager.query(
+        `SELECT "id" FROM "superadmin" WHERE "is_active" = true LIMIT 1`,
+      )) as { id: string }[];
+      if (!schools[0] || !setupAdmins[0])
+        throw new ConflictException('Complete school setup first');
+
+      const existing = (await manager.query(
+        `SELECT EXISTS (SELECT 1 FROM "users" WHERE 'ADMIN' = ANY("role")) AS "has_admin",
+                EXISTS (SELECT 1 FROM "invites" WHERE "role" = 'ADMIN'
+                  AND "accepted" = false AND "expires_at" > now()) AS "has_invite",
+                EXISTS (SELECT 1 FROM "users" WHERE lower("email") = $1) AS "email_used"`,
+        [email],
+      )) as { has_admin: boolean; has_invite: boolean; email_used: boolean }[];
+      if (existing[0]?.has_admin || existing[0]?.has_invite)
+        throw new ConflictException('First admin is already invited or active');
+      if (existing[0]?.email_used)
+        throw new ConflictException('Email already belongs to an account');
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+      const expiryDays = Number(
+        this.configService.get<string>('invite.expiry'),
+      );
+      if (!Number.isInteger(expiryDays) || expiryDays < 1)
+        throw new ConflictException('Invitation expiry is not configured');
+      await manager.query(
+        `INSERT INTO "invites" ("email", "full_name", "role", "token_hash", "expires_at", "status", "accepted", "school_id")
+         VALUES ($1, $2, 'ADMIN', $3, now() + ($4 * interval '1 day'), 'pending', false, $5)
+         ON CONFLICT ("email") DO UPDATE SET
+           "full_name" = EXCLUDED."full_name", "role" = EXCLUDED."role",
+           "token_hash" = EXCLUDED."token_hash", "expires_at" = EXCLUDED."expires_at",
+           "status" = 'pending', "accepted" = false, "school_id" = EXCLUDED."school_id"`,
+        [email, fullName, tokenHash, expiryDays, schools[0].id],
+      );
+      const frontendUrl = this.configService.get<string>('frontend.url');
+      if (!frontendUrl)
+        throw new ConflictException('Frontend URL is not configured');
+      await this.emailService.sendMail({
+        to: [{ email, name: fullName }],
+        subject: "You're invited to administer your school",
+        templateNameID: EmailTemplateID.INVITE,
+        templateData: {
+          first_name: fullName.split(' ')[0],
+          school_name: resolveTenantName(this.configService),
+          logo_url: resolveTenantLogo(this.configService),
+          role: 'ADMIN',
+          invite_link: `${frontendUrl}/accept-invite?token=${token}`,
+        },
+      });
+      return { email, message: 'First admin invitation sent' };
+    });
   }
 
   async inviteUser(inviteUserDto: InviteUserDto) {
@@ -93,6 +159,8 @@ export class InviteService {
             expires_at: expiresAt,
             role: inviteUserDto.role,
             full_name: inviteUserDto.full_name,
+            accepted: false,
+            status: InviteStatus.PENDING,
           },
           transactionOptions: {
             useTransaction: true,
@@ -143,13 +211,10 @@ export class InviteService {
 
   private async sendInvitationEmail(inviteDto: InviteUserDto, token: string) {
     const frontend_url = this.configService.get<string>('frontend.url');
-    const school_name =
-      this.configService.get<string>('app.name') || 'School Base';
-    const logo_url =
-      this.configService.get<string>('app.logo_url') ||
-      'https://via.placeholder.com/100';
+    const school_name = resolveTenantName(this.configService);
+    const logo_url = resolveTenantLogo(this.configService);
 
-    const invite_link = `${frontend_url}/reset-password?token=${token}`;
+    const invite_link = `${frontend_url}/accept-invite?token=${token}`;
     const first_name = inviteDto.full_name?.split(' ')[0] || 'User';
 
     const emailPayload: EmailPayload = {
@@ -216,7 +281,7 @@ export class InviteService {
 
     await this.inviteModelAction.update({
       identifierOptions: { id: invite.id },
-      updatePayload: { accepted: true },
+      updatePayload: { accepted: true, status: InviteStatus.USED },
       transactionOptions: { useTransaction: false },
     });
 
@@ -257,6 +322,9 @@ export class InviteService {
     // --- Status filter ---
     if (status) {
       qb.andWhere('invite.status = :status', { status });
+      if (status === InviteStatus.PENDING) {
+        qb.andWhere('invite.accepted = false');
+      }
     }
 
     // --- Role filter ---
@@ -365,6 +433,9 @@ export class InviteService {
     const rows = await parseCsv<{ email: string; full_name: string }>(
       file.buffer,
     );
+    if (rows.length > 1000) {
+      throw new BadRequestException('CSV files are limited to 1000 rows');
+    }
 
     const filteredRows = rows.filter((row) => row.email?.trim());
     const emails = filteredRows.map((row) => row.email.trim().toLowerCase());
@@ -394,18 +465,13 @@ export class InviteService {
     const createdInvites: InviteUserDto[] = [];
 
     const frontendUrl = this.configService.get<string>('frontend.url');
-    const schoolName =
-      this.configService.get<string>('school.name') || 'School Base';
-    const schoolLogoUrl =
-      this.configService.get<string>('school.logoUrl') ||
-      'https://via.placeholder.com/100';
+    const schoolName = resolveTenantName(this.configService);
+    const schoolLogoUrl = resolveTenantLogo(this.configService);
     const senderEmail = this.configService.get<string>('mail.from.address');
     const senderName = this.configService.get<string>('mail.from.name');
 
-    if (!frontendUrl || !schoolName || !schoolLogoUrl) {
-      throw new InternalServerErrorException(
-        'Missing SCHOOL_NAME, SCHOOL_LOGO_URL or FRONTEND_URL in config',
-      );
+    if (!frontendUrl) {
+      throw new InternalServerErrorException('Missing FRONTEND_URL in config');
     }
 
     // ✅ Changed: wrap invite creation + email sending in a transaction
@@ -434,7 +500,7 @@ export class InviteService {
           transactionOptions: { useTransaction: true, transaction: manager },
         });
 
-        const inviteLink = `${frontendUrl}/reset-password?token=${rawToken}`;
+        const inviteLink = `${frontendUrl}/accept-invite?token=${rawToken}`;
         const firstName = invite.full_name?.trim()?.split(' ')?.[0] || 'User';
 
         // ✅ Changed: email sending is inside transaction — if this fails, DB rolls back

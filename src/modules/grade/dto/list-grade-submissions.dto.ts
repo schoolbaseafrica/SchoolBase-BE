@@ -41,6 +41,11 @@ export class ListGradeSubmissionsDto {
   @IsUUID()
   term_id?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by academic session ID' })
+  @IsOptional()
+  @IsUUID()
+  academic_session_id?: string;
+
   @ApiPropertyOptional({
     description: 'Filter by teacher ID',
   })

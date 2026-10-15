@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, EntityManager, In } from 'typeorm';
@@ -15,6 +19,7 @@ import { Class } from '../class/entities/class.entity'; // Added Class entity
 import { ClassModelAction } from '../class/model-actions/class.actions';
 import { FeeNotificationService } from '../notification/services';
 import { PaymentService } from '../payment/services/payment.service';
+import { UserRole } from '../shared/enums';
 import { StudentModelAction } from '../student/model-actions/student-actions';
 
 import { CreateFeesDto, QueryFeesDto, UpdateFeesDto } from './dto/fees.dto';
@@ -57,6 +62,7 @@ describe('FeesService', () => {
   };
 
   const mockEntityManager: Partial<EntityManager> = {
+    query: jest.fn().mockResolvedValue([]),
     findOne: jest.fn(),
     find: jest.fn(),
     create: jest.fn(),
@@ -201,6 +207,10 @@ describe('FeesService', () => {
       const result = await service.create(createFeesDto, 'admin');
 
       expect(result).toEqual(mockFee);
+      expect(mockEntityManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining(['admin', 'FEE', mockFee.id, 'CREATE']),
+      );
       expect(feesModelAction.create).toHaveBeenCalledWith(
         expect.objectContaining({
           createPayload: expect.objectContaining({
@@ -539,7 +549,8 @@ describe('FeesService', () => {
         identifierOptions: { id: feeId },
         updatePayload: { status: FeeStatus.INACTIVE },
         transactionOptions: {
-          useTransaction: false,
+          useTransaction: true,
+          transaction: mockEntityManager,
         },
       });
 
@@ -608,7 +619,8 @@ describe('FeesService', () => {
         identifierOptions: { id: feeId },
         updatePayload: { status: FeeStatus.ACTIVE },
         transactionOptions: {
-          useTransaction: false,
+          useTransaction: true,
+          transaction: mockEntityManager,
         },
       });
 
@@ -659,18 +671,41 @@ describe('FeesService', () => {
 
   // ================= GET STUDENTS FOR FEE =================
   describe('getStudentsForFee', () => {
+    it('excludes deleted students from class and direct fee assignments', async () => {
+      const deleted = {
+        id: 'deleted-student',
+        is_deleted: true,
+        user: { first_name: 'Demo', last_name: 'QA', is_active: false },
+      };
+      (
+        feesModelAction.getFeeWithStudentAssignments as jest.Mock
+      ).mockResolvedValue({
+        ...mockFee,
+        classes: [
+          {
+            name: 'Class 1',
+            student_assignments: [{ student: deleted, is_active: true }],
+          },
+        ],
+        direct_assignments: [{ student: deleted }],
+      });
+      expect(await service.getStudentsForFee('fee-123')).toEqual([]);
+    });
+
     it('should return students from linked classes and direct assignments', async () => {
       const mockStudent1 = {
         id: 'student-1',
+        is_deleted: false,
         registration_number: 'REG001',
         photo_url: 'photo1.jpg',
-        user: { first_name: 'John', last_name: 'Doe' },
+        user: { first_name: 'John', last_name: 'Doe', is_active: true },
       };
       const mockStudent2 = {
         id: 'student-2',
+        is_deleted: false,
         registration_number: 'REG002',
         photo_url: 'photo2.jpg',
-        user: { first_name: 'Jane', last_name: 'Smith' },
+        user: { first_name: 'Jane', last_name: 'Smith', is_active: true },
       };
 
       const mockFeeWithStudents = {
@@ -679,7 +714,7 @@ describe('FeesService', () => {
           {
             name: 'Class 1',
             academicSession: { academicYear: '2023/2024' },
-            student_assignments: [{ student: mockStudent1 }],
+            student_assignments: [{ student: mockStudent1, is_active: true }],
           },
         ],
         direct_assignments: [{ student: mockStudent2 }],
@@ -713,9 +748,10 @@ describe('FeesService', () => {
     it('should deduplicate students present in both class and direct assignments', async () => {
       const mockStudent1 = {
         id: 'student-1',
+        is_deleted: false,
         registration_number: 'REG001',
         photo_url: 'photo1.jpg',
-        user: { first_name: 'John', last_name: 'Doe' },
+        user: { first_name: 'John', last_name: 'Doe', is_active: true },
       };
 
       const mockFeeWithDuplicates = {
@@ -724,7 +760,7 @@ describe('FeesService', () => {
           {
             name: 'Class 1',
             academicSession: { academicYear: '2023/2024' },
-            student_assignments: [{ student: mockStudent1 }],
+            student_assignments: [{ student: mockStudent1, is_active: true }],
           },
         ],
         direct_assignments: [{ student: mockStudent1 }],
@@ -863,10 +899,12 @@ describe('FeesService', () => {
       user: { first_name: 'John', last_name: 'Doe' },
       class_assignments: [
         {
+          is_active: true,
+          session_id: sessionId,
           class: {
             id: 'class-1',
             name: 'Grade 1',
-            academicSession: { academicYear: '2023/2024' },
+            academicSession: { id: sessionId, academicYear: '2023/2024' },
           },
         },
       ],
@@ -883,24 +921,73 @@ describe('FeesService', () => {
         id: 'fee-1',
         component_name: 'Tuition',
         amount: 50000,
+        period_type: 'TERM',
       },
       {
         id: 'fee-2',
         component_name: 'Library',
         amount: 5000,
+        period_type: 'TERM',
       },
     ];
 
     const mockPayments = [
       {
         fee_component_id: 'fee-1',
+        term_id: termId,
+        status: 'paid',
         amount_paid: 30000,
         payment_date: new Date(),
         payment_method: 'Bank Transfer',
         transaction_id: 'TXN123',
-        fee_component: { component_name: 'Tuition' },
+        fee_component: { component_name: 'Tuition', period_type: 'TERM' },
       },
     ];
+
+    it.each([
+      { roles: [UserRole.STUDENT], student_id: 'other-student' },
+      { roles: [UserRole.PARENT], parent_id: 'other-parent' },
+      { roles: [UserRole.TEACHER] },
+    ])(
+      'refuses an unrelated viewer before reading balances',
+      async (viewer) => {
+        (studentModelAction.get as jest.Mock).mockResolvedValue({
+          ...mockStudent,
+          parent: { id: 'linked-parent' },
+        });
+
+        await expect(
+          service.getStudentFeeDetails(studentId, termId, sessionId, viewer),
+        ).rejects.toThrow(ForbiddenException);
+        expect(termModelAction.get).not.toHaveBeenCalled();
+        expect(feesModelAction.getFeesForStudent).not.toHaveBeenCalled();
+        expect(paymentService.fetchAllPayments).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { roles: [UserRole.STUDENT], student_id: studentId },
+      { roles: [UserRole.PARENT], parent_id: 'linked-parent' },
+    ])('allows the student or linked parent to view fees', async (viewer) => {
+      (studentModelAction.get as jest.Mock).mockResolvedValue({
+        ...mockStudent,
+        parent: { id: 'linked-parent' },
+      });
+      (termModelAction.get as jest.Mock).mockResolvedValue(mockTerm);
+      (feesModelAction.getFeesForStudent as jest.Mock).mockResolvedValue([]);
+      (paymentService.fetchAllPayments as jest.Mock).mockResolvedValue({
+        payments: [],
+        total: 0,
+      });
+
+      const result = await service.getStudentFeeDetails(
+        studentId,
+        termId,
+        sessionId,
+        viewer,
+      );
+      expect(result.student_info.student_id).toBe(studentId);
+    });
 
     it('should return student fee details with correct breakdown', async () => {
       (studentModelAction.get as jest.Mock).mockResolvedValue(mockStudent);
@@ -917,6 +1004,7 @@ describe('FeesService', () => {
         studentId,
         termId,
         sessionId,
+        { roles: [UserRole.ADMIN] },
       );
 
       expect(result.student_info).toEqual({
@@ -928,6 +1016,12 @@ describe('FeesService', () => {
         term: 'First Term',
         session: '2023/2024',
       });
+      expect(feesModelAction.getFeesForStudent).toHaveBeenCalledWith(
+        studentId,
+        'class-1',
+        termId,
+        sessionId,
+      );
 
       expect(result.fee_breakdown).toHaveLength(2);
 
@@ -952,6 +1046,145 @@ describe('FeesService', () => {
       expect(result.payment_history).toHaveLength(1);
       expect(result.payment_history[0].amount_paid).toBe(30000);
       expect(result.payment_history[0].term_label).toBe('First Term');
+      expect(paymentService.fetchAllPayments).toHaveBeenCalledWith({
+        student_id: studentId,
+        session_id: sessionId,
+        page: 1,
+        limit: 1000,
+      });
+    });
+
+    it('counts earlier term payments for a session-wide fee', async () => {
+      (studentModelAction.get as jest.Mock).mockResolvedValue(mockStudent);
+      (termModelAction.get as jest.Mock).mockResolvedValue(mockTerm);
+      (feesModelAction.getFeesForStudent as jest.Mock).mockResolvedValue([
+        {
+          id: 'session-fee',
+          component_name: 'Annual fee',
+          amount: 5000,
+          period_type: 'SESSION',
+        },
+      ]);
+      (paymentService.fetchAllPayments as jest.Mock).mockResolvedValue({
+        payments: [
+          {
+            fee_component_id: 'session-fee',
+            term_id: 'earlier-term',
+            status: 'paid',
+            amount_paid: 5000,
+            fee_component: {
+              component_name: 'Annual fee',
+              period_type: 'SESSION',
+            },
+          },
+          {
+            fee_component_id: 'session-fee',
+            term_id: termId,
+            status: 'pending',
+            amount_paid: 1000,
+            fee_component: {
+              component_name: 'Annual fee',
+              period_type: 'SESSION',
+            },
+          },
+        ],
+        total: 2,
+      });
+
+      const result = await service.getStudentFeeDetails(
+        studentId,
+        termId,
+        sessionId,
+        { roles: [UserRole.ADMIN] },
+      );
+
+      expect(result.fee_breakdown[0].status).toBe('PAID');
+      expect(result.fee_breakdown[0].amount_paid).toBe(5000);
+    });
+
+    it('reads every page before calculating a fee balance', async () => {
+      (studentModelAction.get as jest.Mock).mockResolvedValue(mockStudent);
+      (termModelAction.get as jest.Mock).mockResolvedValue(mockTerm);
+      (feesModelAction.getFeesForStudent as jest.Mock).mockResolvedValue([
+        {
+          id: 'fee-1',
+          component_name: 'Tuition',
+          amount: 50000,
+          period_type: 'TERM',
+        },
+      ]);
+      (paymentService.fetchAllPayments as jest.Mock)
+        .mockResolvedValueOnce({
+          payments: [
+            {
+              fee_component_id: 'fee-1',
+              term_id: termId,
+              status: 'paid',
+              amount_paid: 10000,
+            },
+          ],
+          total: 2,
+        })
+        .mockResolvedValueOnce({
+          payments: [
+            {
+              fee_component_id: 'fee-1',
+              term_id: termId,
+              status: 'paid',
+              amount_paid: 15000,
+            },
+          ],
+          total: 2,
+        });
+
+      const result = await service.getStudentFeeDetails(
+        studentId,
+        termId,
+        sessionId,
+        { roles: [UserRole.ADMIN] },
+      );
+
+      expect(result.fee_breakdown[0].amount_paid).toBe(25000);
+      expect(paymentService.fetchAllPayments).toHaveBeenNthCalledWith(2, {
+        student_id: studentId,
+        session_id: sessionId,
+        page: 2,
+        limit: 1000,
+      });
+    });
+
+    it('uses the enrollment for the requested session instead of an older class', async () => {
+      (studentModelAction.get as jest.Mock).mockResolvedValue({
+        ...mockStudent,
+        class_assignments: [
+          {
+            is_active: true,
+            session_id: 'previous-session',
+            class: {
+              id: 'old-class',
+              academicSession: { id: 'previous-session' },
+            },
+          },
+          ...mockStudent.class_assignments,
+        ],
+      });
+      (termModelAction.get as jest.Mock).mockResolvedValue(mockTerm);
+      (feesModelAction.getFeesForStudent as jest.Mock).mockResolvedValue([]);
+      (paymentService.fetchAllPayments as jest.Mock).mockResolvedValue({
+        payments: [],
+        total: 0,
+      });
+
+      await service.getStudentFeeDetails(studentId, termId, sessionId, {
+        roles: [UserRole.ADMIN],
+      });
+
+      expect(feesModelAction.getFeesForStudent).toHaveBeenCalledWith(
+        studentId,
+        'class-1',
+        termId,
+        sessionId,
+      );
     });
 
     it('should throw BadRequestException if term does not belong to session', async () => {
@@ -962,14 +1195,18 @@ describe('FeesService', () => {
       });
 
       await expect(
-        service.getStudentFeeDetails(studentId, termId, sessionId),
+        service.getStudentFeeDetails(studentId, termId, sessionId, {
+          roles: [UserRole.ADMIN],
+        }),
       ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw NotFoundException if student not found', async () => {
       (studentModelAction.get as jest.Mock).mockResolvedValue(null);
       await expect(
-        service.getStudentFeeDetails(studentId, termId, sessionId),
+        service.getStudentFeeDetails(studentId, termId, sessionId, {
+          roles: [UserRole.ADMIN],
+        }),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -977,7 +1214,9 @@ describe('FeesService', () => {
       (studentModelAction.get as jest.Mock).mockResolvedValue(mockStudent);
       (termModelAction.get as jest.Mock).mockResolvedValue(null);
       await expect(
-        service.getStudentFeeDetails(studentId, termId, sessionId),
+        service.getStudentFeeDetails(studentId, termId, sessionId, {
+          roles: [UserRole.ADMIN],
+        }),
       ).rejects.toThrow(BadRequestException);
     });
   });

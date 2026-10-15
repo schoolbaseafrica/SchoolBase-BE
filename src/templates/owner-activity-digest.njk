@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <body style="font-family: Arial, sans-serif; line-height: 1.5; color: #1f2937">
+    <h1 style="font-size: 20px">{{ subject | escape }}</h1>
+    <p>Recorded updates from {{ dateRange | escape }}.</p>
+    <ul>
+      {% for section in sections %}
+      <li><strong>{{ section.title | escape }}:</strong> {{ section.count }} recorded updates —
+        <a href="{{ section.url | escape }}">View in SchoolBase</a></li>
+      {% endfor %}
+    </ul>
+    <p style="font-size: 12px; color: #6b7280">Counts cover recorded activity. Sign in for details.
+      Manage this email in School Settings.</p>
+  </body>
+</html>

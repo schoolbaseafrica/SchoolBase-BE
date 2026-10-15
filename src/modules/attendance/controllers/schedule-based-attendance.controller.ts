@@ -1,5 +1,6 @@
 import {
   Controller,
+  ForbiddenException,
   Post,
   Get,
   Patch,
@@ -63,7 +64,14 @@ export class ScheduleBasedAttendanceController {
   async getScheduleAttendance(
     @Param('scheduleId', ParseUUIDPipe) scheduleId: string,
     @Query('date') date: string,
+    @Req() req: IRequestWithUser,
   ) {
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertScheduleTeacherAccess(
+        req.user.userId,
+        scheduleId,
+      );
+    }
     return this.attendanceService.getScheduleAttendance(scheduleId, date);
   }
 
@@ -87,7 +95,14 @@ export class ScheduleBasedAttendanceController {
   async checkAttendanceMarked(
     @Param('scheduleId', ParseUUIDPipe) scheduleId: string,
     @Param('date') date: string,
+    @Req() req: IRequestWithUser,
   ) {
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertScheduleTeacherAccess(
+        req.user.userId,
+        scheduleId,
+      );
+    }
     return this.attendanceService.isAttendanceMarked(scheduleId, date);
   }
 
@@ -96,7 +111,21 @@ export class ScheduleBasedAttendanceController {
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
   @HttpCode(HttpStatus.OK)
   @ApiGetAttendanceRecords()
-  async getAttendanceRecords(@Query() query: GetScheduleAttendanceQueryDto) {
+  async getAttendanceRecords(
+    @Query() query: GetScheduleAttendanceQueryDto,
+    @Req() req: IRequestWithUser,
+  ) {
+    if (req.user.role === UserRole.TEACHER) {
+      if (!query.schedule_id) {
+        throw new ForbiddenException(
+          'Select one of your lessons to view attendance',
+        );
+      }
+      await this.attendanceService.assertScheduleTeacherAccess(
+        req.user.userId,
+        query.schedule_id,
+      );
+    }
     return this.attendanceService.getAttendanceRecords(query);
   }
 
@@ -108,7 +137,8 @@ export class ScheduleBasedAttendanceController {
   async updateAttendance(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAttendanceDto,
+    @Req() req: IRequestWithUser,
   ) {
-    return this.attendanceService.updateAttendance(id, dto);
+    return this.attendanceService.updateAttendance(id, dto, req.user.userId);
   }
 }

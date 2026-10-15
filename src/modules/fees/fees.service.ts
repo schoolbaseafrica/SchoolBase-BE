@@ -2,19 +2,26 @@ import {
   Inject,
   Injectable,
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   NotFoundException,
   forwardRef,
+  Optional,
 } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, In } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../constants/system.messages';
+import { AcademicSessionService } from '../academic-session/academic-session.service';
 import { TermModelAction } from '../academic-term/model-actions';
+import { TermService } from '../academic-term/term.service';
+import { writeActivityLog } from '../activity-log/write-activity-log';
 import { ClassModelAction } from '../class/model-actions/class.actions';
 import { FeeNotificationService } from '../notification/services/fee-notification.service';
+import { PaymentStatus } from '../payment/enums/payment.enums';
 import { PaymentService } from '../payment/services/payment.service';
-import { FeeNotificationType } from '../shared/enums';
+import { FeeNotificationType, UserRole } from '../shared/enums';
 import { StudentModelAction } from '../student/model-actions/student-actions';
 
 import { FeeComponentResponseDto } from './dto/fee-component-response.dto';
@@ -26,6 +33,12 @@ import { Fees } from './entities/fees.entity';
 import { FeeStatus } from './enums/fees.enums';
 import { FeesModelAction } from './model-action/fees.model-action';
 
+export interface IFeeViewer {
+  roles: UserRole[];
+  student_id?: string;
+  parent_id?: string;
+}
+
 @Injectable()
 export class FeesService {
   private readonly logger: Logger;
@@ -33,6 +46,10 @@ export class FeesService {
   constructor(
     private readonly feesModelAction: FeesModelAction,
     private readonly termModelAction: TermModelAction,
+    @Optional()
+    private readonly academicSessionService: AcademicSessionService | undefined,
+    @Optional()
+    private readonly termService: TermService | undefined,
     private readonly classModelAction: ClassModelAction,
     private readonly feeNotificationService: FeeNotificationService,
     private readonly dataSource: DataSource,
@@ -45,13 +62,21 @@ export class FeesService {
   }
 
   async create(createFeesDto: CreateFeesDto, createdBy: string): Promise<Fees> {
-    // Validate term exists
-    const term = await this.termModelAction.get({
-      identifierOptions: { id: createFeesDto.term_id },
-    });
-
-    if (!term) {
-      throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+    const periodType = createFeesDto.period_type ?? 'TERM';
+    let sessionId = createFeesDto.session_id;
+    if (periodType === 'TERM') {
+      if (!createFeesDto.term_id) {
+        throw new BadRequestException('A term is required for a term fee');
+      }
+      const term = await this.termModelAction.get({
+        identifierOptions: { id: createFeesDto.term_id },
+      });
+      if (!term) throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+      sessionId = term.sessionId;
+    } else if (!sessionId) {
+      throw new BadRequestException(
+        'An academic session is required for a session-wide fee',
+      );
     }
 
     // Validate that classes exist
@@ -68,13 +93,15 @@ export class FeesService {
     }
 
     // Create fee
-    const savedFee = await this.dataSource.transaction(async (manager) =>
-      this.feesModelAction.create({
+    const savedFee = await this.dataSource.transaction(async (manager) => {
+      const fee = await this.feesModelAction.create({
         createPayload: {
           component_name: createFeesDto.component_name,
           description: createFeesDto.description,
           amount: createFeesDto.amount,
-          term_id: createFeesDto.term_id,
+          period_type: periodType,
+          term_id: periodType === 'TERM' ? createFeesDto.term_id : null,
+          session_id: sessionId!,
           created_by: createdBy,
           classes,
         },
@@ -82,8 +109,17 @@ export class FeesService {
           useTransaction: true,
           transaction: manager,
         },
-      }),
-    );
+      });
+      await writeActivityLog(manager, {
+        actorUserId: createdBy,
+        entityType: 'FEE',
+        entityId: fee.id,
+        action: 'CREATE',
+        description: 'Fee component created',
+        newValues: { amount: fee.amount, status: fee.status },
+      });
+      return fee;
+    });
 
     this.logger.info('Fee component created successfully', {
       fee_id: savedFee.id,
@@ -110,7 +146,21 @@ export class FeesService {
     limit: number;
     totalPages: number;
   }> {
-    const result = await this.feesModelAction.findAllFees(queryDto);
+    const scopedQuery = { ...queryDto };
+    if (
+      !scopedQuery.session_id &&
+      !scopedQuery.term_id &&
+      this.academicSessionService &&
+      this.termService
+    ) {
+      const [session, term] = await Promise.all([
+        this.academicSessionService.activeSessions(),
+        this.termService.getActiveTerm(),
+      ]);
+      scopedQuery.session_id = session.data.id;
+      scopedQuery.term_id = term.id;
+    }
+    const result = await this.feesModelAction.findAllFees(scopedQuery);
 
     this.logger.info('Fetched fee components', {
       total: result.total,
@@ -122,7 +172,11 @@ export class FeesService {
     return result;
   }
 
-  async update(id: string, updateFeesDto: UpdateFeesDto): Promise<Fees> {
+  async update(
+    id: string,
+    updateFeesDto: UpdateFeesDto,
+    actorUserId?: string,
+  ): Promise<Fees> {
     const existingFee = await this.feesModelAction.get({
       identifierOptions: { id },
       relations: { classes: true },
@@ -132,14 +186,36 @@ export class FeesService {
       throw new NotFoundException(sysMsg.FEE_NOT_FOUND);
     }
 
-    // Validate term if provided
-    if (updateFeesDto.term_id) {
-      const term = await this.termModelAction.get({
-        identifierOptions: { id: updateFeesDto.term_id },
-      });
-
-      if (!term) {
-        throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+    const scopeChanged =
+      updateFeesDto.period_type !== undefined ||
+      updateFeesDto.term_id !== undefined ||
+      updateFeesDto.session_id !== undefined;
+    if (scopeChanged) {
+      const nextPeriodType =
+        updateFeesDto.period_type ??
+        existingFee.period_type ??
+        (existingFee.term_id ? 'TERM' : 'SESSION');
+      if (nextPeriodType === 'TERM') {
+        const termId = updateFeesDto.term_id ?? existingFee.term_id;
+        if (!termId)
+          throw new BadRequestException('A term is required for a term fee');
+        const term = await this.termModelAction.get({
+          identifierOptions: { id: termId },
+        });
+        if (!term) throw new BadRequestException(sysMsg.TERM_ID_INVALID);
+        existingFee.period_type = 'TERM';
+        existingFee.term_id = termId;
+        existingFee.session_id = term.sessionId;
+      } else {
+        const sessionId = updateFeesDto.session_id ?? existingFee.session_id;
+        if (!sessionId) {
+          throw new BadRequestException(
+            'An academic session is required for a session-wide fee',
+          );
+        }
+        existingFee.period_type = 'SESSION';
+        existingFee.session_id = sessionId;
+        existingFee.term_id = null;
       }
     }
 
@@ -170,22 +246,30 @@ export class FeesService {
     if (updateFeesDto.amount !== undefined) {
       existingFee.amount = updateFeesDto.amount;
     }
-    if (updateFeesDto.term_id !== undefined) {
-      existingFee.term_id = updateFeesDto.term_id;
-    }
     if (updateFeesDto.status !== undefined) {
       existingFee.status = updateFeesDto.status;
     }
 
-    const updatedFee = await this.dataSource.transaction(async (manager) =>
-      this.feesModelAction.save({
+    const updatedFee = await this.dataSource.transaction(async (manager) => {
+      const fee = await this.feesModelAction.save({
         entity: existingFee,
         transactionOptions: {
           useTransaction: true,
           transaction: manager,
         },
-      }),
-    );
+      });
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'FEE',
+          entityId: id,
+          action: 'UPDATE',
+          description: 'Fee component updated',
+          metadata: { changed_fields: Object.keys(updateFeesDto) },
+        });
+      }
+      return fee;
+    });
 
     this.logger.info('Fee component updated successfully', {
       fee_id: updatedFee.id,
@@ -259,14 +343,23 @@ export class FeesService {
     }
 
     // Update status to inactive with transactionOptions (only update needs it)
-    const updatedFee = await this.feesModelAction.update({
-      identifierOptions: { id },
-      updatePayload: {
-        status: FeeStatus.INACTIVE,
-      },
-      transactionOptions: {
-        useTransaction: false,
-      },
+    const updatedFee = await this.dataSource.transaction(async (manager) => {
+      const updated = await this.feesModelAction.update({
+        identifierOptions: { id },
+        updatePayload: { status: FeeStatus.INACTIVE },
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      await writeActivityLog(manager, {
+        actorUserId: deactivatedBy,
+        entityType: 'FEE',
+        entityId: id,
+        action: 'DEACTIVATE',
+        description: 'Fee component deactivated',
+        oldValues: { status: fee.status },
+        newValues: { status: FeeStatus.INACTIVE },
+        metadata: reason ? { reason } : undefined,
+      });
+      return updated;
     });
 
     this.logger.info('Fee component deactivated successfully', {
@@ -305,14 +398,22 @@ export class FeesService {
       return fee;
     }
 
-    const updatedFee = await this.feesModelAction.update({
-      identifierOptions: { id },
-      updatePayload: {
-        status: FeeStatus.ACTIVE,
-      },
-      transactionOptions: {
-        useTransaction: false,
-      },
+    const updatedFee = await this.dataSource.transaction(async (manager) => {
+      const updated = await this.feesModelAction.update({
+        identifierOptions: { id },
+        updatePayload: { status: FeeStatus.ACTIVE },
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      await writeActivityLog(manager, {
+        actorUserId: activatedBy,
+        entityType: 'FEE',
+        entityId: id,
+        action: 'ACTIVATE',
+        description: 'Fee component activated',
+        oldValues: { status: fee.status },
+        newValues: { status: FeeStatus.ACTIVE },
+      });
+      return updated;
     });
 
     this.logger.info('Fee component activated successfully', {
@@ -346,7 +447,12 @@ export class FeesService {
       for (const cls of fee.classes) {
         if (cls.student_assignments) {
           for (const assignment of cls.student_assignments) {
-            if (assignment.student && assignment.student.user) {
+            if (
+              assignment.is_active &&
+              assignment.student &&
+              !assignment.student.is_deleted &&
+              assignment.student.user?.is_active
+            ) {
               const student = assignment.student;
               studentMap.set(student.id, {
                 id: student.id,
@@ -367,7 +473,11 @@ export class FeesService {
 
     if (fee.direct_assignments) {
       for (const assignment of fee.direct_assignments) {
-        if (assignment.student && assignment.student.user) {
+        if (
+          assignment.student &&
+          !assignment.student.is_deleted &&
+          assignment.student.user?.is_active
+        ) {
           const student = assignment.student;
           if (!studentMap.has(student.id)) {
             studentMap.set(student.id, {
@@ -426,18 +536,31 @@ export class FeesService {
     studentId: string,
     termId: string,
     sessionId: string,
+    viewer: IFeeViewer,
   ): Promise<StudentFeeDetailsResponseDto> {
     const student = await this.studentModelAction.get({
       identifierOptions: { id: studentId },
       relations: {
         user: true,
         class_assignments: { class: { academicSession: true } },
+        parent: true,
         stream: true,
       },
     });
 
-    if (!student) {
+    if (!student || student.is_deleted) {
       throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
+    }
+
+    const canView =
+      viewer.roles.includes(UserRole.ADMIN) ||
+      (viewer.roles.includes(UserRole.STUDENT) &&
+        viewer.student_id === student.id) ||
+      (viewer.roles.includes(UserRole.PARENT) &&
+        !!viewer.parent_id &&
+        viewer.parent_id === student.parent?.id);
+    if (!canView) {
+      throw new ForbiddenException('You cannot view this student’s fees');
     }
 
     const term = await this.termModelAction.get({
@@ -455,23 +578,56 @@ export class FeesService {
       );
     }
 
-    const currentClassAssignment = student.class_assignments?.[0];
+    const currentEnrollments = (student.class_assignments ?? []).filter(
+      (assignment) =>
+        assignment.is_active &&
+        assignment.session_id === sessionId &&
+        assignment.class &&
+        !assignment.class.is_deleted &&
+        assignment.class.academicSession?.id === sessionId,
+    );
+    if (currentEnrollments.length > 1) {
+      throw new ConflictException(
+        'Student has multiple active class enrollments',
+      );
+    }
+    const currentClassAssignment = currentEnrollments[0];
     const currentClass = currentClassAssignment?.class;
 
     const fees = await this.feesModelAction.getFeesForStudent(
       studentId,
       currentClass?.id,
       termId,
+      sessionId,
     );
 
-    const { payments } = await this.paymentService.fetchAllPayments({
-      student_id: studentId,
-      term_id: termId,
-      limit: 1000,
-    });
+    const payments: Awaited<
+      ReturnType<PaymentService['fetchAllPayments']>
+    >['payments'] = [];
+    let paymentPage = 1;
+    while (true) {
+      const batch = await this.paymentService.fetchAllPayments({
+        student_id: studentId,
+        session_id: sessionId,
+        page: paymentPage,
+        limit: 1000,
+      });
+      payments.push(...batch.payments);
+      if (!batch.payments.length || payments.length >= batch.total) break;
+      paymentPage += 1;
+    }
+
+    const visibleFees = new Map(fees.map((fee) => [fee.id, fee]));
+    const relevantPayments = payments.filter(
+      (payment) =>
+        visibleFees.has(payment.fee_component_id) &&
+        payment.status === PaymentStatus.PAID &&
+        (visibleFees.get(payment.fee_component_id)?.period_type === 'SESSION' ||
+          payment.term_id === termId),
+    );
 
     const feeBreakdown = fees.map((fee) => {
-      const paidForComponent = payments
+      const paidForComponent = relevantPayments
         .filter((p) => p.fee_component_id === fee.id)
         .reduce((sum, p) => sum + Number(p.amount_paid), 0);
 
@@ -505,7 +661,7 @@ export class FeesService {
         session: term.academicSession?.academicYear || '',
       },
       fee_breakdown: feeBreakdown,
-      payment_history: payments.map((p) => ({
+      payment_history: relevantPayments.map((p) => ({
         payment_date: p.payment_date,
         amount_paid: Number(p.amount_paid),
         payment_method: p.payment_method,

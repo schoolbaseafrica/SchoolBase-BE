@@ -3,13 +3,17 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { AcademicSessionModule } from '../academic-session/academic-session.module';
 import { TermModule } from '../academic-term/term.module';
+import { NotificationModule } from '../notification/notification.module';
 import { TeachersModule } from '../teacher/teacher.module';
+import { UploadModule } from '../upload/upload.module';
 
+import { AttendanceMethodPolicyService } from './attendance-method-policy.service';
 import {
   ScheduleBasedAttendanceController,
   StudentDailyAttendanceController,
   TeachersAttendanceController,
 } from './controllers';
+import { MobileAttendanceController } from './controllers/mobile-attendance.controller';
 import {
   ScheduleBasedAttendance,
   StudentDailyAttendance,
@@ -17,6 +21,9 @@ import {
   TeacherManualCheckin,
 } from './entities';
 import { AttendanceEditRequest } from './entities/student-daily-attendance.entity';
+import { FaceAttendanceService } from './face-attendance.service';
+import { FaceVerificationService } from './face-verification.service';
+import { MobileAttendanceService } from './mobile-attendance.service';
 import {
   AttendanceModelAction,
   StudentDailyAttendanceModelAction,
@@ -38,11 +45,14 @@ import { AttendanceService, TeachersAttendanceService } from './services';
     AcademicSessionModule,
     TermModule,
     TeachersModule,
+    NotificationModule,
+    UploadModule,
   ],
   controllers: [
     ScheduleBasedAttendanceController,
     StudentDailyAttendanceController,
     TeachersAttendanceController,
+    MobileAttendanceController,
   ],
   providers: [
     AttendanceService,
@@ -52,6 +62,10 @@ import { AttendanceService, TeachersAttendanceService } from './services';
     TeacherManualCheckinModelAction,
     TeacherDailyAttendanceModelAction,
     AttendanceEditRequestModelAction,
+    MobileAttendanceService,
+    AttendanceMethodPolicyService,
+    FaceVerificationService,
+    FaceAttendanceService,
   ],
   exports: [AttendanceService, TeachersAttendanceService],
 })

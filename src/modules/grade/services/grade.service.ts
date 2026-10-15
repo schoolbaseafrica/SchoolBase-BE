@@ -10,6 +10,7 @@ import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { ClassSubject } from '../../class/entities/class-subject.entity';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions';
 import { GradeResponseDto, UpdateGradeDto } from '../dto';
@@ -73,6 +74,19 @@ export class GradeService {
       throw new ForbiddenException(sysMsg.UNAUTHORIZED_GRADE_ACCESS);
     }
 
+    const currentAssignment = await this.dataSource
+      .getRepository(ClassSubject)
+      .findOne({
+        where: {
+          class: { id: grade.submission.class_id },
+          subject: { id: grade.submission.subject_id },
+          teacher: { id: teacherId },
+        },
+      });
+    if (!currentAssignment) {
+      throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
+    }
+
     // Check if submission is editable
     if (grade.submission.status === GradeSubmissionStatus.APPROVED) {
       throw new BadRequestException(sysMsg.GRADE_ALREADY_APPROVED);
@@ -86,10 +100,11 @@ export class GradeService {
     const caScore = updateDto.ca_score ?? grade.ca_score;
     const examScore = updateDto.exam_score ?? grade.exam_score;
     const totalScore =
-      caScore !== null && examScore !== null ? caScore + examScore : null;
-    const gradeLetter = totalScore
-      ? this.calculateGradeLetter(totalScore)
-      : null;
+      caScore !== null && examScore !== null
+        ? Number(caScore) + Number(examScore)
+        : null;
+    const gradeLetter =
+      totalScore !== null ? this.calculateGradeLetter(totalScore) : null;
 
     const updatedGrade = await this.gradeModelAction.update({
       identifierOptions: { id: gradeId },
