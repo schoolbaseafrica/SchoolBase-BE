@@ -585,7 +585,7 @@ export class AttendanceService {
   async updateAttendance(
     attendanceId: string,
     dto: UpdateAttendanceDto,
-    actorUserId?: string,
+    actorUserId: string,
   ): Promise<{
     message: string;
     data: AttendanceResponseDto;
@@ -597,6 +597,8 @@ export class AttendanceService {
     if (!attendance) {
       throw new NotFoundException(sysMsg.ATTENDANCE_NOT_FOUND);
     }
+
+    await this.assertScheduleTeacherAccess(actorUserId, attendance.schedule_id);
 
     // Check if attendance is locked - admin approval required
     if (attendance.is_locked) {
@@ -622,18 +624,16 @@ export class AttendanceService {
         updatePayload,
         transactionOptions: { useTransaction: true, transaction: manager },
       });
-      if (actorUserId) {
-        await writeActivityLog(manager, {
-          actorUserId,
-          entityType: 'ATTENDANCE',
-          entityId: attendanceId,
-          action: 'UPDATE',
-          description: 'Schedule attendance corrected',
-          oldValues: { status: attendance.status },
-          newValues: { status: dto.status ?? attendance.status },
-          metadata: { changed_fields: Object.keys(dto) },
-        });
-      }
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: 'ATTENDANCE',
+        entityId: attendanceId,
+        action: 'UPDATE',
+        description: 'Schedule attendance corrected',
+        oldValues: { status: attendance.status },
+        newValues: { status: dto.status ?? attendance.status },
+        metadata: { changed_fields: Object.keys(dto) },
+      });
       return record;
     });
 

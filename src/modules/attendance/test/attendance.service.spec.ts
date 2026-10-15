@@ -303,8 +303,13 @@ describe('AttendanceService', () => {
 
       attendanceModelAction.get.mockResolvedValue(existingAttendance);
       attendanceModelAction.update.mockResolvedValue(updatedAttendance);
+      mockFindOne.mockResolvedValueOnce({ id: 'schedule-123' });
 
-      const result = await service.updateAttendance(attendanceId, updateDto);
+      const result = await service.updateAttendance(
+        attendanceId,
+        updateDto,
+        'teacher-user-1',
+      );
 
       expect(result.data.status).toBe(AttendanceStatus.PRESENT);
       expect(result.message).toBe(sysMsg.ATTENDANCE_UPDATED_SUCCESSFULLY);
@@ -314,10 +319,44 @@ describe('AttendanceService', () => {
       attendanceModelAction.get.mockResolvedValue(null);
 
       await expect(
-        service.updateAttendance('non-existent', {
-          status: AttendanceStatus.PRESENT,
-        }),
+        service.updateAttendance(
+          'non-existent',
+          {
+            status: AttendanceStatus.PRESENT,
+          },
+          'teacher-user-1',
+        ),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects a teacher not assigned to the lesson before changing attendance', async () => {
+      attendanceModelAction.get.mockResolvedValue({
+        id: 'attendance-123',
+        schedule_id: 'schedule-123',
+        is_locked: false,
+      } as ScheduleBasedAttendance);
+      mockFindOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.updateAttendance(
+          'attendance-123',
+          { status: AttendanceStatus.PRESENT },
+          'unassigned-teacher-user',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockFindOne).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          where: {
+            id: 'schedule-123',
+            teacher: {
+              user_id: 'unassigned-teacher-user',
+              is_active: true,
+            },
+          },
+        }),
+      );
+      expect(attendanceModelAction.update).not.toHaveBeenCalled();
     });
   });
 
