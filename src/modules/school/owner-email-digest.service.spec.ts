@@ -34,6 +34,28 @@ describe('OwnerEmailDigestService', () => {
     expect(dataSource.query).toHaveBeenCalledTimes(1);
   });
 
+  it('reports the saved delivery schedule and retry count to the owner', async () => {
+    dataSource.query
+      .mockResolvedValueOnce([{ id: 'school-1' }])
+      .mockResolvedValueOnce([
+        {
+          enabled: true,
+          frequency: 'daily',
+          categories: ['attendance'],
+          next_due_at: new Date('2026-10-22T07:00:00Z'),
+          last_sent_at: null,
+          attempts: 2,
+        },
+      ]);
+
+    await expect(service.get('owner-1')).resolves.toMatchObject({
+      enabled: true,
+      attempts: 2,
+      mail_configured: true,
+      next_due_at: new Date('2026-10-22T07:00:00Z'),
+    });
+  });
+
   it('rechecks ownership under the write lock before saving', async () => {
     dataSource.query.mockResolvedValueOnce([{ id: 'school-1' }]);
     manager.query.mockResolvedValueOnce([{ owner_user_id: 'new-owner' }]);

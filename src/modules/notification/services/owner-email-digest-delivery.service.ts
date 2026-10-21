@@ -62,6 +62,7 @@ export class OwnerEmailDigestDeliveryService
 {
   private readonly logger = new Logger(OwnerEmailDigestDeliveryService.name);
   private timer?: ReturnType<typeof setInterval>;
+  private warnedMissingMailConfig = false;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -89,8 +90,16 @@ export class OwnerEmailDigestDeliveryService
     if (
       !this.config.get<string>('mail.host') ||
       !this.config.get<string>('mail.from.address')
-    )
+    ) {
+      if (!this.warnedMissingMailConfig) {
+        this.logger.warn(
+          'Owner summaries cannot be delivered: MAIL_HOST or MAIL_FROM_ADDRESS is missing',
+        );
+        this.warnedMissingMailConfig = true;
+      }
       return;
+    }
+    this.warnedMissingMailConfig = false;
     await this.dataSource.transaction(async (manager) => {
       const rows = (await manager.query(
         `SELECT pref."school_id", school."name" AS school_name, school."owner_user_id",
@@ -169,7 +178,7 @@ export class OwnerEmailDigestDeliveryService
           templateData: { subject, dateRange, sections },
           text,
         });
-      } catch {
+      } catch (error) {
         await manager.query(
           `UPDATE "owner_email_digest_preferences"
            SET "attempts" = "attempts" + 1,
@@ -177,8 +186,9 @@ export class OwnerEmailDigestDeliveryService
                "updated_at" = now() WHERE "school_id" = $1`,
           [row.school_id],
         );
-        this.logger.warn(
-          `Owner summary delivery will retry for school ${row.school_id}`,
+        this.logger.error(
+          `Owner summary delivery failed for school ${row.school_id}; retry scheduled`,
+          error instanceof Error ? error.stack : String(error),
         );
         return;
       }

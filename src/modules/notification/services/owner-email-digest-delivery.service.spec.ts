@@ -80,4 +80,33 @@ describe('OwnerEmailDigestDeliveryService', () => {
     );
     expect(manager.query.mock.calls[2][0]).not.toContain('"last_sent_at"');
   });
+
+  it('sends the summary even when there are no activity log entries', async () => {
+    manager.query
+      .mockResolvedValueOnce([
+        {
+          school_id: 'school-1',
+          school_name: 'School',
+          owner_user_id: 'owner-1',
+          email: 'owner@example.com',
+          first_name: 'Owner',
+          last_name: 'One',
+          frequency: 'daily',
+          categories: ['attendance'],
+          period_start_at: new Date('2026-10-14T07:00:00Z'),
+        },
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await service.drain();
+
+    expect(email.sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateData: expect.objectContaining({
+          sections: [expect.objectContaining({ count: 0 })],
+        }),
+      }),
+    );
+  });
 });

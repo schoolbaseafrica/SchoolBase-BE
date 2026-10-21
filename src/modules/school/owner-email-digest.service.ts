@@ -32,6 +32,7 @@ type DigestRow = {
   categories: OwnerDigestCategory[];
   next_due_at: Date | null;
   last_sent_at: Date | null;
+  attempts: number;
 };
 
 @Injectable()
@@ -57,19 +58,24 @@ export class OwnerEmailDigestService {
   async get(actorUserId: string) {
     const schoolId = await this.ownerSchool(actorUserId);
     const rows = (await this.dataSource.query(
-      `SELECT "enabled", "frequency", "categories", "next_due_at", "last_sent_at"
+      `SELECT "enabled", "frequency", "categories", "next_due_at", "last_sent_at", "attempts"
        FROM "owner_email_digest_preferences" WHERE "school_id" = $1`,
       [schoolId],
     )) as DigestRow[];
-    return (
-      rows[0] ?? {
+    return {
+      ...(rows[0] ?? {
         enabled: false,
         frequency: 'daily',
         categories: [...ownerDigestCategories],
         next_due_at: null,
         last_sent_at: null,
-      }
-    );
+        attempts: 0,
+      }),
+      mail_configured: Boolean(
+        this.config.get<string>('mail.host') &&
+        this.config.get<string>('mail.from.address'),
+      ),
+    };
   }
 
   async update(actorUserId: string, dto: OwnerEmailDigestDto) {
