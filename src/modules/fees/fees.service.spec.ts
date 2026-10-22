@@ -1029,6 +1029,8 @@ describe('FeesService', () => {
       expect(result.fee_breakdown[0]).toEqual({
         component_name: 'Tuition',
         amount: 50000,
+        discount_amount: 0,
+        adjusted_amount: 50000,
         amount_paid: 30000,
         outstanding_amount: 20000,
         status: 'PARTIALLY_PAID',
@@ -1038,6 +1040,8 @@ describe('FeesService', () => {
       expect(result.fee_breakdown[1]).toEqual({
         component_name: 'Library',
         amount: 5000,
+        discount_amount: 0,
+        adjusted_amount: 5000,
         amount_paid: 0,
         outstanding_amount: 5000,
         status: 'OUTSTANDING',

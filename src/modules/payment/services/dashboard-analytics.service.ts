@@ -1,5 +1,6 @@
 import { Injectable, Optional } from '@nestjs/common';
 
+import { FeeDiscountService } from 'src/modules/fees/fee-discount.service';
 import { FeesModelAction } from 'src/modules/fees/model-action/fees.model-action';
 
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
@@ -21,6 +22,7 @@ export class DashboardAnalyticsService {
     private readonly academicSessionService: AcademicSessionService | undefined,
     @Optional()
     private readonly termService: TermService | undefined,
+    @Optional() private readonly feeDiscounts?: FeeDiscountService,
   ) {}
 
   async getDashboardAnalytics(
@@ -66,10 +68,16 @@ export class DashboardAnalyticsService {
         ),
       ]);
 
+    const discountTotal =
+      (await this.feeDiscounts?.totalApprovedDiscount(
+        dto.term_id,
+        dto.session_id,
+      )) ?? 0;
+    const adjustedExpected = totalFeesAssigned - discountTotal;
     return {
-      total_expected_fees: totalFeesAssigned,
+      total_expected_fees: adjustedExpected,
       total_paid: totalCollected,
-      outstanding_balance: totalFeesAssigned - totalCollected,
+      outstanding_balance: adjustedExpected - totalCollected,
       transaction_this_month: transactionCount,
     };
   }

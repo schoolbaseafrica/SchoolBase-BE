@@ -36,9 +36,13 @@ export class PaymentService {
     userId: string,
     receiptUrl?: string,
   ): Promise<Payment> {
-    await this.paymentValidationService.validatePayment(dto);
     const transactionId = this.generateTransactionId();
     const payment = await this.dataSource.transaction(async (manager) => {
+      // Serialize payments and discount applications against this fee.
+      await manager.query('SELECT id FROM fees WHERE id = $1 FOR UPDATE', [
+        dto.fee_component_id,
+      ]);
+      await this.paymentValidationService.validatePayment(dto);
       const saved = await this.paymentModelAction.create({
         createPayload: {
           student_id: dto.student_id,

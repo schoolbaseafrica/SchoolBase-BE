@@ -31,6 +31,7 @@ import { GetActiveFeesDto } from './dto/get-active-fees.dto';
 import { StudentFeeDetailsResponseDto } from './dto/student-fee-details.dto';
 import { Fees } from './entities/fees.entity';
 import { FeeStatus } from './enums/fees.enums';
+import { FeeDiscountService } from './fee-discount.service';
 import { FeesModelAction } from './model-action/fees.model-action';
 
 export interface IFeeViewer {
@@ -57,6 +58,7 @@ export class FeesService {
     private readonly paymentService: PaymentService,
     private readonly studentModelAction: StudentModelAction,
     @Inject(WINSTON_MODULE_PROVIDER) logger: Logger,
+    @Optional() private readonly feeDiscounts?: FeeDiscountService,
   ) {
     this.logger = logger.child({ context: FeesService.name });
   }
@@ -626,13 +628,27 @@ export class FeesService {
           payment.term_id === termId),
     );
 
+    const discount = await this.feeDiscounts?.getStudentDiscount(
+      studentId,
+      sessionId,
+      termId,
+    );
+    const allocationRows =
+      (await this.feeDiscounts?.getAllocations(studentId, sessionId, termId)) ??
+      [];
+    const allocations = new Map(
+      allocationRows.map((row) => [row.fee_id, Number(row.amount)]),
+    );
+
     const feeBreakdown = fees.map((fee) => {
       const paidForComponent = relevantPayments
         .filter((p) => p.fee_component_id === fee.id)
         .reduce((sum, p) => sum + Number(p.amount_paid), 0);
 
       const amount = Number(fee.amount);
-      const outstanding = amount - paidForComponent;
+      const discountAmount = allocations.get(fee.id) ?? 0;
+      const adjustedAmount = Math.max(0, amount - discountAmount);
+      const outstanding = adjustedAmount - paidForComponent;
 
       let status: 'PAID' | 'PARTIALLY_PAID' | 'OUTSTANDING' = 'OUTSTANDING';
       if (outstanding <= 0) {
@@ -644,6 +660,8 @@ export class FeesService {
       return {
         component_name: fee.component_name,
         amount: amount,
+        discount_amount: discountAmount,
+        adjusted_amount: adjustedAmount,
         amount_paid: paidForComponent,
         outstanding_amount: Math.max(0, outstanding),
         status,
@@ -661,6 +679,33 @@ export class FeesService {
         session: term.academicSession?.academicYear || '',
       },
       fee_breakdown: feeBreakdown,
+      discount: discount
+        ? {
+            id: (discount as { id: string }).id,
+            code: (discount as { code: string }).code,
+            amount: Number(
+              (discount as { discount_amount: string }).discount_amount,
+            ),
+            status: (discount as { status: string }).status,
+            review_id: (discount as { review_id: string | null }).review_id,
+          }
+        : null,
+      totals: {
+        original: feeBreakdown.reduce((sum, fee) => sum + fee.amount, 0),
+        discount: feeBreakdown.reduce(
+          (sum, fee) => sum + fee.discount_amount,
+          0,
+        ),
+        adjusted: feeBreakdown.reduce(
+          (sum, fee) => sum + fee.adjusted_amount,
+          0,
+        ),
+        paid: feeBreakdown.reduce((sum, fee) => sum + fee.amount_paid, 0),
+        outstanding: feeBreakdown.reduce(
+          (sum, fee) => sum + fee.outstanding_amount,
+          0,
+        ),
+      },
       payment_history: relevantPayments.map((p) => ({
         payment_date: p.payment_date,
         amount_paid: Number(p.amount_paid),

@@ -13,6 +13,8 @@ import { StudentModule } from '../student/student.module';
 
 import { FeeAssignment } from './entities/fee-assignment.entity';
 import { Fees } from './entities/fees.entity';
+import { FeeDiscountController } from './fee-discount.controller';
+import { FeeDiscountService } from './fee-discount.service';
 import { FeesController } from './fees.controller';
 import { FeesService } from './fees.service';
 import { FeesModelAction } from './model-action/fees.model-action';
@@ -26,10 +28,17 @@ import { FeesModelAction } from './model-action/fees.model-action';
     forwardRef(() => PaymentModule),
     StudentModule,
   ],
-  controllers: [FeesController],
-  providers: [FeesService, FeesModelAction, TermModelAction, ClassModelAction],
+  controllers: [FeesController, FeeDiscountController],
+  providers: [
+    FeesService,
+    FeeDiscountService,
+    FeesModelAction,
+    TermModelAction,
+    ClassModelAction,
+  ],
   exports: [
     FeesService,
+    FeeDiscountService,
     FeesModelAction,
     TermModelAction,
     ClassModelAction,
