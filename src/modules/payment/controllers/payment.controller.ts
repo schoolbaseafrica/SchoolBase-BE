@@ -73,7 +73,7 @@ export class PaymentController {
   )
   async recordPayment(
     @Body() dto: RecordPaymentDto,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() actor: { id: string },
     @UploadedFile() receiptFile?: Express.Multer.File,
   ) {
     let receipt_url: string | undefined;
@@ -96,7 +96,7 @@ export class PaymentController {
       }
       payment = await this.paymentService.recordPayment(
         dto,
-        userId,
+        actor.id,
         receipt_url,
       );
     } catch (error) {

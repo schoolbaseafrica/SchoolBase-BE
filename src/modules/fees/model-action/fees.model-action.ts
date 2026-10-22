@@ -123,6 +123,7 @@ export class FeesModelAction extends AbstractModelAction<Fees> {
       .createQueryBuilder('fee')
       .leftJoinAndSelect('fee.term', 'term')
       .leftJoinAndSelect('term.academicSession', 'session')
+      .leftJoinAndSelect('fee.academicSession', 'feeSession')
       .where('fee.status = :status', { status: 'ACTIVE' })
       .orderBy('fee.createdAt', 'DESC');
 

@@ -518,12 +518,17 @@ export class FeesService {
       id: fee.id,
       name: fee.component_name,
       amount: Number(fee.amount),
+      session_id: fee.session_id,
+      term_id: fee.term_id,
+      period_type: fee.period_type,
       session:
+        fee.academicSession?.academicYear ||
+        fee.academicSession?.name ||
         fee.term?.academicSession?.academicYear ||
         fee.term?.academicSession?.name ||
         '',
       term: fee.term?.name || '',
-      frequency: 'Per Term',
+      frequency: fee.period_type === 'SESSION' ? 'Per Session' : 'Per Term',
     }));
 
     return {

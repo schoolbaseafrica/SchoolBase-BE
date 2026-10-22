@@ -50,6 +50,8 @@ describe('PaymentService', () => {
     term_id: mockTermId,
     session_id: mockSessionId,
     invoice_number: 'INV-001',
+    bank_name: 'Guaranty Trust Bank (GTB)',
+    description: 'Transfer confirmed against bank statement',
   };
 
   const mockPaymentEntity = {
@@ -202,6 +204,8 @@ describe('PaymentService', () => {
             student_id: recordPaymentDto.student_id,
             amount_paid: recordPaymentDto.amount_paid,
             recorded_by: mockUserId,
+            bank_name: recordPaymentDto.bank_name,
+            description: recordPaymentDto.description,
             receipt_url: receiptUrl,
             transaction_id: expect.stringMatching(/^HNG\/\d+\/\d+$/),
             payment_date: expect.any(Date),

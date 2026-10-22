@@ -38,6 +38,8 @@ export function recordPaymentDoc() {
           term_id: { type: 'string', format: 'uuid' },
           session_id: { type: 'string', format: 'uuid' },
           invoice_number: { type: 'string', nullable: true },
+          bank_name: { type: 'string', maxLength: 120, nullable: true },
+          description: { type: 'string', maxLength: 2000, nullable: true },
           receipt_file: {
             type: 'string',
             format: 'binary',
@@ -66,6 +68,8 @@ export function recordPaymentDoc() {
               payment_date: { type: 'string', format: 'date-time' },
               transaction_id: { type: 'string' },
               receipt_url: { type: 'string' },
+              bank_name: { type: 'string', nullable: true },
+              description: { type: 'string', nullable: true },
               status: { type: 'string' },
             },
           },

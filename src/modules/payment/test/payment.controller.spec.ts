@@ -163,7 +163,7 @@ describe('PaymentController', () => {
 
       const result = await controller.recordPayment(
         mockDto,
-        mockUserId,
+        { id: mockUserId },
         mockFile,
       );
 
@@ -191,7 +191,7 @@ describe('PaymentController', () => {
 
       const result = await controller.recordPayment(
         mockDto,
-        mockUserId,
+        { id: mockUserId },
         undefined,
       );
 
@@ -224,7 +224,7 @@ describe('PaymentController', () => {
         mockPaymentEntity,
       );
 
-      await controller.recordPayment(mockDto, mockUserId, pdfFile);
+      await controller.recordPayment(mockDto, { id: mockUserId }, pdfFile);
 
       expect(fileService.validatePhotoUrl).not.toHaveBeenCalled();
       expect(paymentService.recordPayment).toHaveBeenCalledWith(
@@ -239,7 +239,7 @@ describe('PaymentController', () => {
       mockUploadServiceValue.uploadReceipt.mockRejectedValue(uploadError);
 
       await expect(
-        controller.recordPayment(mockDto, mockUserId, mockFile),
+        controller.recordPayment(mockDto, { id: mockUserId }, mockFile),
       ).rejects.toThrow(uploadError);
 
       expect(paymentService.recordPayment).not.toHaveBeenCalled();
@@ -250,7 +250,7 @@ describe('PaymentController', () => {
       mockPaymentServiceValue.recordPayment.mockRejectedValue(serviceError);
 
       await expect(
-        controller.recordPayment(mockDto, mockUserId, undefined),
+        controller.recordPayment(mockDto, { id: mockUserId }, undefined),
       ).rejects.toThrow(serviceError);
     });
 
@@ -266,7 +266,7 @@ describe('PaymentController', () => {
       );
       mockPaymentServiceValue.recordPayment.mockRejectedValue(error);
       await expect(
-        controller.recordPayment(mockDto, mockUserId, mockFile),
+        controller.recordPayment(mockDto, { id: mockUserId }, mockFile),
       ).rejects.toThrow(error);
       expect(uploadService.deletePicture).toHaveBeenCalledWith('receipt-key');
     });
@@ -277,7 +277,7 @@ describe('PaymentController', () => {
         publicId: 'receipt-key',
       });
       await expect(
-        controller.recordPayment(mockDto, mockUserId, mockFile),
+        controller.recordPayment(mockDto, { id: mockUserId }, mockFile),
       ).rejects.toThrow();
       expect(uploadService.deletePicture).toHaveBeenCalledWith('receipt-key');
       expect(paymentService.recordPayment).not.toHaveBeenCalled();

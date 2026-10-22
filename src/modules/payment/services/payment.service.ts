@@ -53,6 +53,8 @@ export class PaymentService {
           term_id: dto.term_id,
           session_id: dto.session_id,
           invoice_number: dto.invoice_number,
+          bank_name: dto.bank_name,
+          description: dto.description,
           receipt_url: receiptUrl,
           recorded_by: userId,
           transaction_id: transactionId,
