@@ -333,7 +333,8 @@ export class FeeDiscountService implements OnModuleInit, OnModuleDestroy {
           'Student already has a discount for this period',
         );
       const usedByStudent = (await manager.query(
-        `SELECT 1 FROM fee_discount_redemptions WHERE code_id = $1 AND student_id = $2`,
+        `SELECT 1 FROM fee_discount_redemptions WHERE code_id = $1 AND student_id = $2
+         AND status <> 'REVOKED'`,
         [code.id, dto.student_id],
       )) as unknown[];
       if (usedByStudent.length)
@@ -431,7 +432,8 @@ export class FeeDiscountService implements OnModuleInit, OnModuleDestroy {
         'Student already has a discount for this period',
       );
     const usedByStudent = (await this.dataSource.query(
-      `SELECT 1 FROM fee_discount_redemptions WHERE code_id = $1 AND student_id = $2`,
+      `SELECT 1 FROM fee_discount_redemptions WHERE code_id = $1 AND student_id = $2
+       AND status <> 'REVOKED'`,
       [code.id, studentId],
     )) as unknown[];
     if (usedByStudent.length)

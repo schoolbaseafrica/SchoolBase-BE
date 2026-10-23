@@ -36,3 +36,55 @@ describe('FeeDiscountService money allocation', () => {
     ).toThrow(ConflictException);
   });
 });
+
+describe('FeeDiscountService revoked code reuse', () => {
+  it('previews a revoked code use but blocks a currently active use', async () => {
+    let hasActiveUse = false;
+    const query = jest.fn(async (sql: string) => {
+      if (sql.includes('FROM fee_discount_codes'))
+        return [
+          {
+            id: 'code-id',
+            code: 'RETRY',
+            kind: 'PERCENT',
+            value: '10',
+            session_id: 'session-id',
+            term_id: 'term-id',
+            max_uses: 1,
+            expires_at: null,
+            is_active: true,
+          },
+        ];
+      if (sql.includes('COUNT(*)::int')) return [{ count: 0 }];
+      if (sql.includes('FROM fee_discount_redemptions')) {
+        return hasActiveUse ? [1] : [];
+      }
+      if (sql.includes('FROM terms') || sql.includes('FROM students'))
+        return [1];
+      if (sql.includes('FROM fees fee'))
+        return [
+          { id: 'fee-id', amount: '50.00', paid: '35.00', discounted: '0' },
+        ];
+      throw new Error(`Unexpected query: ${sql}`);
+    });
+    const service = new FeeDiscountService({
+      query,
+      manager: { query },
+    } as unknown as DataSource);
+
+    await expect(
+      service.preview('RETRY', 'student-id', 'session-id', 'term-id'),
+    ).resolves.toMatchObject({ original: 50, discount: 5, balance: 10 });
+    hasActiveUse = true;
+    await expect(
+      service.preview('RETRY', 'student-id', 'session-id', 'term-id'),
+    ).rejects.toThrow(ConflictException);
+    const redemptionQueries = query.mock.calls
+      .map(([sql]) => sql)
+      .filter((sql) => sql.includes('FROM fee_discount_redemptions'));
+    expect(redemptionQueries).toHaveLength(5);
+    expect(
+      redemptionQueries.every((sql) => sql.includes("status <> 'REVOKED'")),
+    ).toBe(true);
+  });
+});
