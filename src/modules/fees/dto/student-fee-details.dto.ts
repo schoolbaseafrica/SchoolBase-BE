@@ -23,8 +23,11 @@ export class StudentInfoDto {
 }
 
 export class FeeBreakdownItemDto {
+  fee_id: string;
   component_name: string;
   amount: number;
+  discount_amount?: number;
+  adjusted_amount?: number;
   amount_paid: number;
   outstanding_amount: number;
   status: 'PAID' | 'PARTIALLY_PAID' | 'OUTSTANDING';
@@ -43,4 +46,18 @@ export class StudentFeeDetailsResponseDto {
   student_info: StudentInfoDto;
   fee_breakdown: FeeBreakdownItemDto[];
   payment_history: PaymentHistoryItemDto[];
+  discount?: {
+    id: string;
+    code: string;
+    amount: number;
+    status: string;
+    review_id?: string | null;
+  } | null;
+  totals?: {
+    original: number;
+    discount: number;
+    adjusted: number;
+    paid: number;
+    outstanding: number;
+  };
 }

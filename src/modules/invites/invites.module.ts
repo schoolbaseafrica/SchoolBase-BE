@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import { EmailModule } from '../email/email.module';
 import { SchoolModule } from '../school/school.module';
 import { UserModule } from '../user/user.module';
@@ -18,7 +19,7 @@ import { InviteService } from './invites.service';
     EmailModule,
   ],
   controllers: [InvitesController],
-  providers: [InviteService, InviteModelAction],
+  providers: [InviteService, InviteModelAction, InitialSetupGuard],
   exports: [InviteService],
 })
 export class InviteModule {}

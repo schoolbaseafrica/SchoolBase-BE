@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, BadRequestException } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
 
@@ -28,6 +28,7 @@ export class UploadService {
     file: IMulterFile,
     userId?: string,
   ): Promise<UploadPictureResponseDto> {
+    if (!file?.buffer) throw new BadRequestException('Image file is required');
     this.logger.info(
       `Uploading picture: ${file.originalname} (${file.size} bytes)`,
     );
@@ -60,5 +61,49 @@ export class UploadService {
       );
       throw error;
     }
+  }
+
+  async deletePicture(publicId: string): Promise<void> {
+    await this.minioService.deleteImage(publicId);
+  }
+
+  async uploadReceipt(file: IMulterFile): Promise<UploadPictureResponseDto> {
+    if (!file?.buffer)
+      throw new BadRequestException('Receipt file is required');
+    const uploaded = await this.minioService.uploadImage(file, 'receipts');
+    return {
+      url: uploaded.url,
+      publicId: uploaded.publicId,
+      originalName: file.originalname,
+      size: file.buffer.length,
+      mimetype: file.mimetype,
+    };
+  }
+
+  async downloadReceipt(
+    url: string,
+  ): Promise<{ buffer: Buffer; mimeType: string }> {
+    let pathname: string;
+    try {
+      pathname = new URL(url).pathname;
+    } catch {
+      throw new BadRequestException('Invalid receipt URL');
+    }
+    const match = pathname.match(
+      /\/receipts\/([a-f0-9-]{36}\.(?:jpg|png|pdf))$/i,
+    );
+    if (!match)
+      throw new BadRequestException('Receipt is not in private storage');
+    const extension = match[1].split('.').pop()?.toLowerCase();
+    const mimeType =
+      extension === 'pdf'
+        ? 'application/pdf'
+        : extension === 'png'
+          ? 'image/png'
+          : 'image/jpeg';
+    return {
+      buffer: await this.minioService.downloadFile(`receipts/${match[1]}`),
+      mimeType,
+    };
   }
 }

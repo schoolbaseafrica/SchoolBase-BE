@@ -1,5 +1,6 @@
 import { Logger } from 'winston';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { TimetableModelAction } from '../../timetable/model-actions/timetable.model-action';
 
 import { AdminDashboardService } from './admin-dashboard.service';
@@ -8,6 +9,7 @@ describe('AdminDashboardService', () => {
   let service: AdminDashboardService;
   let timetableModelAction: TimetableModelAction;
   let logger: Logger;
+  let academicSessionService: AcademicSessionService;
 
   beforeEach(() => {
     timetableModelAction = {
@@ -19,8 +21,17 @@ describe('AdminDashboardService', () => {
       info: jest.fn(),
       error: jest.fn(),
     } as unknown as Logger;
+    academicSessionService = {
+      activeSessions: jest
+        .fn()
+        .mockResolvedValue({ data: { id: 'session-1' } }),
+    } as unknown as AcademicSessionService;
 
-    service = new AdminDashboardService(timetableModelAction, logger);
+    service = new AdminDashboardService(
+      timetableModelAction,
+      academicSessionService,
+      logger,
+    );
   });
 
   it('should load today activities with all data', async () => {

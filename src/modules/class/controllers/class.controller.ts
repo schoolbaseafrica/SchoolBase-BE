@@ -46,6 +46,8 @@ import {
   StudentAssignmentResponseDto,
   AssignSingleStudentResponseDto,
   GetStudentsQueryDto,
+  PromoteStudentsDto,
+  AssignTeacherToClassDto,
 } from '../dto';
 import { GetTeachersQueryDto } from '../dto/get-teachers-query.dto';
 import { TeacherAssignmentResponseDto } from '../dto/teacher-response.dto';
@@ -83,7 +85,25 @@ export class ClassController {
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
   @DocsGetGroupedClasses()
   async getGroupedClasses(@Query() query: ListGroupedClassesDto) {
-    return this.classService.getGroupedClasses(query.page, query.limit);
+    return this.classService.getGroupedClasses(
+      query.page,
+      query.limit,
+      query.includeArchived,
+      query.session_id,
+      query.includeAllSessions,
+    );
+  }
+
+  @Post('promotion/preview')
+  @Roles(UserRole.ADMIN)
+  async previewPromotion(@Body() dto: PromoteStudentsDto) {
+    return this.classService.previewPromotion(dto);
+  }
+
+  @Post('promotion/execute')
+  @Roles(UserRole.ADMIN)
+  async executePromotion(@Body() dto: PromoteStudentsDto) {
+    return this.classService.executePromotion(dto);
   }
 
   // --- GET: TOTAL NUMBER OF CLASSES ---
@@ -113,6 +133,18 @@ export class ClassController {
     return this.classService.getClassesByTeacher(teacherId, sessionId);
   }
 
+  @Get('teacher/teaching')
+  @Roles(UserRole.TEACHER)
+  async getTeachingClasses(
+    @Req() req: IRequestWithUser,
+    @Query('session_id') sessionId?: string,
+  ): Promise<ClassResponseDto[]> {
+    if (!req.user.teacher_id) {
+      throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);
+    }
+    return this.classService.getTeachingClasses(req.user.teacher_id, sessionId);
+  }
+
   // --- GET: GET CLASSES ASSIGNED TO SPECIFIC TEACHER ---
   @Get('teacher/:teacherId')
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
@@ -130,6 +162,35 @@ export class ClassController {
       message: sysMsg.TEACHER_CLASS_FETCHED,
       data: classes,
     };
+  }
+
+  // --- ASSIGN A TEACHER AS CLASS TEACHER (ADMIN ONLY) ---
+  @Post('teachers/:teacherId/assign')
+  @Roles(UserRole.ADMIN)
+  async assignTeacherToClass(
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Body() dto: AssignTeacherToClassDto,
+  ) {
+    return this.classService.assignTeacherToClass(
+      teacherId,
+      dto.classId,
+      dto.sessionId,
+    );
+  }
+
+  // --- UNASSIGN A CLASS TEACHER (ADMIN ONLY) ---
+  @Delete('teachers/:teacherId/classes/:classId')
+  @Roles(UserRole.ADMIN)
+  async unassignTeacherFromClass(
+    @Param('teacherId', ParseUUIDPipe) teacherId: string,
+    @Param('classId', ParseUUIDPipe) classId: string,
+    @Query('session_id') sessionId?: string,
+  ) {
+    return this.classService.unassignTeacherFromClass(
+      teacherId,
+      classId,
+      sessionId,
+    );
   }
 
   // --- POST: ASSIGN STUDENTS TO CLASS (ADMIN ONLY) ---
@@ -172,7 +233,20 @@ export class ClassController {
   async getStudents(
     @Param('id', ParseUUIDPipe) classId: string,
     @Query() query: GetStudentsQueryDto,
+    @Req() req: IRequestWithUser,
   ): Promise<StudentAssignmentResponseDto[]> {
+    if (
+      req.user.roles.includes(UserRole.TEACHER) &&
+      !req.user.roles.includes(UserRole.ADMIN)
+    ) {
+      if (!req.user.teacher_id) {
+        throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);
+      }
+      await this.classService.assertTeacherCanViewClass(
+        classId,
+        req.user.teacher_id,
+      );
+    }
     return this.classService.getStudentsByClass(classId, query.session_id);
   }
 

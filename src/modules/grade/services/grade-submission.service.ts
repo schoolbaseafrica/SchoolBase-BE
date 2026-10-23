@@ -15,12 +15,14 @@ import { ResultService } from 'src/modules/result/services';
 
 import * as sysMsg from '../../../constants/system.messages';
 import { ClassSubject } from '../../class/entities';
+import { ClassStudent } from '../../class/entities/class-student.entity';
 import { StudentModelAction } from '../../student/model-actions';
 import {
   CreateGradeSubmissionDto,
   GradeResponseDto,
   GradeSubmissionResponseDto,
   ListGradeSubmissionsDto,
+  UpdateGradeSubmissionDto,
 } from '../dto';
 import {
   GradeSubmission,
@@ -145,13 +147,15 @@ export class GradeSubmissionService {
       const grades: Grade[] = [];
       for (const studentGrade of createDto.grades) {
         const totalScore =
-          studentGrade.ca_score && studentGrade.exam_score
-            ? studentGrade.ca_score + studentGrade.exam_score
+          studentGrade.ca_score !== null &&
+          studentGrade.ca_score !== undefined &&
+          studentGrade.exam_score !== null &&
+          studentGrade.exam_score !== undefined
+            ? Number(studentGrade.ca_score) + Number(studentGrade.exam_score)
             : null;
 
-        const gradeLetter = totalScore
-          ? this.calculateGradeLetter(totalScore)
-          : null;
+        const gradeLetter =
+          totalScore !== null ? this.calculateGradeLetter(totalScore) : null;
 
         const grade = await this.gradeModelAction.create({
           createPayload: {
@@ -207,6 +211,103 @@ export class GradeSubmissionService {
     });
   }
 
+  async updateDraft(
+    teacherId: string,
+    submissionId: string,
+    dto: UpdateGradeSubmissionDto,
+  ): Promise<GradeSubmissionResponseDto> {
+    if (
+      new Set(dto.grades.map((grade) => grade.student_id)).size !==
+      dto.grades.length
+    ) {
+      throw new BadRequestException('Each student can appear only once');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const submission = await manager.getRepository(GradeSubmission).findOne({
+        where: { id: submissionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!submission)
+        throw new NotFoundException(sysMsg.GRADE_SUBMISSION_NOT_FOUND);
+      if (submission.teacher_id !== teacherId) {
+        throw new ForbiddenException(sysMsg.UNAUTHORIZED_GRADE_ACCESS);
+      }
+      if (
+        !(await this.verifyTeacherSubjectAssignment(
+          teacherId,
+          submission.subject_id,
+          submission.class_id,
+        ))
+      ) {
+        throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
+      }
+      if (
+        submission.status !== GradeSubmissionStatus.DRAFT &&
+        submission.status !== GradeSubmissionStatus.REJECTED
+      ) {
+        throw new BadRequestException(sysMsg.GRADE_INVALID_STATUS_TRANSITION);
+      }
+
+      const gradesRepo = manager.getRepository(Grade);
+      const existing = await gradesRepo.find({
+        where: { submission_id: submissionId },
+        relations: { student: { user: true } },
+      });
+      const byStudent = new Map(
+        existing.map((grade) => [grade.student_id, grade]),
+      );
+      for (const entry of dto.grades) {
+        const enrolled = await manager.getRepository(ClassStudent).findOne({
+          where: {
+            class: { id: submission.class_id },
+            student: { id: entry.student_id },
+          },
+        });
+        if (!enrolled) {
+          throw new BadRequestException(
+            'Student is not enrolled in this class',
+          );
+        }
+        const grade =
+          byStudent.get(entry.student_id) ??
+          gradesRepo.create({
+            submission_id: submissionId,
+            student_id: entry.student_id,
+          });
+        grade.ca_score = entry.ca_score ?? null;
+        grade.exam_score = entry.exam_score ?? null;
+        grade.total_score =
+          grade.ca_score !== null && grade.exam_score !== null
+            ? Number(grade.ca_score) + Number(grade.exam_score)
+            : null;
+        grade.grade_letter =
+          grade.total_score !== null
+            ? this.calculateGradeLetter(grade.total_score)
+            : null;
+        grade.comment = entry.comment ?? null;
+        await gradesRepo.save(grade);
+      }
+
+      const grades = await gradesRepo.find({
+        where: { submission_id: submissionId },
+        relations: { student: { user: true } },
+      });
+      const withRelations = await manager
+        .getRepository(GradeSubmission)
+        .findOne({
+          where: { id: submissionId },
+          relations: {
+            teacher: { user: true },
+            class: true,
+            subject: true,
+            term: true,
+          },
+        });
+      return this.transformToResponse(withRelations ?? submission, grades);
+    });
+  }
+
   /**
    * Submit grades for admin approval
    */
@@ -231,6 +332,16 @@ export class GradeSubmissionService {
 
     if (submission.teacher_id !== teacherId) {
       throw new ForbiddenException(sysMsg.UNAUTHORIZED_GRADE_ACCESS);
+    }
+
+    if (
+      !(await this.verifyTeacherSubjectAssignment(
+        teacherId,
+        submission.subject_id,
+        submission.class_id,
+      ))
+    ) {
+      throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
     }
 
     if (
@@ -314,6 +425,7 @@ export class GradeSubmissionService {
       class_id,
       subject_id,
       term_id,
+      academic_session_id,
       status,
       teacher_id,
     } = listDto;
@@ -322,6 +434,8 @@ export class GradeSubmissionService {
     if (class_id) filterOptions.class_id = class_id;
     if (subject_id) filterOptions.subject_id = subject_id;
     if (term_id) filterOptions.term_id = term_id;
+    if (academic_session_id)
+      filterOptions.academic_session_id = academic_session_id;
     if (status) filterOptions.status = status;
     if (teacher_id) filterOptions.teacher_id = teacher_id;
 
@@ -370,6 +484,7 @@ export class GradeSubmissionService {
             id: submission.class.id,
             name: submission.class.name,
             arm: submission.class.arm,
+            stream: submission.class.stream,
           }
         : null,
       subject: submission.subject
@@ -437,6 +552,7 @@ export class GradeSubmissionService {
         submission.class_id,
         submission.term_id,
         submission.academic_session_id,
+        userId,
       );
     } catch (error) {
       this.logger.error(sysMsg.AUTO_RESULTS_FAILED, {

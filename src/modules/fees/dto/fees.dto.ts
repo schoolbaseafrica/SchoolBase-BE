@@ -10,12 +10,18 @@ import {
   IsArray,
   IsInt,
   Min,
+  IsIn,
 } from 'class-validator';
 
 import { FeeStatus } from '../enums/fees.enums';
 
 export class CreateFeesDto {
-  @ApiProperty({
+  @ApiPropertyOptional({ enum: ['TERM', 'SESSION'], default: 'TERM' })
+  @IsOptional()
+  @IsIn(['TERM', 'SESSION'])
+  period_type?: 'TERM' | 'SESSION';
+
+  @ApiPropertyOptional({
     description: 'The unique name/identifier of the fee component.',
     example: 'Tuition Fee',
   })
@@ -47,8 +53,15 @@ export class CreateFeesDto {
     example: 'a9b8c7d6-e5f4-3210-fedc-ba9876543210',
   })
   @IsString()
-  @IsNotEmpty()
-  term_id: string;
+  @IsOptional()
+  term_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Academic session for a session-wide fee.',
+  })
+  @IsString()
+  @IsOptional()
+  session_id?: string;
 
   @ApiProperty({
     description: 'An array of unique IDs for the classes this fee applies to.',
@@ -155,6 +168,11 @@ export class QueryFeesDto {
   @IsString()
   @IsOptional()
   term_id?: string;
+
+  @ApiPropertyOptional({ description: 'Filter fees by academic session ID.' })
+  @IsString()
+  @IsOptional()
+  session_id?: string;
 
   @ApiPropertyOptional({
     description: 'Search term for filtering by component name or description.',

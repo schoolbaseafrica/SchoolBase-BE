@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -33,13 +34,19 @@ const MOCK_CLASS_ID = '1';
 const MOCK_SESSION_ID = '2023-2024';
 const MOCK_ACTIVE_SESSION = '2024-2025';
 
-const mockRepository = {};
+const mockRepository = {
+  findOne: jest.fn(),
+  create: jest.fn((value) => value),
+  save: jest.fn((value) => Promise.resolve(value)),
+};
 
 const mockDataSource = {
+  query: jest.fn(),
   createEntityManager: jest.fn(),
   getRepository: jest.fn().mockReturnValue(mockRepository),
   transaction: jest.fn().mockImplementation(async (callback) => {
     const mockManager = {
+      getRepository: jest.fn().mockReturnValue(mockRepository),
       findOne: jest.fn(),
       save: jest
         .fn()
@@ -62,10 +69,12 @@ const mockTeacherAssignment = {
   is_active: true,
   teacher: {
     id: 'teacher-uuid-101',
+    is_active: true,
     employment_id: 'EMP-2025-001',
     user: {
       first_name: 'John',
       last_name: 'Doe',
+      is_active: true,
     },
   },
   class: mockClass,
@@ -211,6 +220,71 @@ describe('ClassService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  describe('assignTeacherToClass', () => {
+    const teacherId = 'teacher-id';
+    const classId = 'class-id';
+    const sessionId = 'session-id';
+    const classEntity = {
+      id: classId,
+      name: 'JSS 1',
+      arm: 'A',
+      is_deleted: false,
+      academicSession: { id: sessionId, name: '2026/2027' },
+    } as unknown as Class;
+
+    it('creates a class-teacher assignment in the class session', async () => {
+      mockTeacherModelActionMethods.get.mockResolvedValue({
+        id: teacherId,
+        is_active: true,
+      });
+      classModelAction.get.mockResolvedValue(classEntity);
+      mockRepository.findOne.mockResolvedValue(null);
+      mockRepository.save.mockImplementation((value) => Promise.resolve(value));
+
+      const result = await service.assignTeacherToClass(teacherId, classId);
+
+      expect(mockRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          teacher: { id: teacherId },
+          class: { id: classId },
+          session_id: sessionId,
+          is_active: true,
+        }),
+      );
+      expect(result.message).toBe('Teacher assigned to JSS 1 A successfully.');
+    });
+
+    it('returns an idempotent success when the assignment is already active', async () => {
+      const existing = {
+        is_active: true,
+        assignment_date: new Date('2026-09-01'),
+      } as ClassTeacher;
+      mockTeacherModelActionMethods.get.mockResolvedValue({
+        id: teacherId,
+        is_active: true,
+      });
+      classModelAction.get.mockResolvedValue(classEntity);
+      mockRepository.findOne.mockResolvedValue(existing);
+
+      const result = await service.assignTeacherToClass(teacherId, classId);
+
+      expect(mockRepository.save).not.toHaveBeenCalled();
+      expect(result.message).toBe('Teacher is already assigned to JSS 1 A.');
+    });
+
+    it('rejects a session that does not match the selected class', async () => {
+      mockTeacherModelActionMethods.get.mockResolvedValue({
+        id: teacherId,
+        is_active: true,
+      });
+      classModelAction.get.mockResolvedValue(classEntity);
+
+      await expect(
+        service.assignTeacherToClass(teacherId, classId, 'another-session'),
+      ).rejects.toThrow(BadRequestException);
+    });
   });
 
   describe('getTeachersByClass', () => {
@@ -980,6 +1054,27 @@ describe('ClassService', () => {
   });
 
   describe('getStudentsByClass', () => {
+    it('omits deactivated students even if an old enrollment remains active', async () => {
+      classModelAction.get.mockResolvedValue({
+        id: 'class-1',
+        academicSession: { id: 'session-1' },
+      } as unknown as Class);
+      mockClassStudentModelAction.list.mockResolvedValue({
+        payload: [
+          {
+            student: {
+              id: 'student-1',
+              is_deleted: true,
+              user: { first_name: 'Demo', last_name: 'QA', is_active: false },
+            },
+            is_active: true,
+          },
+        ],
+        paginationMeta: {},
+      } as never);
+      expect(await service.getStudentsByClass('class-1')).toEqual([]);
+    });
+
     it('should return students for a class', async () => {
       const classId = 'class-uuid-1';
       const sessionId = 'session-uuid-1';
@@ -993,8 +1088,9 @@ describe('ClassService', () => {
         {
           student: {
             id: 'student-1',
+            is_deleted: false,
             registration_number: 'REG-001',
-            user: { first_name: 'John', last_name: 'Doe' },
+            user: { first_name: 'John', last_name: 'Doe', is_active: true },
           },
           enrollment_date: new Date(),
           is_active: true,
@@ -1018,6 +1114,66 @@ describe('ClassService', () => {
 
       await expect(service.getStudentsByClass('wrong-id')).rejects.toThrow(
         NotFoundException,
+      );
+    });
+  });
+
+  describe('teacher class roster authorization', () => {
+    it('rejects a teacher without a class or subject assignment', async () => {
+      mockDataSource.query.mockResolvedValueOnce([]);
+      await expect(
+        service.assertTeacherCanViewClass('class-1', 'teacher-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows a teacher with a matching assignment', async () => {
+      mockDataSource.query.mockResolvedValueOnce([{ allowed: 1 }]);
+      await expect(
+        service.assertTeacherCanViewClass('class-1', 'teacher-1'),
+      ).resolves.toBeUndefined();
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('class_subjects'),
+        ['class-1', 'teacher-1'],
+      );
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('ct.session_id = c.academic_session_id::text'),
+        ['class-1', 'teacher-1'],
+      );
+    });
+  });
+
+  describe('getTeachingClasses', () => {
+    const sessionId = 'a3b0bbf2-cc69-4811-bc13-8f32019f5e6e';
+    it('rejects a malformed session before querying the roster', async () => {
+      await expect(
+        service.getTeachingClasses('teacher-1', 'not-a-uuid'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockDataSource.query).not.toHaveBeenCalled();
+    });
+
+    it('returns class and subject teaching assignments in the selected session', async () => {
+      mockDataSource.query.mockResolvedValueOnce([
+        {
+          id: 'class-1',
+          name: 'JSS 3',
+          arm: 'A',
+          sessionId,
+          sessionName: '2026/2027',
+        },
+      ]);
+      await expect(
+        service.getTeachingClasses('teacher-1', sessionId),
+      ).resolves.toEqual([
+        {
+          id: 'class-1',
+          name: 'JSS 3',
+          arm: 'A',
+          academicSession: { id: sessionId, name: '2026/2027' },
+        },
+      ]);
+      expect(mockDataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('ct.session_id = session.id::text'),
+        ['teacher-1', sessionId],
       );
     });
   });
@@ -1066,6 +1222,77 @@ describe('ClassService', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe('JSS1');
+    });
+  });
+
+  describe('student promotion', () => {
+    it('previews promotable and already-promoted students accurately', async () => {
+      academicSessionModelAction.get
+        .mockResolvedValueOnce({ id: 'source-session' } as AcademicSession)
+        .mockResolvedValueOnce({ id: 'target-session' } as AcademicSession);
+      classModelAction.get
+        .mockResolvedValueOnce({
+          id: 'source-class',
+          name: 'JSS 1',
+          arm: 'A',
+          is_deleted: false,
+          academicSession: { id: 'source-session' },
+        } as Class)
+        .mockResolvedValueOnce({
+          id: 'target-class',
+          name: 'JSS 2',
+          arm: 'A',
+          is_deleted: false,
+          academicSession: { id: 'target-session' },
+        } as Class);
+      mockClassStudentModelAction.list
+        .mockResolvedValueOnce({
+          payload: [{ student: { id: 'already-promoted' } }],
+        } as never)
+        .mockResolvedValueOnce({
+          payload: [
+            { student: { id: 'new-student' } },
+            { student: { id: 'already-promoted' } },
+          ],
+        } as never);
+
+      const result = await service.previewPromotion({
+        sourceSessionId: 'source-session',
+        targetSessionId: 'target-session',
+        armMappings: [
+          {
+            sourceClassId: 'source-class',
+            targetClassId: 'target-class',
+          },
+        ],
+      });
+
+      expect(result.mappings[0]).toEqual(
+        expect.objectContaining({
+          toPromote: 1,
+          toPromoteStudentIds: ['new-student'],
+          alreadyInTarget: 1,
+          alreadyInTargetStudentIds: ['already-promoted'],
+          errors: [],
+        }),
+      );
+    });
+
+    it('rejects duplicate source mappings', async () => {
+      academicSessionModelAction.get
+        .mockResolvedValueOnce({ id: 'source-session' } as AcademicSession)
+        .mockResolvedValueOnce({ id: 'target-session' } as AcademicSession);
+
+      await expect(
+        service.previewPromotion({
+          sourceSessionId: 'source-session',
+          targetSessionId: 'target-session',
+          armMappings: [
+            { sourceClassId: 'source-class', targetClassId: 'target-a' },
+            { sourceClassId: 'source-class', targetClassId: 'target-b' },
+          ],
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 

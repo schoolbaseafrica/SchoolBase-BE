@@ -1,13 +1,22 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 
+import { IRequestWithUser } from '../../common/types';
+import { SessionStatus } from '../academic-session/entities/academic-session.entity';
 import { ClassStudent } from '../class/entities/class-student.entity';
+import { ClassSubject } from '../class/entities/class-subject.entity';
 import { ClassTeacher } from '../class/entities/class-teacher.entity';
 import { ClassStudentModelAction } from '../class/model-actions/class-student.action';
 import { ClassTeacherModelAction } from '../class/model-actions/class-teacher.action';
 import { ClassModelAction } from '../class/model-actions/class.actions';
 import { NotificationService } from '../notification/services/notification.service';
+import { UserRole } from '../shared/enums';
 
 import { AddScheduleDto } from './dto/timetable.dto';
 import { Schedule } from './entities/schedule.entity';
@@ -27,10 +36,22 @@ describe('TimetableService', () => {
   let notificationService: jest.Mocked<NotificationService>;
   let classStudentModelAction: jest.Mocked<ClassStudentModelAction>;
   let classTeacherModelAction: jest.Mocked<ClassTeacherModelAction>;
+  let classSubjects: { find: jest.Mock };
 
   const mockClassId = 'class-123';
   const mockTimetableId = 'timetable-123';
   const mockScheduleId = 'schedule-123';
+  const adminActor = {
+    id: 'admin-user',
+    userId: 'admin-user',
+    roles: [UserRole.ADMIN],
+  } as IRequestWithUser['user'];
+  const teacherActor = {
+    id: 'teacher-user',
+    userId: 'teacher-user',
+    teacher_id: 'teacher-123',
+    roles: [UserRole.TEACHER],
+  } as IRequestWithUser['user'];
 
   beforeEach(async () => {
     timetableModelAction = {
@@ -49,6 +70,7 @@ describe('TimetableService', () => {
       create: jest.fn(),
       get: jest.fn(),
       update: jest.fn(),
+      getScheduleWithTimetable: jest.fn(),
     } as unknown as jest.Mocked<ScheduleModelAction>;
 
     classModelAction = {
@@ -66,6 +88,7 @@ describe('TimetableService', () => {
     classTeacherModelAction = {
       list: jest.fn(),
     } as unknown as jest.Mocked<ClassTeacherModelAction>;
+    classSubjects = { find: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -77,6 +100,7 @@ describe('TimetableService', () => {
         { provide: NotificationService, useValue: notificationService },
         { provide: ClassStudentModelAction, useValue: classStudentModelAction },
         { provide: ClassTeacherModelAction, useValue: classTeacherModelAction },
+        { provide: getRepositoryToken(ClassSubject), useValue: classSubjects },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: {
@@ -138,7 +162,7 @@ describe('TimetableService', () => {
       });
       notificationService.createNotification.mockResolvedValue(undefined);
 
-      const result = await service.addSchedule(addScheduleDto);
+      const result = await service.addSchedule(addScheduleDto, adminActor);
 
       expect(validationService.validateNewSchedule).toHaveBeenCalledWith(
         addScheduleDto,
@@ -171,9 +195,9 @@ describe('TimetableService', () => {
         new NotFoundException('Class not found'),
       );
 
-      await expect(service.addSchedule(addScheduleDto)).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.addSchedule(addScheduleDto, adminActor),
+      ).rejects.toThrow(NotFoundException);
 
       // Ensure no notification attempted on failure
       expect(notificationService.createNotification).not.toHaveBeenCalled();
@@ -211,7 +235,7 @@ describe('TimetableService', () => {
       });
       notificationService.createNotification.mockResolvedValue(undefined);
 
-      await service.addSchedule(addScheduleDto);
+      await service.addSchedule(addScheduleDto, adminActor);
 
       expect(timetableModelAction.create).toHaveBeenCalledWith({
         createPayload: {
@@ -234,8 +258,153 @@ describe('TimetableService', () => {
       const invalidDto = { ...addScheduleDto, subject_id: undefined };
 
       await expect(
-        service.addSchedule(invalidDto as unknown as AddScheduleDto),
+        service.addSchedule(
+          invalidDto as unknown as AddScheduleDto,
+          adminActor,
+        ),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows an active class teacher to create a schedule for their assigned class', async () => {
+      classModelAction.get.mockResolvedValue({
+        is_deleted: false,
+        academicSession: { id: 'session-123', status: SessionStatus.ACTIVE },
+      } as never);
+      classTeacherModelAction.list.mockResolvedValue({
+        payload: [{ id: 'assignment-123' }],
+        paginationMeta: {},
+      } as never);
+      timetableModelAction.get.mockResolvedValue({
+        id: mockTimetableId,
+      } as Timetable);
+      scheduleModelAction.create.mockResolvedValue({
+        id: mockScheduleId,
+        timetable: { id: mockTimetableId },
+      } as Schedule);
+
+      await service.addSchedule({ ...addScheduleDto }, teacherActor);
+
+      expect(classTeacherModelAction.list).toHaveBeenCalledWith({
+        filterRecordOptions: {
+          class: { id: mockClassId },
+          teacher: { id: teacherActor.teacher_id },
+          session_id: 'session-123',
+          is_active: true,
+        },
+      });
+      expect(scheduleModelAction.create).toHaveBeenCalled();
+    });
+
+    it('rejects a teacher without an active class assignment before writing', async () => {
+      classModelAction.get.mockResolvedValue({
+        is_deleted: false,
+        academicSession: { id: 'session-123', status: SessionStatus.ACTIVE },
+      } as never);
+      classTeacherModelAction.list.mockResolvedValue({ payload: [] } as never);
+
+      await expect(
+        service.addSchedule({ ...addScheduleDto }, teacherActor),
+      ).rejects.toThrow(ForbiddenException);
+      expect(validationService.validateNewSchedule).not.toHaveBeenCalled();
+      expect(scheduleModelAction.create).not.toHaveBeenCalled();
+    });
+
+    it('keeps past-session class timetables read-only for teachers', async () => {
+      classModelAction.get.mockResolvedValue({
+        is_deleted: false,
+        academicSession: { id: 'session-123', status: SessionStatus.ARCHIVED },
+      } as never);
+
+      await expect(
+        service.addSchedule({ ...addScheduleDto }, teacherActor),
+      ).rejects.toThrow(ForbiddenException);
+      expect(classTeacherModelAction.list).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('editSchedule access', () => {
+    it('lets an assigned class teacher edit a lesson', async () => {
+      scheduleModelAction.getScheduleWithTimetable.mockResolvedValue({
+        timetable: { class_id: mockClassId },
+      } as Schedule);
+      classModelAction.get.mockResolvedValue({
+        is_deleted: false,
+        academicSession: { id: 'session-123', status: SessionStatus.ACTIVE },
+      } as never);
+      classTeacherModelAction.list.mockResolvedValue({
+        payload: [{ id: 'assignment-123' }],
+      } as never);
+      scheduleModelAction.update.mockResolvedValue({
+        id: mockScheduleId,
+        start_time: '10:00:00',
+      } as Schedule);
+      scheduleModelAction.get.mockResolvedValue(null);
+
+      await expect(
+        service.editSchedule(
+          mockScheduleId,
+          { start_time: '10:00:00' },
+          teacherActor,
+        ),
+      ).resolves.toMatchObject({ start_time: '10:00:00' });
+      expect(validationService.validateUpdateSchedule).toHaveBeenCalledWith(
+        mockScheduleId,
+        { start_time: '10:00:00' },
+      );
+      expect(scheduleModelAction.update).toHaveBeenCalled();
+    });
+
+    it('rejects editing another class timetable before validation or update', async () => {
+      scheduleModelAction.getScheduleWithTimetable.mockResolvedValue({
+        timetable: { class_id: mockClassId },
+      } as Schedule);
+      classModelAction.get.mockResolvedValue({
+        is_deleted: false,
+        academicSession: { id: 'session-123', status: SessionStatus.ACTIVE },
+      } as never);
+      classTeacherModelAction.list.mockResolvedValue({ payload: [] } as never);
+
+      await expect(
+        service.editSchedule(mockScheduleId, {}, teacherActor),
+      ).rejects.toThrow(ForbiddenException);
+      expect(validationService.validateUpdateSchedule).not.toHaveBeenCalled();
+      expect(scheduleModelAction.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('class schedule options', () => {
+    it('returns only active subject and teacher pairs for an assigned class teacher', async () => {
+      classModelAction.get.mockResolvedValue({
+        is_deleted: false,
+        academicSession: { id: 'session-123', status: SessionStatus.ACTIVE },
+      } as never);
+      classTeacherModelAction.list.mockResolvedValue({
+        payload: [{ id: 'assignment-123' }],
+      } as never);
+      classSubjects.find.mockResolvedValue([
+        {
+          subject: { id: 'subject-1', name: 'Mathematics' },
+          teacher: {
+            id: 'teacher-123',
+            is_active: true,
+            user: { first_name: 'Ada', last_name: 'Okoro', is_active: true },
+          },
+        },
+        { subject: { id: 'subject-2', name: 'English' }, teacher: null },
+      ]);
+
+      await expect(
+        service.getClassScheduleOptions(mockClassId, teacherActor),
+      ).resolves.toEqual([
+        {
+          subject: { id: 'subject-1', name: 'Mathematics' },
+          teacher: { id: 'teacher-123', name: 'Ada Okoro' },
+        },
+      ]);
+      expect(classSubjects.find).toHaveBeenCalledWith({
+        where: { class: { id: mockClassId } },
+        relations: { subject: true, teacher: { user: true } },
+      });
     });
   });
 

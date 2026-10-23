@@ -2,6 +2,7 @@ import { PaginationMeta } from '@hng-sdk/orm';
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { FetchPaymentsDto } from '../dto/get-all-payments.dto';
@@ -49,6 +50,8 @@ describe('PaymentService', () => {
     term_id: mockTermId,
     session_id: mockSessionId,
     invoice_number: 'INV-001',
+    bank_name: 'Guaranty Trust Bank (GTB)',
+    description: 'Transfer confirmed against bank statement',
   };
 
   const mockPaymentEntity = {
@@ -116,6 +119,13 @@ describe('PaymentService', () => {
   const mockPaymentValidationServiceValue = {
     validatePayment: jest.fn(),
   };
+  const transactionManager = { query: jest.fn().mockResolvedValue([]) };
+  const dataSource = {
+    transaction: jest.fn(
+      (callback: (manager: typeof transactionManager) => Promise<unknown>) =>
+        callback(transactionManager),
+    ),
+  };
 
   // Spy function to mock the behavior of the private helper method
   const mockSearchPaymentsWithQueryBuilder: jest.MockedFn<ISearchPaymentsSignature> =
@@ -133,6 +143,7 @@ describe('PaymentService', () => {
           provide: PaymentValidationService,
           useValue: mockPaymentValidationServiceValue,
         },
+        { provide: DataSource, useValue: dataSource },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: mockLogger,
@@ -173,6 +184,15 @@ describe('PaymentService', () => {
       );
 
       expect(result).toEqual(mockPaymentEntity);
+      expect(transactionManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining([
+          mockUserId,
+          'PAYMENT',
+          mockPaymentEntity.id,
+          'RECORD',
+        ]),
+      );
 
       expect(paymentValidationService.validatePayment).toHaveBeenCalledWith(
         recordPaymentDto,
@@ -184,11 +204,16 @@ describe('PaymentService', () => {
             student_id: recordPaymentDto.student_id,
             amount_paid: recordPaymentDto.amount_paid,
             recorded_by: mockUserId,
+            bank_name: recordPaymentDto.bank_name,
+            description: recordPaymentDto.description,
             receipt_url: receiptUrl,
             transaction_id: expect.stringMatching(/^HNG\/\d+\/\d+$/),
             payment_date: expect.any(Date),
           }),
-          transactionOptions: { useTransaction: false },
+          transactionOptions: {
+            useTransaction: true,
+            transaction: transactionManager,
+          },
         }),
       );
 

@@ -36,8 +36,8 @@ export class User extends BaseEntity {
   @Column({ type: 'date', nullable: true })
   dob: Date;
 
-  @Column()
-  email: string;
+  @Column({ nullable: true })
+  email: string | null;
 
   @Column({ nullable: true })
   phone: string;
@@ -61,6 +61,9 @@ export class User extends BaseEntity {
 
   @Column({ default: true })
   is_active: boolean;
+
+  @Column({ default: false })
+  password_setup_required?: boolean;
 
   @Column({ default: true, nullable: true })
   is_verified?: boolean;

@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsDateString,
   IsOptional,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -46,6 +47,16 @@ export class RecordPaymentDto {
   @IsString()
   @IsOptional()
   invoice_number?: string;
+
+  @IsString()
+  @MaxLength(120)
+  @IsOptional()
+  bank_name?: string;
+
+  @IsString()
+  @MaxLength(2000)
+  @IsOptional()
+  description?: string;
 
   @IsOptional()
   receipt_file?: unknown;
@@ -122,6 +133,12 @@ export class PaymentResponseDto {
 
   @Expose()
   invoice_number: string;
+
+  @Expose()
+  bank_name: string | null;
+
+  @Expose()
+  description: string | null;
 
   @Expose()
   transaction_id: string;

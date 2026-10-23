@@ -3,8 +3,13 @@ import * as path from 'path';
 
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
 import * as nodemailer from 'nodemailer';
 import * as nunjucks from 'nunjucks';
+import { Repository } from 'typeorm';
+
+import { resolveTenantName } from '../../config/tenant-identity';
+import { School } from '../school/entities/school.entity';
 
 import { EmailPayload } from './email.types';
 
@@ -13,7 +18,11 @@ export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @InjectRepository(School)
+    private readonly schools: Repository<School>,
+  ) {
     // Initialize the transporter
     this.transporter = nodemailer.createTransport({
       host: this.configService.get<string>('mail.host'),
@@ -26,6 +35,9 @@ export class EmailService {
       },
       pool: true,
       maxConnections: 5,
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     });
   }
 
@@ -72,14 +84,27 @@ export class EmailService {
   async sendMail(payload: EmailPayload): Promise<void> {
     const { from, to, subject, templateNameID, templateData, text } = payload;
 
-    const html = await this.compileTemplate(templateNameID, templateData);
+    // School Settings is the source of truth for the logo shown in the portal.
+    // Use the same uploaded image in emails, falling back to the configured
+    // identity during initial setup before a school record exists.
+    const emailTemplateData = { ...templateData };
+    if (Object.prototype.hasOwnProperty.call(emailTemplateData, 'logo_url')) {
+      const school = await this.schools.findOne({
+        where: { installation_completed: true },
+        select: { logo_url: true },
+      });
+      if (school?.logo_url?.trim()) {
+        emailTemplateData.logo_url = school.logo_url.trim();
+      }
+    }
+    const html = await this.compileTemplate(templateNameID, emailTemplateData);
 
     const fromAddress =
       from?.email ?? this.configService.get<string>('mail.from.address');
     const fromName =
-      from?.name ??
-      this.configService.get<string>('mail.from.name') ??
-      'Open School Portal';
+      from?.name?.trim() ||
+      this.configService.get<string>('mail.from.name')?.trim() ||
+      resolveTenantName(this.configService);
 
     const mailOptions: nodemailer.SendMailOptions = {
       from: `"${fromName}" <${fromAddress}>`,

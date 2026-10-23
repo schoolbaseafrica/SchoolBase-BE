@@ -63,6 +63,12 @@ export class Payment extends BaseEntity {
   @IsOptional()
   invoice_number: string;
 
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  bank_name: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  description: string | null;
+
   @Column({ nullable: true })
   @IsString()
   @IsOptional()
