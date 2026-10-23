@@ -1035,6 +1035,7 @@ describe('FeesService', () => {
 
       // Tuition: 50000 - 30000 = 20000 outstanding (Partially Paid)
       expect(result.fee_breakdown[0]).toEqual({
+        fee_id: 'fee-1',
         component_name: 'Tuition',
         amount: 50000,
         discount_amount: 0,
@@ -1046,6 +1047,7 @@ describe('FeesService', () => {
 
       // Library: 5000 - 0 = 5000 outstanding (Outstanding)
       expect(result.fee_breakdown[1]).toEqual({
+        fee_id: 'fee-2',
         component_name: 'Library',
         amount: 5000,
         discount_amount: 0,

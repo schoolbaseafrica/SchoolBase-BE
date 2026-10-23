@@ -23,6 +23,7 @@ export class StudentInfoDto {
 }
 
 export class FeeBreakdownItemDto {
+  fee_id: string;
   component_name: string;
   amount: number;
   discount_amount?: number;

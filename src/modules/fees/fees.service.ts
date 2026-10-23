@@ -663,6 +663,7 @@ export class FeesService {
       }
 
       return {
+        fee_id: fee.id,
         component_name: fee.component_name,
         amount: amount,
         discount_amount: discountAmount,
