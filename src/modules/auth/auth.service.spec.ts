@@ -202,6 +202,11 @@ describe('AuthService', () => {
       );
       expect(result.user.role).toEqual(['STUDENT']);
       expect(result.access_token).toBe('token');
+      expect(mockUserService.updateUser).toHaveBeenCalledWith(
+        { last_login_at: expect.any(Date) },
+        { id: activeStudent.id },
+        { useTransaction: false },
+      );
     });
 
     it('keeps email login on the same identifier path', async () => {
@@ -221,6 +226,32 @@ describe('AuthService', () => {
       expect(mockUserService.findByLoginIdentifier).toHaveBeenCalledWith(
         'student@example.com',
       );
+    });
+
+    it('does not update last login for an invalid password', async () => {
+      mockUserService.findByLoginIdentifier.mockResolvedValue(activeStudent);
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(false as never);
+
+      await expect(
+        service.login({ email: 'student@example.com', password: 'wrong' }),
+      ).rejects.toThrow(sysMSG.INVALID_CREDENTIALS);
+
+      expect(mockUserService.updateUser).not.toHaveBeenCalled();
+    });
+
+    it('does not update last login if session creation fails', async () => {
+      mockUserService.findByLoginIdentifier.mockResolvedValue(activeStudent);
+      jest.spyOn(bcrypt, 'compare').mockResolvedValue(true as never);
+      mockJwtService.signAsync.mockResolvedValue('token');
+      mockSessionService.createSession.mockRejectedValue(
+        new Error('Session unavailable'),
+      );
+
+      await expect(
+        service.login({ email: 'student@example.com', password: 'password' }),
+      ).rejects.toThrow('Session unavailable');
+
+      expect(mockUserService.updateUser).not.toHaveBeenCalled();
     });
   });
 
@@ -560,6 +591,11 @@ describe('AuthService', () => {
         mockGooglePayload.email,
       );
       expect(result).toHaveProperty('access_token');
+      expect(mockUserService.updateUser).toHaveBeenCalledWith(
+        { last_login_at: expect.any(Date) },
+        { id: existingUser.id },
+        { useTransaction: false },
+      );
     });
 
     it('should throw UnauthorizedException if Google token is invalid', async () => {

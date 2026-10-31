@@ -163,6 +163,12 @@ export class AuthService {
       );
     }
 
+    await this.userService.updateUser(
+      { last_login_at: new Date() },
+      { id: user.id },
+      { useTransaction: false },
+    );
+
     this.logger.info(sysMsg.LOGIN_SUCCESS);
 
     return {
@@ -530,6 +536,12 @@ export class AuthService {
         tokens.refresh_token,
       );
     }
+
+    await this.userService.updateUser(
+      { last_login_at: new Date() },
+      { id: user.id },
+      { useTransaction: false },
+    );
 
     return {
       message: sysMsg.LOGIN_SUCCESS,
