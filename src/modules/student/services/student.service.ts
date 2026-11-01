@@ -305,7 +305,7 @@ export class StudentService {
             filterRecordOptions: {
               is_deleted: false,
             },
-            relations: { user: true, stream: true },
+            relations: { user: true, stream: true, parent: { user: true } },
             paginationPayload: { page, limit },
             order: { createdAt: 'DESC' },
           });
@@ -529,6 +529,8 @@ export class StudentService {
       .createQueryBuilder('student')
       .leftJoinAndSelect('student.user', 'user')
       .leftJoinAndSelect('student.stream', 'stream')
+      .leftJoinAndSelect('student.parent', 'parent')
+      .leftJoinAndSelect('parent.user', 'parent_user')
       .orderBy('student.createdAt', 'DESC')
       .where('student.is_deleted IS NOT TRUE');
 

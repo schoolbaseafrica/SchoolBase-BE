@@ -105,6 +105,20 @@ export class StudentResponseDto {
   current_class_id: string | null;
 
   @ApiProperty({
+    description: 'Linked parent ID',
+    required: false,
+    nullable: true,
+  })
+  parent_id: string | null;
+
+  @ApiProperty({
+    description: 'Linked parent name',
+    required: false,
+    nullable: true,
+  })
+  parent_name: string | null;
+
+  @ApiProperty({
     description: 'Class assigned in the requested academic session',
     type: String,
     required: false,
@@ -143,6 +157,12 @@ export class StudentResponseDto {
     this.is_active = user.is_active;
     this.photo_url = student.photo_url;
     this.current_class_id = student.current_class_id;
+    this.parent_id = student.parent?.id ?? null;
+    this.parent_name = student.parent?.user
+      ? [student.parent.user.first_name, student.parent.user.last_name]
+          .filter(Boolean)
+          .join(' ')
+      : null;
     this.class = student.current_class
       ? [student.current_class.name, student.current_class.arm]
           .filter(Boolean)

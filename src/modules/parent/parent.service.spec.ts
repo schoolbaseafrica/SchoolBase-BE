@@ -1018,6 +1018,13 @@ describe('ParentService', () => {
   });
 
   describe('linkStudentsToParent', () => {
+    let studentQueryBuilder: {
+      setLock: jest.Mock;
+      where: jest.Mock;
+      select: jest.Mock;
+      getOne: jest.Mock;
+      getRawOne: jest.Mock;
+    };
     const mockParentId = 'parent-uuid-123';
     const mockStudentId1 = 'student-uuid-001';
     const mockStudentId2 = 'student-uuid-002';
@@ -1039,6 +1046,17 @@ describe('ParentService', () => {
     };
 
     beforeEach(() => {
+      studentQueryBuilder = {
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(mockStudent1),
+        getRawOne: jest.fn().mockResolvedValue({ parent_id: null }),
+      };
+      queryRunner.manager.createQueryBuilder = jest
+        .fn()
+        .mockReturnValue(studentQueryBuilder);
+      queryRunner.manager.update = jest.fn().mockResolvedValue({ affected: 1 });
       parentModelAction.get.mockResolvedValue(mockParent as Parent);
       studentModelAction.get.mockImplementation(async (options) => {
         const id = options.identifierOptions?.id;
@@ -1046,7 +1064,6 @@ describe('ParentService', () => {
         if (id === mockStudentId2) return mockStudent2 as Student;
         return null;
       });
-      studentModelAction.update.mockResolvedValue({} as Student);
     });
 
     it('should link multiple students to parent successfully', async () => {
@@ -1153,30 +1170,16 @@ describe('ParentService', () => {
       await service.linkStudentsToParent(mockParentId, linkDto);
 
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
-      expect(studentModelAction.update).toHaveBeenCalledTimes(2);
-      expect(studentModelAction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          identifierOptions: { id: mockStudentId1 },
-          updatePayload: {
-            parent: { id: mockParentId },
-          },
-          transactionOptions: {
-            useTransaction: true,
-            transaction: expect.anything(),
-          },
-        }),
+      expect(queryRunner.manager.update).toHaveBeenCalledTimes(2);
+      expect(queryRunner.manager.update).toHaveBeenCalledWith(
+        Student,
+        mockStudentId1,
+        { parent: { id: mockParentId } },
       );
-      expect(studentModelAction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          identifierOptions: { id: mockStudentId2 },
-          updatePayload: {
-            parent: { id: mockParentId },
-          },
-          transactionOptions: {
-            useTransaction: true,
-            transaction: expect.anything(),
-          },
-        }),
+      expect(queryRunner.manager.update).toHaveBeenCalledWith(
+        Student,
+        mockStudentId2,
+        { parent: { id: mockParentId } },
       );
     });
 
@@ -1205,7 +1208,43 @@ describe('ParentService', () => {
 
       expect(result.total_linked).toBe(1);
       expect(result.linked_students).toEqual([mockStudentId1]);
-      expect(studentModelAction.update).toHaveBeenCalledTimes(1);
+      expect(queryRunner.manager.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('requires explicit approval to replace another parent', async () => {
+      studentQueryBuilder.getRawOne.mockResolvedValue({
+        parent_id: 'old-parent',
+      });
+      await expect(
+        service.linkStudentsToParent(mockParentId, {
+          student_ids: [mockStudentId1],
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(queryRunner.manager.update).not.toHaveBeenCalled();
+    });
+
+    it('reassigns only when the confirmed previous parent matches', async () => {
+      studentQueryBuilder.getRawOne.mockResolvedValue({
+        parent_id: 'old-parent',
+      });
+      const dto: LinkStudentsDto = {
+        student_ids: [mockStudentId1],
+        allow_reassignment: true,
+        expected_parent_ids: { [mockStudentId1]: 'old-parent' },
+      };
+      await service.linkStudentsToParent(mockParentId, dto);
+      expect(queryRunner.manager.update).toHaveBeenCalledWith(
+        Student,
+        mockStudentId1,
+        { parent: { id: mockParentId } },
+      );
+
+      studentQueryBuilder.getRawOne.mockResolvedValue({
+        parent_id: 'different-parent',
+      });
+      await expect(
+        service.linkStudentsToParent(mockParentId, dto),
+      ).rejects.toThrow(ConflictException);
     });
   });
 

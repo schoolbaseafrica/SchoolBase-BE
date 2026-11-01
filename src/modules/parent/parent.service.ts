@@ -26,6 +26,7 @@ import {
   hashPassword,
   generateStrongPassword,
 } from '../shared/utils';
+import { Student } from '../student/entities/student.entity';
 import { StudentModelAction } from '../student/model-actions/student-actions';
 import { User } from '../user/entities/user.entity';
 import { UserModelAction } from '../user/model-actions/user-actions';
@@ -631,19 +632,49 @@ export class ParentService {
       }),
     );
 
-    // 3. Link students to parent in a transaction
+    // Lock each row before checking its current parent so concurrent links
+    // cannot turn a confirmed reassignment into an unnoticed overwrite.
     await this.dataSource.transaction(async (manager) => {
-      for (const student of students) {
-        await this.studentModelAction.update({
-          identifierOptions: { id: student.id },
-          updatePayload: {
-            parent: { id: parentId },
-          },
-          transactionOptions: {
-            useTransaction: true,
-            transaction: manager,
-          },
-        });
+      for (const student of [...students].sort((a, b) =>
+        a.id.localeCompare(b.id),
+      )) {
+        const current = await manager
+          .createQueryBuilder(Student, 'student')
+          .setLock('pessimistic_write')
+          .where('student.id = :studentId AND student.is_deleted = false', {
+            studentId: student.id,
+          })
+          .getOne();
+        if (!current)
+          throw new NotFoundException(`Student ${student.id} not found`);
+        const currentParentId = await manager
+          .createQueryBuilder(Student, 'student')
+          .select('student.parent_id', 'parent_id')
+          .where('student.id = :studentId', { studentId: student.id })
+          .getRawOne<{ parent_id: string | null }>();
+        if (
+          linkDto.expected_parent_ids &&
+          Object.prototype.hasOwnProperty.call(
+            linkDto.expected_parent_ids,
+            student.id,
+          ) &&
+          (currentParentId?.parent_id ?? null) !==
+            linkDto.expected_parent_ids[student.id]
+        ) {
+          throw new ConflictException(
+            `Student ${student.id}'s parent assignment changed. Refresh and review before linking.`,
+          );
+        }
+        if (
+          currentParentId?.parent_id &&
+          currentParentId.parent_id !== parentId &&
+          !linkDto.allow_reassignment
+        ) {
+          throw new ConflictException(
+            `Student ${student.id} is already linked to another parent. Confirm reassignment to replace that link.`,
+          );
+        }
+        await manager.update(Student, student.id, { parent: { id: parentId } });
       }
     });
 
