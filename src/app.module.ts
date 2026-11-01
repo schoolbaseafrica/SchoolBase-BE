@@ -30,6 +30,7 @@ import { MeetingModule } from './modules/meeting/meeting.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { ParentModule } from './modules/parent/parent.module';
 import { PaymentModule } from './modules/payment/payment.module';
+import { PlatformActivityModule } from './modules/platform-activity/platform-activity.module';
 import { ResultModule } from './modules/result/result.module';
 import { RoomModule } from './modules/room/room.module';
 import { SchoolModule } from './modules/school/school.module';
@@ -135,6 +136,7 @@ import { VirtualClassroomModule } from './modules/virtual-classroom/virtual-clas
     ResultModule,
     SuperadminModule,
     PaymentModule,
+    PlatformActivityModule,
     ResultModule,
     NotificationModule,
     LandingPageModule,
