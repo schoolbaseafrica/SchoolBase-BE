@@ -100,6 +100,18 @@ export class ClassController {
     return this.classService.previewPromotion(dto);
   }
 
+  @Get('promotion/status')
+  @Roles(UserRole.ADMIN)
+  async getPromotionStatus(
+    @Query('sourceSessionId', ParseUUIDPipe) sourceSessionId: string,
+    @Query('targetSessionId', ParseUUIDPipe) targetSessionId: string,
+  ) {
+    return this.classService.getPromotionStatus(
+      sourceSessionId,
+      targetSessionId,
+    );
+  }
+
   @Post('promotion/execute')
   @Roles(UserRole.ADMIN)
   async executePromotion(@Body() dto: PromoteStudentsDto) {

@@ -1144,6 +1144,78 @@ export class ClassService {
     return Array.from(uniqueClasses.values());
   }
 
+  async getPromotionStatus(sourceSessionId: string, targetSessionId: string) {
+    if (sourceSessionId === targetSessionId) {
+      throw new BadRequestException(
+        'Source and target academic sessions must be different.',
+      );
+    }
+    const [sourceSession, targetSession] = await Promise.all([
+      this.academicSessionModelAction.get({
+        identifierOptions: { id: sourceSessionId },
+      }),
+      this.academicSessionModelAction.get({
+        identifierOptions: { id: targetSessionId },
+      }),
+    ]);
+    if (!sourceSession || !targetSession) {
+      throw new NotFoundException(
+        'Source or target academic session not found.',
+      );
+    }
+
+    const repository = this.dataSource.getRepository(ClassStudent);
+    const [sourceAssignments, targetAssignments] = await Promise.all([
+      repository
+        .createQueryBuilder('assignment')
+        .innerJoin('assignment.class', 'class')
+        .innerJoin('assignment.student', 'student')
+        .select('class.id', 'classId')
+        .addSelect('student.id', 'studentId')
+        .where('assignment.session_id = :sessionId', {
+          sessionId: sourceSessionId,
+        })
+        .andWhere('assignment.is_active = true')
+        .andWhere('class.is_deleted = false')
+        .andWhere('student.is_deleted = false')
+        .getRawMany<{ classId: string; studentId: string }>(),
+      repository
+        .createQueryBuilder('assignment')
+        .innerJoin('assignment.student', 'student')
+        .select('student.id', 'studentId')
+        .where('assignment.session_id = :sessionId', {
+          sessionId: targetSessionId,
+        })
+        .andWhere('assignment.is_active = true')
+        .getRawMany<{ studentId: string }>(),
+    ]);
+    const targetStudentIds = new Set(
+      targetAssignments.map((row) => row.studentId),
+    );
+    const status = new Map<
+      string,
+      {
+        sourceClassId: string;
+        total: number;
+        alreadyInTarget: number;
+        remaining: number;
+      }
+    >();
+    for (const assignment of sourceAssignments) {
+      const item = status.get(assignment.classId) ?? {
+        sourceClassId: assignment.classId,
+        total: 0,
+        alreadyInTarget: 0,
+        remaining: 0,
+      };
+      item.total++;
+      if (targetStudentIds.has(assignment.studentId)) item.alreadyInTarget++;
+      else item.remaining++;
+      status.set(assignment.classId, item);
+    }
+    return Array.from(status.values());
+  }
+
   async previewPromotion(dto: PromoteStudentsDto): Promise<PromotionPreview> {
     if (dto.sourceSessionId === dto.targetSessionId) {
       throw new BadRequestException(

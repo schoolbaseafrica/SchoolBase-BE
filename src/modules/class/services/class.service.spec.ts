@@ -1226,6 +1226,44 @@ describe('ClassService', () => {
   });
 
   describe('student promotion', () => {
+    it('reports fully moved, partly moved, and untouched source classes', async () => {
+      academicSessionModelAction.get
+        .mockResolvedValueOnce({ id: 'source-session' } as AcademicSession)
+        .mockResolvedValueOnce({ id: 'target-session' } as AcademicSession);
+      const query = {
+        innerJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getRawMany: jest.fn(),
+      };
+      query.getRawMany
+        .mockResolvedValueOnce([
+          { classId: 'a', studentId: 'one' },
+          { classId: 'a', studentId: 'two' },
+          { classId: 'b', studentId: 'three' },
+          { classId: 'b', studentId: 'four' },
+          { classId: 'c', studentId: 'five' },
+        ])
+        .mockResolvedValueOnce([
+          { studentId: 'one' },
+          { studentId: 'two' },
+          { studentId: 'three' },
+        ]);
+      mockDataSource.getRepository.mockReturnValue({
+        createQueryBuilder: jest.fn().mockReturnValue(query),
+      });
+
+      await expect(
+        service.getPromotionStatus('source-session', 'target-session'),
+      ).resolves.toEqual([
+        { sourceClassId: 'a', total: 2, alreadyInTarget: 2, remaining: 0 },
+        { sourceClassId: 'b', total: 2, alreadyInTarget: 1, remaining: 1 },
+        { sourceClassId: 'c', total: 1, alreadyInTarget: 0, remaining: 1 },
+      ]);
+    });
+
     it('previews promotable and already-promoted students accurately', async () => {
       academicSessionModelAction.get
         .mockResolvedValueOnce({ id: 'source-session' } as AcademicSession)
