@@ -281,7 +281,26 @@ describe('ParentService', () => {
       ]);
       expect(result).toMatchObject({ total: 2, successful: 1, failed: 1 });
       expect(create).toHaveBeenCalledTimes(1);
-      expect(result.results[1].error).toContain('email');
+      expect(result.results[1].error).toContain('Row 3: Email is invalid');
+    });
+
+    it('reports a malformed date and lost phone zero without creating the parent', async () => {
+      const create = jest.spyOn(service, 'create');
+      const result = await service.bulkCreate([
+        {
+          first_name: 'Ada',
+          last_name: 'Okafor',
+          email: 'ada@example.com',
+          phone: '8012345678',
+          date_of_birth: '15/05/1985',
+          gender: 'Female',
+        },
+      ]);
+      expect(result).toMatchObject({ total: 1, successful: 0, failed: 1 });
+      expect(result.results[0].error).toContain('Row 2:');
+      expect(result.results[0].error).toContain('08012345678');
+      expect(result.results[0].error).toContain('1985-05-15');
+      expect(create).not.toHaveBeenCalled();
     });
   });
 

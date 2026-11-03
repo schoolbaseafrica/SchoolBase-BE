@@ -421,11 +421,7 @@ export class InviteService {
       throw new BadRequestException(sysMsg.NO_BULK_UPLOAD_DATA);
     }
 
-    if (file.mimetype !== 'text/csv') {
-      throw new BadRequestException(sysMsg.BULK_UPLOAD_NOT_ALLOWED);
-    }
-
-    if (!file.originalname.endsWith('.csv')) {
+    if (!file.originalname.toLowerCase().endsWith('.csv')) {
       throw new BadRequestException(sysMsg.INVALID_BULK_UPLOAD_FILE);
     }
 
@@ -437,7 +433,44 @@ export class InviteService {
       throw new BadRequestException('CSV files are limited to 1000 rows');
     }
 
-    const filteredRows = rows.filter((row) => row.email?.trim());
+    const header = file.buffer
+      .toString('utf8')
+      .replace(/^\uFEFF/, '')
+      .split(/\r?\n/, 1)[0];
+    if (!/^\s*"?(?:Full Name|full_name)"?\s*,\s*"?Email"?\s*$/i.test(header)) {
+      throw new BadRequestException('Expected CSV headings: Full Name,Email');
+    }
+    if (!rows.length) {
+      throw new BadRequestException(
+        'CSV has no invitation rows. Example: Ada Okafor,ada@example.com',
+      );
+    }
+    const invalidRow = rows.findIndex(
+      (row) =>
+        Object.keys(row).some(
+          (key) => key !== 'full_name' && key !== 'email',
+        ) ||
+        !row.full_name?.trim() ||
+        !/^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/.test(row.email?.trim() ?? ''),
+    );
+    if (invalidRow !== -1) {
+      throw new BadRequestException(
+        `Row ${invalidRow + 2}: Full Name and Email are required. Example: Ada Okafor,ada@example.com`,
+      );
+    }
+
+    const seenEmails = new Set<string>();
+    for (const [index, row] of rows.entries()) {
+      const email = row.email.trim().toLowerCase();
+      if (seenEmails.has(email)) {
+        throw new BadRequestException(
+          `Row ${index + 2}: Email is duplicated in this CSV. Use each email once. Example: ada@example.com`,
+        );
+      }
+      seenEmails.add(email);
+    }
+
+    const filteredRows = rows;
     const emails = filteredRows.map((row) => row.email.trim().toLowerCase());
 
     const existing = await this.inviteModelAction.get({

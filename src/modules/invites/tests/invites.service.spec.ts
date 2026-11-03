@@ -411,7 +411,7 @@ describe('InviteService', () => {
     it('should process CSV upload and send invite emails', async () => {
       const mockFile = {
         buffer: Buffer.from(
-          'email,full_name\nnew@user.com,New User\nexisting@user.com,Existing User',
+          'Full Name,Email\nNew User,new@user.com\nExisting User,existing@user.com',
         ),
         mimetype: 'text/csv',
         originalname: 'bulk.csv',
@@ -450,7 +450,7 @@ describe('InviteService', () => {
 
     it('rejects oversized invite lists before any email is sent', async () => {
       const file = {
-        buffer: Buffer.from('email,full_name\n'),
+        buffer: Buffer.from('Full Name,Email\n'),
         mimetype: 'text/csv',
         originalname: 'bulk.csv',
       } as Express.Multer.File;
@@ -463,6 +463,41 @@ describe('InviteService', () => {
       await expect(
         service.uploadCsv(file, InviteRole.ADMIN),
       ).rejects.toBeInstanceOf(BadRequestException);
+      expect(emailService.sendMail).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid CSV row with an example before sending invitations', async () => {
+      const file = {
+        buffer: Buffer.from('Full Name,Email\nAda Okafor,not-an-email'),
+        mimetype: 'text/csv',
+        originalname: 'staff.csv',
+      } as Express.Multer.File;
+      jest
+        .spyOn(csvParser, 'parseCsv')
+        .mockResolvedValue([
+          { full_name: 'Ada Okafor', email: 'not-an-email' },
+        ]);
+      await expect(service.uploadCsv(file, InviteRole.ADMIN)).rejects.toThrow(
+        'Row 2: Full Name and Email are required. Example: Ada Okafor,ada@example.com',
+      );
+      expect(emailService.sendMail).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate emails with the second CSV row number', async () => {
+      const file = {
+        buffer: Buffer.from(
+          'Full Name,Email\nAda Okafor,ada@example.com\nAnother Ada,ADA@example.com',
+        ),
+        mimetype: 'text/csv',
+        originalname: 'staff.csv',
+      } as Express.Multer.File;
+      jest.spyOn(csvParser, 'parseCsv').mockResolvedValue([
+        { full_name: 'Ada Okafor', email: 'ada@example.com' },
+        { full_name: 'Another Ada', email: 'ADA@example.com' },
+      ]);
+      await expect(service.uploadCsv(file, InviteRole.ADMIN)).rejects.toThrow(
+        'Row 3: Email is duplicated in this CSV',
+      );
       expect(emailService.sendMail).not.toHaveBeenCalled();
     });
   });

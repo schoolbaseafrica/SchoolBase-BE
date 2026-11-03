@@ -3,6 +3,7 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { DataSource } from 'typeorm';
 
+import { bulkPersonCsvErrors } from '../../../common/utils/bulk-person-csv-validation';
 import { SessionStatus } from '../../academic-session/entities/academic-session.entity';
 import { CreateClassDto } from '../../class/dto/create-class.dto';
 import { Class } from '../../class/entities/class.entity';
@@ -75,7 +76,7 @@ export class StudentBulkImportService {
       student?: unknown;
       error?: string;
     }> = [];
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       const dto = plainToInstance(CreateStudentDto, {
         first_name: row.first_name,
         last_name: row.last_name,
@@ -89,11 +90,12 @@ export class StudentBulkImportService {
         password: row.password,
       });
       const errors = await validate(dto, { whitelist: true });
-      if (errors.length) {
+      const fieldErrors = bulkPersonCsvErrors(row, errors);
+      if (fieldErrors.length) {
         results.push({
           email: row.email ?? '',
           success: false,
-          error: `Invalid student data: ${errors.map((error) => error.property).join(', ')}`,
+          error: `Row ${index + 2}: ${fieldErrors.join('; ')}`,
         });
         continue;
       }
@@ -110,7 +112,7 @@ export class StudentBulkImportService {
               email: dto.email ?? '',
               success: true,
               student,
-              error: `Student created, but class assignment failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+              error: `Row ${index + 2}: Student created, but class assignment failed: ${error instanceof Error ? error.message : 'unknown error'}`,
             });
             continue;
           }
@@ -120,8 +122,7 @@ export class StudentBulkImportService {
         results.push({
           email: dto.email ?? '',
           success: false,
-          error:
-            error instanceof Error ? error.message : 'Unable to create student',
+          error: `Row ${index + 2}: ${error instanceof Error ? error.message : 'Unable to create student'}`,
         });
       }
     }

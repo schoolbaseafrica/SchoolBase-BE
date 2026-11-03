@@ -83,6 +83,21 @@ describe('StudentBulkImportService', () => {
   it('rejects invalid rows before creating accounts', async () => {
     const result = await service.import([{ ...row, email: 'bad' }]);
     expect(result).toMatchObject({ total: 1, successful: 0, failed: 1 });
+    expect(result.results[0].error).toContain(
+      'Row 2: Email is invalid. Example: ada@example.com',
+    );
+    expect(students.create).not.toHaveBeenCalled();
+  });
+
+  it('explains spreadsheet-damaged phone and date cells with their CSV row', async () => {
+    const result = await service.import([
+      { ...row, email: 'bad' },
+      { ...row, phone: '8012345678', date_of_birth: '05/14/2012' },
+    ]);
+    expect(result).toMatchObject({ total: 2, successful: 0, failed: 2 });
+    expect(result.results[1].error).toContain('Row 3:');
+    expect(result.results[1].error).toContain('08012345678');
+    expect(result.results[1].error).toContain('2012-05-14');
     expect(students.create).not.toHaveBeenCalled();
   });
 

@@ -13,6 +13,7 @@ import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { IPaginationMeta } from '../../common/types/base-response.interface';
+import { bulkPersonCsvErrors } from '../../common/utils/bulk-person-csv-validation';
 import * as sysMsg from '../../constants/system.messages';
 import { SessionStatus } from '../academic-session/entities/academic-session.entity';
 import { writeActivityLog } from '../activity-log/write-activity-log';
@@ -75,7 +76,7 @@ export class ParentService {
       parent?: ParentResponseDto;
       error?: string;
     }> = [];
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       const dto = plainToInstance(CreateParentDto, {
         first_name: row.first_name,
         last_name: row.last_name,
@@ -88,13 +89,14 @@ export class ParentService {
         password: row.password || undefined,
       });
       const errors = await validate(dto, { whitelist: true });
-      if (errors.length || row.parent_id) {
+      const fieldErrors = bulkPersonCsvErrors(row, errors, '1985-05-15');
+      if (fieldErrors.length || row.parent_id) {
         results.push({
           email: row.email ?? '',
           success: false,
           error: row.parent_id
-            ? 'Custom Parent ID is not supported by this school installation'
-            : `Invalid parent data: ${errors.map((error) => error.property).join(', ')}`,
+            ? `Row ${index + 2}: Custom Parent ID is not supported by this school installation`
+            : `Row ${index + 2}: ${fieldErrors.join('; ')}`,
         });
         continue;
       }
@@ -108,8 +110,7 @@ export class ParentService {
         results.push({
           email: dto.email,
           success: false,
-          error:
-            error instanceof Error ? error.message : 'Unable to create parent',
+          error: `Row ${index + 2}: ${error instanceof Error ? error.message : 'Unable to create parent'}`,
         });
       }
     }
