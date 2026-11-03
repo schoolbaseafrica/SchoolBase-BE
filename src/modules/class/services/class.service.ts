@@ -18,6 +18,7 @@ import {
   SessionStatus,
 } from '../../academic-session/entities/academic-session.entity';
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { EventAction } from '../../notification/dto/event-trigger.dto';
 import { NotificationService } from '../../notification/services/notification.service';
 import {
@@ -127,7 +128,10 @@ export class ClassService {
   /**
    * Creates a class and links it to the active academic session.
    */
-  async create(createClassDto: CreateClassDto): Promise<ICreateClassResponse> {
+  async create(
+    createClassDto: CreateClassDto,
+    actorUserId: string,
+  ): Promise<ICreateClassResponse> {
     const { name, arm, teacherIds } = createClassDto;
 
     // Validate teacherIds are valid UUIDs and remove duplicates
@@ -192,6 +196,20 @@ export class ClassService {
           });
         }
       }
+
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: 'CLASS',
+        entityId: newClass.id,
+        action: 'CREATE',
+        description: `Created class ${name}${arm ? ` ${arm}` : ''} in ${academicSession.name}`,
+        newValues: {
+          name,
+          arm: arm ?? null,
+          academic_session_id: academicSession.id,
+          teacher_ids: uniqueTeacherIds,
+        },
+      });
 
       this.logger.info(sysMsg.CLASS_CREATED, newClass);
       return newClass;
@@ -1324,7 +1342,7 @@ export class ClassService {
     };
   }
 
-  async executePromotion(dto: PromoteStudentsDto) {
+  async executePromotion(dto: PromoteStudentsDto, actorUserId: string) {
     const preview = await this.previewPromotion(dto);
     if (preview.errors.length > 0) {
       throw new BadRequestException({
@@ -1343,6 +1361,7 @@ export class ClassService {
 
     await this.dataSource.transaction(async (manager) => {
       for (const [mappingIndex, mapping] of preview.mappings.entries()) {
+        const promotedStudentIds: string[] = [];
         for (const studentId of mapping.toPromoteStudentIds) {
           const existingTargetAssignment = await manager.findOne(ClassStudent, {
             where: {
@@ -1386,6 +1405,24 @@ export class ClassService {
             },
           });
           details[mappingIndex].promoted++;
+          promotedStudentIds.push(studentId);
+        }
+
+        if (promotedStudentIds.length > 0) {
+          await writeActivityLog(manager, {
+            actorUserId,
+            entityType: 'STUDENT_PROMOTION',
+            entityId: mapping.targetClassId,
+            action: 'PROMOTE',
+            description: `Promoted ${promotedStudentIds.length} student${promotedStudentIds.length === 1 ? '' : 's'} from ${mapping.sourceClassName} to ${mapping.targetClassName}`,
+            metadata: {
+              source_session_id: dto.sourceSessionId,
+              target_session_id: dto.targetSessionId,
+              source_class_id: mapping.sourceClassId,
+              target_class_id: mapping.targetClassId,
+              student_ids: promotedStudentIds,
+            },
+          });
         }
       }
     });

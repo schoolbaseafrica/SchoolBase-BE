@@ -76,8 +76,11 @@ export class ClassController {
   @Post('')
   @Roles(UserRole.ADMIN)
   @DocsCreateClass()
-  async create(@Body() createClassDto: CreateClassDto) {
-    return this.classService.create(createClassDto);
+  async create(
+    @Body() createClassDto: CreateClassDto,
+    @Req() req: IRequestWithUser,
+  ) {
+    return this.classService.create(createClassDto, req.user.userId);
   }
 
   // --- GET: GROUPED CLASSES ---
@@ -114,8 +117,11 @@ export class ClassController {
 
   @Post('promotion/execute')
   @Roles(UserRole.ADMIN)
-  async executePromotion(@Body() dto: PromoteStudentsDto) {
-    return this.classService.executePromotion(dto);
+  async executePromotion(
+    @Body() dto: PromoteStudentsDto,
+    @Req() req: IRequestWithUser,
+  ) {
+    return this.classService.executePromotion(dto, req.user.userId);
   }
 
   // --- GET: TOTAL NUMBER OF CLASSES ---
