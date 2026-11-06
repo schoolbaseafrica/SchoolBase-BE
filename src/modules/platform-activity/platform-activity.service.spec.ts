@@ -16,6 +16,7 @@ describe('PlatformActivityService', () => {
     settings.PLATFORM_ACTIVITY_URL =
       'https://platform.example/school-signals/staff-login';
     settings.PLATFORM_SCHOOL_TOKEN = 'a'.repeat(64);
+    settings.DB_NAME = 'sb_demo';
     query.mockReset();
     fetchMock.mockReset();
     global.fetch = fetchMock as typeof fetch;
@@ -31,11 +32,14 @@ describe('PlatformActivityService', () => {
 
   it('reports only the latest staff login timestamp without identifying users', async () => {
     const loginAt = new Date(Date.now() - 60_000);
-    query.mockResolvedValue([{ last_staff_login_at: loginAt }]);
+    query.mockResolvedValueOnce([{ last_staff_login_at: loginAt }]);
+    query.mockResolvedValueOnce([
+      { database_name: 'sb_demo', database_bytes: '1048576' },
+    ]);
     fetchMock.mockResolvedValue({ ok: true });
 
     expect(await service.reportOnce()).toBe(true);
-    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledTimes(2);
     expect(query.mock.calls[0][0]).toContain("ARRAY['ADMIN', 'TEACHER']");
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe(settings.PLATFORM_ACTIVITY_URL);
@@ -44,11 +48,72 @@ describe('PlatformActivityService', () => {
     );
     const body = JSON.parse(options.body);
     expect(Object.keys(body).sort()).toEqual([
+      'database_bytes',
+      'database_name',
       'last_staff_login_at',
       'observed_at',
       'report_id',
     ]);
     expect(body.last_staff_login_at).toBe(loginAt.toISOString());
+    expect(body.database_bytes).toBe(1048576);
+  });
+
+  it('does not interrupt activity reporting when the size query fails', async () => {
+    query.mockResolvedValueOnce([{ last_staff_login_at: null }]);
+    query.mockRejectedValueOnce(new Error('size unavailable'));
+    fetchMock.mockResolvedValue({ ok: true });
+
+    expect(await service.reportOnce()).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty('database_bytes');
+  });
+
+  it('does not repeat the size query in every five-minute report', async () => {
+    query.mockResolvedValueOnce([{ last_staff_login_at: null }]);
+    query.mockResolvedValueOnce([
+      { database_name: 'sb_demo', database_bytes: '1048576' },
+    ]);
+    query.mockResolvedValueOnce([{ last_staff_login_at: null }]);
+    fetchMock.mockResolvedValue({ ok: true });
+
+    expect(await service.reportOnce()).toBe(true);
+    expect(await service.reportOnce()).toBe(true);
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).not.toHaveProperty(
+      'database_bytes',
+    );
+  });
+
+  it('retries the size reading if Platform rejects the first report', async () => {
+    query.mockResolvedValueOnce([{ last_staff_login_at: null }]);
+    query.mockResolvedValueOnce([
+      { database_name: 'sb_demo', database_bytes: '1048576' },
+    ]);
+    query.mockResolvedValueOnce([{ last_staff_login_at: null }]);
+    query.mockResolvedValueOnce([
+      { database_name: 'sb_demo', database_bytes: '1048576' },
+    ]);
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    fetchMock.mockResolvedValueOnce({ ok: true });
+
+    expect(await service.reportOnce()).toBe(false);
+    expect(await service.reportOnce()).toBe(true);
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).database_bytes).toBe(
+      1048576,
+    );
+  });
+
+  it('refuses a size reading from a different database', async () => {
+    query.mockResolvedValueOnce([{ last_staff_login_at: null }]);
+    query.mockResolvedValueOnce([
+      { database_name: 'sb_stpaul', database_bytes: '1048576' },
+    ]);
+    fetchMock.mockResolvedValue({ ok: true });
+
+    expect(await service.reportOnce()).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty('database_bytes');
   });
 
   it('retries after a failed request on the next report', async () => {

@@ -10,12 +10,14 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 
 type StaffLoginRow = { last_staff_login_at: Date | null };
+type DatabaseSizeRow = { database_name: string; database_bytes: string };
 
 @Injectable()
 export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PlatformActivityService.name);
   private timer?: NodeJS.Timeout;
   private running = false;
+  private lastDatabaseSizeReportAt = 0;
 
   constructor(
     private readonly dataSource: DataSource,
@@ -76,6 +78,37 @@ export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
          WHERE "role"::text[] && ARRAY['ADMIN', 'TEACHER']::text[]`,
       )) as StaffLoginRow[];
       const observedAt = new Date();
+      let databaseSize: {
+        database_name: string;
+        database_bytes: number;
+      } | null = null;
+      if (observedAt.getTime() - this.lastDatabaseSizeReportAt >= 60 * 60_000) {
+        try {
+          const sizeRows = (await this.dataSource.query(
+            'SELECT current_database() AS database_name, pg_database_size(current_database())::text AS database_bytes',
+          )) as DatabaseSizeRow[];
+          const size = Number(sizeRows[0]?.database_bytes);
+          if (
+            sizeRows.length === 1 &&
+            sizeRows[0].database_name === this.config.get<string>('DB_NAME') &&
+            Number.isSafeInteger(size) &&
+            size >= 0
+          ) {
+            databaseSize = {
+              database_name: sizeRows[0].database_name,
+              database_bytes: size,
+            };
+          } else {
+            this.logger.warn(
+              'Platform database size report skipped: invalid database reading',
+            );
+          }
+        } catch {
+          this.logger.warn(
+            'Platform database size report unavailable; activity will continue',
+          );
+        }
+      }
       const loginAt = rows[0]?.last_staff_login_at
         ? new Date(rows[0].last_staff_login_at)
         : null;
@@ -105,6 +138,7 @@ export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
             ...(this.validImageRef()
               ? { image_ref: this.config.get<string>('SCHOOLBASE_IMAGE_REF') }
               : {}),
+            ...(databaseSize || {}),
           }),
         },
       );
@@ -114,6 +148,7 @@ export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
         );
         return false;
       }
+      if (databaseSize) this.lastDatabaseSizeReportAt = observedAt.getTime();
       return true;
     } catch {
       this.logger.warn(
