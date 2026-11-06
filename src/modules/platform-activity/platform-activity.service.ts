@@ -102,6 +102,9 @@ export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
             report_id: randomUUID(),
             observed_at: observedAt.toISOString(),
             last_staff_login_at: loginAt?.toISOString() ?? null,
+            ...(this.validImageRef()
+              ? { image_ref: this.config.get<string>('SCHOOLBASE_IMAGE_REF') }
+              : {}),
           }),
         },
       );
@@ -120,5 +123,15 @@ export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.running = false;
     }
+  }
+
+  private validImageRef(): boolean {
+    const ref = this.config.get<string>('SCHOOLBASE_IMAGE_REF') || '';
+    return (
+      ref.length <= 500 &&
+      /^ghcr\.io\/[a-z0-9._/-]+(?:@sha256:[a-f0-9]{64}|:[A-Za-z0-9._-]+)$/.test(
+        ref,
+      )
+    );
   }
 }
