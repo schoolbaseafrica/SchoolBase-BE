@@ -1,17 +1,22 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { IPaginationMeta } from '../../common/types/base-response.interface';
+import { bulkPersonCsvErrors } from '../../common/utils/bulk-person-csv-validation';
 import * as sysMsg from '../../constants/system.messages';
+import { SessionStatus } from '../academic-session/entities/academic-session.entity';
+import { writeActivityLog } from '../activity-log/write-activity-log';
 import { ClassStudentModelAction } from '../class/model-actions/class-student.action';
 import { ClassSubjectModelAction } from '../class/model-actions/class-subject.action';
 import { AccountCreationService } from '../email/account-creation.service';
@@ -22,6 +27,7 @@ import {
   hashPassword,
   generateStrongPassword,
 } from '../shared/utils';
+import { Student } from '../student/entities/student.entity';
 import { StudentModelAction } from '../student/model-actions/student-actions';
 import { User } from '../user/entities/user.entity';
 import { UserModelAction } from '../user/model-actions/user-actions';
@@ -63,8 +69,64 @@ export class ParentService {
     this.logger = baseLogger.child({ context: ParentService.name });
   }
 
+  async bulkCreate(rows: Record<string, string>[], actorUserId?: string) {
+    const results: Array<{
+      email: string;
+      success: boolean;
+      parent?: ParentResponseDto;
+      error?: string;
+    }> = [];
+    for (const [index, row] of rows.entries()) {
+      const dto = plainToInstance(CreateParentDto, {
+        first_name: row.first_name,
+        last_name: row.last_name,
+        middle_name: row.middle_name || undefined,
+        email: row.email,
+        phone: row.phone,
+        date_of_birth: row.date_of_birth,
+        gender: row.gender,
+        home_address: row.home_address || undefined,
+        password: row.password || undefined,
+      });
+      const errors = await validate(dto, { whitelist: true });
+      const fieldErrors = bulkPersonCsvErrors(row, errors, '1985-05-15');
+      if (fieldErrors.length || row.parent_id) {
+        results.push({
+          email: row.email ?? '',
+          success: false,
+          error: row.parent_id
+            ? `Row ${index + 2}: Custom Parent ID is not supported by this school installation`
+            : `Row ${index + 2}: ${fieldErrors.join('; ')}`,
+        });
+        continue;
+      }
+      try {
+        results.push({
+          email: dto.email,
+          success: true,
+          parent: await this.create(dto, actorUserId),
+        });
+      } catch (error) {
+        results.push({
+          email: dto.email,
+          success: false,
+          error: `Row ${index + 2}: ${error instanceof Error ? error.message : 'Unable to create parent'}`,
+        });
+      }
+    }
+    return {
+      total: results.length,
+      successful: results.filter((result) => result.success).length,
+      failed: results.filter((result) => !result.success).length,
+      results,
+    };
+  }
+
   // --- CREATE ---
-  async create(createDto: CreateParentDto): Promise<ParentResponseDto> {
+  async create(
+    createDto: CreateParentDto,
+    actorUserId?: string,
+  ): Promise<ParentResponseDto> {
     // 1. Check for existing user with email
     const existingUser = await this.userModelAction.get({
       identifierOptions: { email: createDto.email },
@@ -108,6 +170,7 @@ export class ParentService {
           is_active: createDto.is_active ?? true,
           reset_token: resetToken,
           reset_token_expiry: resetTokenExpiry,
+          password_setup_required: true,
         },
         transactionOptions: {
           useTransaction: true,
@@ -127,6 +190,17 @@ export class ParentService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'PARENT',
+          entityId: savedParent.id,
+          action: 'CREATE',
+          description: 'Parent record created',
+          newValues: { is_active: savedParent.is_active },
+        });
+      }
 
       // 6. Return response (Transform User/Parent entities into DTO)
       return {
@@ -207,6 +281,7 @@ export class ParentService {
   async update(
     id: string,
     updateDto: UpdateParentDto,
+    actorUserId?: string,
   ): Promise<ParentResponseDto> {
     const parent = await this.parentModelAction.get({
       identifierOptions: { id },
@@ -217,6 +292,14 @@ export class ParentService {
       this.logger.warn(`Parent not found with ID: ${id}`);
       throw new NotFoundException(sysMsg.PARENT_NOT_FOUND);
     }
+
+    if (
+      parent.user?.role?.includes(UserRole.ADMIN) &&
+      updateDto.is_active !== undefined
+    )
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
 
     // Check for email conflict if email is being updated
     if (updateDto.email && updateDto.email !== parent.user.email) {
@@ -286,6 +369,21 @@ export class ParentService {
         },
       });
 
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'PARENT',
+          entityId: id,
+          action: 'UPDATE',
+          description: 'Parent record updated',
+          oldValues: { is_active: parent.is_active },
+          newValues: {
+            changed_fields: Object.keys(updateDto),
+            is_active: updatedParent.is_active,
+          },
+        });
+      }
+
       // Return response
       const response = {
         ...updatedParent,
@@ -315,7 +413,7 @@ export class ParentService {
   }
 
   // --- DELETE (Soft Delete) ---
-  async remove(id: string): Promise<void> {
+  async remove(id: string, actorUserId?: string): Promise<void> {
     const parent = await this.parentModelAction.get({
       identifierOptions: { id },
       relations: { user: true },
@@ -325,6 +423,11 @@ export class ParentService {
       this.logger.warn(`Parent not found with ID: ${id}`);
       throw new NotFoundException(sysMsg.PARENT_NOT_FOUND);
     }
+
+    if (parent.user?.role?.includes(UserRole.ADMIN))
+      throw new ForbiddenException(
+        'Admin access is managed by the school owner',
+      );
 
     return this.dataSource.transaction(async (manager) => {
       // Set deleted_at and is_active to false within transaction
@@ -349,6 +452,18 @@ export class ParentService {
           transaction: manager,
         },
       });
+
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'PARENT',
+          entityId: id,
+          action: 'DELETE',
+          description: 'Parent record deactivated',
+          oldValues: { is_active: parent.is_active },
+          newValues: { is_active: false },
+        });
+      }
 
       this.logger.info(sysMsg.PARENT_DELETED, {
         parentId: id,
@@ -518,19 +633,49 @@ export class ParentService {
       }),
     );
 
-    // 3. Link students to parent in a transaction
+    // Lock each row before checking its current parent so concurrent links
+    // cannot turn a confirmed reassignment into an unnoticed overwrite.
     await this.dataSource.transaction(async (manager) => {
-      for (const student of students) {
-        await this.studentModelAction.update({
-          identifierOptions: { id: student.id },
-          updatePayload: {
-            parent: { id: parentId },
-          },
-          transactionOptions: {
-            useTransaction: true,
-            transaction: manager,
-          },
-        });
+      for (const student of [...students].sort((a, b) =>
+        a.id.localeCompare(b.id),
+      )) {
+        const current = await manager
+          .createQueryBuilder(Student, 'student')
+          .setLock('pessimistic_write')
+          .where('student.id = :studentId AND student.is_deleted = false', {
+            studentId: student.id,
+          })
+          .getOne();
+        if (!current)
+          throw new NotFoundException(`Student ${student.id} not found`);
+        const currentParentId = await manager
+          .createQueryBuilder(Student, 'student')
+          .select('student.parent_id', 'parent_id')
+          .where('student.id = :studentId', { studentId: student.id })
+          .getRawOne<{ parent_id: string | null }>();
+        if (
+          linkDto.expected_parent_ids &&
+          Object.prototype.hasOwnProperty.call(
+            linkDto.expected_parent_ids,
+            student.id,
+          ) &&
+          (currentParentId?.parent_id ?? null) !==
+            linkDto.expected_parent_ids[student.id]
+        ) {
+          throw new ConflictException(
+            `Student ${student.id}'s parent assignment changed. Refresh and review before linking.`,
+          );
+        }
+        if (
+          currentParentId?.parent_id &&
+          currentParentId.parent_id !== parentId &&
+          !linkDto.allow_reassignment
+        ) {
+          throw new ConflictException(
+            `Student ${student.id} is already linked to another parent. Confirm reassignment to replace that link.`,
+          );
+        }
+        await manager.update(Student, student.id, { parent: { id: parentId } });
       }
     });
 
@@ -672,16 +817,7 @@ export class ParentService {
         parent: { id: parentId },
         is_deleted: false,
       },
-      relations: {
-        user: true,
-        stream: {
-          class: {
-            academicSession: true,
-            classSubjects: { subject: true, teacher: { user: true } },
-            timetable: true,
-          },
-        },
-      },
+      relations: { user: true },
     });
 
     if (!student) {
@@ -690,11 +826,35 @@ export class ParentService {
       throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
     }
 
-    const { user, stream } = student;
+    const { user } = student;
 
     if (!user) {
       throw new Error('User relation not loaded for student');
     }
+
+    const { payload: enrollments } = await this.classStudentModelAction.list({
+      filterRecordOptions: {
+        student: { id: studentId },
+        is_active: true,
+        class: {
+          is_deleted: false,
+          academicSession: { status: SessionStatus.ACTIVE },
+        },
+      },
+      relations: {
+        class: {
+          academicSession: true,
+          classSubjects: { subject: true, teacher: { user: true } },
+          timetable: true,
+        },
+      },
+    });
+    if (enrollments.length > 1) {
+      throw new ConflictException(
+        'Student has multiple active class enrollments',
+      );
+    }
+    const assignedClass = enrollments[0]?.class;
 
     return plainToInstance(
       StudentProfileDto,
@@ -707,7 +867,7 @@ export class ParentService {
         full_name: `${user.first_name}${user.middle_name ? ' ' + user.middle_name : ''} ${user.last_name}`,
         photo_url: student.photo_url,
         class_subjects:
-          stream?.class?.classSubjects?.map((cs) => ({
+          assignedClass?.classSubjects?.map((cs) => ({
             id: cs.id,
             subject_id: cs.subject.id,
             subject_name: cs.subject.name,
@@ -717,16 +877,19 @@ export class ParentService {
               : null,
             teacher_assignment_date: cs.teacher_assignment_date || null,
           })) || null,
-        timetable: stream?.class?.timetable
-          ? { id: stream.class.timetable.id }
+        timetable: assignedClass?.timetable
+          ? { id: assignedClass.timetable.id }
           : null,
-        class_details: stream?.class
-          ? { id: stream.class.id, name: stream.class.name }
-          : null,
-        academic_details: stream?.class?.academicSession
+        class_details: assignedClass
           ? {
-              id: stream.class.academicSession.id,
-              session: stream.class.academicSession.name,
+              id: assignedClass.id,
+              name: `${assignedClass.name}${assignedClass.arm ? ` ${assignedClass.arm}` : ''}`,
+            }
+          : null,
+        academic_details: assignedClass?.academicSession
+          ? {
+              id: assignedClass.academicSession.id,
+              session: assignedClass.academicSession.name,
             }
           : null,
       },

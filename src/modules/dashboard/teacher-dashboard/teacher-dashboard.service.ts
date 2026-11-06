@@ -2,6 +2,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { Schedule } from '../../timetable/entities/schedule.entity';
 import { DayOfWeek } from '../../timetable/enums/timetable.enums';
 import { ScheduleModelAction } from '../../timetable/model-actions/schedule.model-action';
@@ -17,6 +18,7 @@ export class TeacherDashboardService {
 
   constructor(
     private readonly scheduleModelAction: ScheduleModelAction,
+    private readonly academicSessionService: AcademicSessionService,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
   ) {
     this.logger = baseLogger.child({ context: TeacherDashboardService.name });
@@ -33,9 +35,13 @@ export class TeacherDashboardService {
     this.logger.info(`Current day: ${today}`);
 
     // Fetch all schedules for this teacher
+    const activeSession = await this.academicSessionService.activeSessions();
     const { payload: schedules } = await this.scheduleModelAction.list({
       filterRecordOptions: {
         teacher_id: teacherId,
+        timetable: {
+          class: { academicSession: { id: activeSession.data.id } },
+        },
       },
       relations: {
         timetable: { class: true },

@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 import { EmailModule } from '../email/email.module';
 
@@ -27,7 +28,12 @@ import { SuperadminService } from './superadmin.service';
     EmailModule,
   ],
   controllers: [SuperadminController],
-  providers: [SuperadminService, SuperadminModelAction, RateLimitGuard],
+  providers: [
+    SuperadminService,
+    SuperadminModelAction,
+    RateLimitGuard,
+    InitialSetupGuard,
+  ],
   exports: [SuperadminModelAction],
 })
 export class SuperadminModule {}

@@ -11,6 +11,8 @@ import { Student } from '../../student/entities';
 import { NotificationModelAction } from '../model-actions/notification.model-action';
 import { NotificationType } from '../types/notification.types';
 
+import { SchoolEmailAlertService } from './school-email-alert.service';
+
 @Injectable()
 export class FeeNotificationService {
   private readonly logger: Logger;
@@ -19,6 +21,7 @@ export class FeeNotificationService {
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
     private readonly notificationModelAction: NotificationModelAction,
     private readonly feesModelAction: FeesModelAction,
+    private readonly schoolEmailAlerts: SchoolEmailAlertService,
   ) {
     this.logger = baseLogger.child({ context: FeeNotificationService.name });
   }
@@ -73,21 +76,32 @@ export class FeeNotificationService {
       })),
       transactionOptions: { useTransaction: false },
     });
+    await this.schoolEmailAlerts.enqueue(
+      'fees',
+      studentsWithParents.map((student) => ({
+        recipient_user_id: student.parent.user_id,
+        subject: 'School fee update',
+        message: `A fee ${fee.component_name} has been ${type} for ${student.user.first_name} ${student.user.last_name}. Sign in to SchoolBase for details.`,
+        dedupe_key: `fee:${fee.id}:${type}:${fee.updatedAt?.toISOString() ?? 'initial'}:${student.id}`,
+      })),
+    );
   }
 
   private getFeeStudents(fee: Fees): Student[] {
-    const studentSet = new Set<Student>();
+    const students = new Map<string, Student>();
 
     fee.classes?.forEach((cls: Class) => {
       cls.student_assignments?.forEach((assignment) => {
-        if (assignment?.student) studentSet.add(assignment.student);
+        if (assignment?.student)
+          students.set(assignment.student.id, assignment.student);
       });
     });
 
     fee.direct_assignments?.forEach((assignment) => {
-      if (assignment?.student) studentSet.add(assignment.student);
+      if (assignment?.student)
+        students.set(assignment.student.id, assignment.student);
     });
 
-    return Array.from(studentSet);
+    return Array.from(students.values());
   }
 }

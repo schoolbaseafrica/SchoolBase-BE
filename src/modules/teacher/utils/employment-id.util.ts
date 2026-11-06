@@ -1,5 +1,6 @@
-import { Repository, Like } from 'typeorm';
+import { Repository } from 'typeorm';
 
+import { schoolIdPattern } from '../../school/utils/school-id-format';
 import { Teacher } from '../entities/teacher.entity';
 
 /**
@@ -8,27 +9,18 @@ import { Teacher } from '../entities/teacher.entity';
  */
 export async function generateEmploymentId(
   teacherRepository: Repository<Teacher>,
+  format?: string | null,
+  prefix = 'EMP',
+  schoolCode = '',
 ): Promise<string> {
-  const currentYear = new Date().getFullYear();
-  const yearPrefix = `EMP-${currentYear}-`;
-
-  // Query the highest existing sequential number for the current year
-  const lastTeacher = await teacherRepository.findOne({
-    where: { employment_id: Like(`${yearPrefix}%`) },
-    order: { employment_id: 'DESC' },
-  });
-
-  let nextSequence = 1;
-  if (lastTeacher) {
-    // Extract the numeric part (e.g., '014' from 'EMP-2025-014')
-    const parts = lastTeacher.employment_id.split('-');
-    if (parts.length === 3) {
-      const lastId = parts[2];
-      nextSequence = parseInt(lastId, 10) + 1;
-    }
-  }
-
-  // Format the sequence number to be 3 digits (e.g., 1 -> 001, 14 -> 014)
-  const sequenceStr = nextSequence.toString().padStart(3, '0');
-  return `${yearPrefix}${sequenceStr}`;
+  const pattern = schoolIdPattern(format, prefix, schoolCode, 3);
+  const rows = (await teacherRepository.query(
+    `SELECT COALESCE(MAX((regexp_match("employment_id", $1))[1]::bigint), 0) AS last
+     FROM "teachers" WHERE "employment_id" ~ $1`,
+    [pattern.regex],
+  )) as { last: string | number }[];
+  const last = Number(rows[0]?.last ?? 0);
+  if (!Number.isSafeInteger(last))
+    throw new Error('Teacher ID sequence is exhausted');
+  return pattern.next(last + 1);
 }

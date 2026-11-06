@@ -6,6 +6,7 @@ export enum NotificationType {
   TIMETABLE_CHANGE = 'TIMETABLE_CHANGE',
   FEE_UPDATE = 'FEE_UPDATE',
   SYSTEM_ALERT = 'SYSTEM_ALERT',
+  ASSIGNMENT = 'ASSIGNMENT',
 }
 
 export interface IResultMetadata {

@@ -11,6 +11,7 @@ import { Repository } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { ClassSubject } from '../../class/entities/class-subject.entity';
 import { Class } from '../../class/entities/class.entity';
 import { Room } from '../../room/entities/room.entity';
 import { Subject } from '../../subject/entities/subject.entity';
@@ -30,6 +31,8 @@ export class TimetableValidationService {
   constructor(
     @InjectRepository(Class)
     private readonly classRepository: Repository<Class>,
+    @InjectRepository(ClassSubject)
+    private readonly classSubjectRepository: Repository<ClassSubject>,
     @InjectRepository(Subject)
     private readonly subjectRepository: Repository<Subject>,
     @InjectRepository(Teacher)
@@ -54,6 +57,11 @@ export class TimetableValidationService {
 
     // Validate foreign keys (subject, teacher)
     await this.validateScheduleForeignKeys([dto]);
+    await this.validateSubjectTeacherAssignment(
+      dto.class_id,
+      dto.subject_id,
+      dto.teacher_id,
+    );
 
     // Validate class/day overlaps
     await this.validateClassDayOverlap(
@@ -118,6 +126,11 @@ export class TimetableValidationService {
           teacher_id: dto.teacher_id,
         } as CreateScheduleDto,
       ]);
+      await this.validateSubjectTeacherAssignment(
+        existingSchedule.timetable.class_id,
+        dto.subject_id ?? existingSchedule.subject_id,
+        dto.teacher_id ?? existingSchedule.teacher_id,
+      );
     }
 
     // Determine the effective values for validation
@@ -165,6 +178,13 @@ export class TimetableValidationService {
     if (dto.schedules && dto.schedules.length > 0) {
       // Validate foreign keys for schedules (subjects, teachers)
       await this.validateScheduleForeignKeys(dto.schedules);
+      for (const schedule of dto.schedules) {
+        await this.validateSubjectTeacherAssignment(
+          dto.class_id,
+          schedule.subject_id,
+          schedule.teacher_id,
+        );
+      }
 
       // Validate internal overlaps (within the new timetable itself)
       this.validateInternalOverlaps(dto.schedules);
@@ -205,6 +225,34 @@ export class TimetableValidationService {
           );
         }
       }
+    }
+  }
+
+  private async validateSubjectTeacherAssignment(
+    classId?: string,
+    subjectId?: string,
+    teacherId?: string,
+  ): Promise<void> {
+    if (!classId || !subjectId || !teacherId) return;
+
+    const assignment = await this.classSubjectRepository.findOne({
+      where: { class: { id: classId }, subject: { id: subjectId } },
+      relations: { teacher: true },
+    });
+    if (!assignment) {
+      throw new BadRequestException(
+        'Add this subject to the class in Class Management before scheduling it.',
+      );
+    }
+    if (!assignment.teacher) {
+      throw new ConflictException(
+        'Assign a teacher to this class subject in Class Management before scheduling it.',
+      );
+    }
+    if (assignment.teacher.id !== teacherId) {
+      throw new ConflictException(
+        'The timetable teacher differs from the class subject teacher. Update the subject assignment in Class Management first.',
+      );
     }
   }
 

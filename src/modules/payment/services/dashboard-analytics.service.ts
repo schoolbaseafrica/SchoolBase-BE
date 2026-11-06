@@ -1,7 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 
+import { FeeDiscountService } from 'src/modules/fees/fee-discount.service';
 import { FeesModelAction } from 'src/modules/fees/model-action/fees.model-action';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
+import { TermService } from '../../academic-term/term.service';
 import {
   DashboardAnalyticsQueryDto,
   DashboardAnalyticsResponseDto,
@@ -15,16 +18,35 @@ export class DashboardAnalyticsService {
   constructor(
     private readonly feesModelAction: FeesModelAction,
     private readonly paymentModelAction: PaymentModelAction,
+    @Optional()
+    private readonly academicSessionService: AcademicSessionService | undefined,
+    @Optional()
+    private readonly termService: TermService | undefined,
+    @Optional() private readonly feeDiscounts?: FeeDiscountService,
   ) {}
 
   async getDashboardAnalytics(
     dto: DashboardAnalyticsQueryDto,
   ): Promise<DashboardAnalyticsResponseDto> {
-    const year = dto.year || new Date().getFullYear();
+    const scopedDto = { ...dto };
+    if (
+      !scopedDto.session_id &&
+      !scopedDto.term_id &&
+      this.academicSessionService &&
+      this.termService
+    ) {
+      const [session, term] = await Promise.all([
+        this.academicSessionService.activeSessions(),
+        this.termService.getActiveTerm(),
+      ]);
+      scopedDto.session_id = session.data.id;
+      scopedDto.term_id = term.id;
+    }
+    const year = scopedDto.year || new Date().getFullYear();
 
     const [totals, monthlyPayments] = await Promise.all([
-      this.computeTotals(dto),
-      this.computeMonthlyPayments(dto, year),
+      this.computeTotals(scopedDto),
+      this.computeMonthlyPayments(scopedDto, year),
     ]);
 
     return {
@@ -38,7 +60,7 @@ export class DashboardAnalyticsService {
   ): Promise<IDashboardTotals> {
     const [totalFeesAssigned, totalCollected, transactionCount] =
       await Promise.all([
-        this.feesModelAction.getTotalExpectedFees(dto.term_id),
+        this.feesModelAction.getTotalExpectedFees(dto.term_id, dto.session_id),
         this.paymentModelAction.getTotalCollected(dto.term_id, dto.session_id),
         this.paymentModelAction.getCurrentMonthTransactionCount(
           dto.term_id,
@@ -46,10 +68,16 @@ export class DashboardAnalyticsService {
         ),
       ]);
 
+    const discountTotal =
+      (await this.feeDiscounts?.totalApprovedDiscount(
+        dto.term_id,
+        dto.session_id,
+      )) ?? 0;
+    const adjustedExpected = totalFeesAssigned - discountTotal;
     return {
-      total_expected_fees: totalFeesAssigned,
+      total_expected_fees: adjustedExpected,
       total_paid: totalCollected,
-      outstanding_balance: totalFeesAssigned - totalCollected,
+      outstanding_balance: adjustedExpected - totalCollected,
       transaction_this_month: transactionCount,
     };
   }

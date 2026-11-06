@@ -40,6 +40,7 @@ describe('SuperadminService', () => {
 
   const mock_data_source = {
     transaction: jest.fn(),
+    query: jest.fn().mockResolvedValue([{ has_admin: false }]),
   };
 
   const mock_jwt_service = {
@@ -133,7 +134,7 @@ describe('SuperadminService', () => {
       hashSpy.mockResolvedValue('hashed_pw');
       mock_data_source.transaction.mockImplementation(
         async (cb: (manager: Record<string, unknown>) => Promise<unknown>) => {
-          const result = await cb({} as Record<string, unknown>);
+          const result = await cb({ query: jest.fn() });
           return result;
         },
       );
@@ -168,7 +169,7 @@ describe('SuperadminService', () => {
       expect(result.status_code).toBe(201);
     });
 
-    it('should update an existing superadmin if one exists', async () => {
+    it('refuses to replace an existing superadmin', async () => {
       const existingSuperadmin: SuperAdmin = {
         id: 'uuid-1',
         email: dto.email,
@@ -187,33 +188,19 @@ describe('SuperadminService', () => {
 
       mock_model_action_impl.get.mockResolvedValue(existingSuperadmin);
 
-      const hashSpy = jest.spyOn(bcrypt, 'hash') as unknown as jest.SpyInstance<
-        Promise<string>,
-        [string | Buffer, string | number]
-      >;
-      hashSpy.mockResolvedValue('new_hashed_pw');
-
       mock_data_source.transaction.mockImplementation(
         async (cb: (manager: Record<string, unknown>) => Promise<unknown>) => {
-          const result = await cb({} as Record<string, unknown>);
+          const result = await cb({ query: jest.fn() });
           return result;
         },
       );
 
-      const updatedEntity = {
-        ...existingSuperadmin,
-        ...dto,
-        password: 'new_hashed_pw',
-      };
-      mock_model_action_impl.update.mockResolvedValue(updatedEntity);
-
-      const result = await service.createSuperAdmin(dto);
-
-      expect(model_action.update).toHaveBeenCalled();
+      await expect(service.createSuperAdmin(dto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(model_action.create).not.toHaveBeenCalled();
+      expect(model_action.update).not.toHaveBeenCalled();
       expect(mock_email_service.sendMail).not.toHaveBeenCalled();
-      expect(result.message).toBe(sysMsg.SUPERADMIN_ACCOUNT_UPDATED);
-      expect(result.status_code).toBe(200);
-      expect(result.data.first_name).toBe(dto.first_name);
     });
 
     it('should throw ConflictException when passwords are not provided', async () => {
@@ -296,6 +283,14 @@ describe('SuperadminService', () => {
       expect(result.data).toHaveProperty('session_id', 'session-uuid');
       expect(result.data.id).toBe(superadminEntity.id);
       expect(result.data.email).toBe(superadminEntity.email);
+    });
+
+    it('refuses setup login after a regular admin exists', async () => {
+      mock_data_source.query.mockResolvedValueOnce([{ has_admin: true }]);
+      await expect(service.login(loginDto)).rejects.toThrow(
+        'Initial setup access has ended',
+      );
+      expect(mock_model_action_impl.get).not.toHaveBeenCalled();
     });
 
     it('should throw UnauthorizedException when superadmin email does not exist', async () => {

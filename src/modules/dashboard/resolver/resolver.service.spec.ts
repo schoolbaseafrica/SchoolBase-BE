@@ -1,6 +1,8 @@
 import { ForbiddenException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { ParentModelAction } from '../../parent/model-actions/parent-actions';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
@@ -19,6 +21,8 @@ describe('ResolverService', () => {
   let studentModelAction: StudentModelAction;
   let parentModelAction: ParentModelAction;
   let logger: Logger;
+  let academicSessionService: AcademicSessionService;
+  let dataSource: DataSource;
 
   beforeEach(() => {
     userService = {
@@ -41,6 +45,16 @@ describe('ResolverService', () => {
       warn: jest.fn(),
       info: jest.fn(),
     } as unknown as Logger;
+    academicSessionService = {
+      activeSessions: jest
+        .fn()
+        .mockResolvedValue({ data: { id: 'session-1' } }),
+    } as unknown as AcademicSessionService;
+    dataSource = {
+      query: jest
+        .fn()
+        .mockResolvedValue([{ students: 2, teachers: 1, parents: 1 }]),
+    } as unknown as DataSource;
 
     service = new ResolverService(
       userService,
@@ -48,6 +62,8 @@ describe('ResolverService', () => {
       teacherModelAction,
       studentModelAction,
       parentModelAction,
+      academicSessionService,
+      dataSource,
       logger,
     );
   });
@@ -57,11 +73,6 @@ describe('ResolverService', () => {
       id: '1',
       role: [UserRole.ADMIN],
     });
-    (userModelAction.list as jest.Mock)
-      .mockResolvedValueOnce({ payload: [{}, {}] })
-      .mockResolvedValueOnce({ payload: [{}] })
-      .mockResolvedValueOnce({ payload: [{}] });
-
     const result = await service.resolveDashboard('1', [UserRole.ADMIN]);
 
     expect(result.dashboard).toBe(UserRole.ADMIN);

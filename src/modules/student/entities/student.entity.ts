@@ -23,6 +23,31 @@ export class Student extends BaseEntity {
   @Column({ name: 'photo_url', nullable: true })
   photo_url: string;
 
+  @Column({
+    name: 'face_photo_object_key',
+    type: 'varchar',
+    length: 512,
+    nullable: true,
+  })
+  face_photo_object_key?: string | null;
+
+  @Column({
+    name: 'face_photo_approved_at',
+    type: 'timestamptz',
+    nullable: true,
+  })
+  face_photo_approved_at?: Date | null;
+
+  @Column({ name: 'face_photo_approved_by', type: 'uuid', nullable: true })
+  face_photo_approved_by?: string | null;
+
+  @Index('IDX_schoolbase_students_nfc_card_id', {
+    unique: true,
+    where: '"nfc_card_id" IS NOT NULL',
+  })
+  @Column({ name: 'nfc_card_id', type: 'varchar', nullable: true })
+  nfc_card_id?: string | null;
+
   @OneToOne(() => User, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;

@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   ParseUUIDPipe,
   Post,
   Query,
@@ -31,6 +32,7 @@ import {
   CreateGradeSubmissionDto,
   ListGradeSubmissionsDto,
   RejectSubmissionDto,
+  UpdateGradeSubmissionDto,
 } from '../dto';
 import { GradeSubmissionService } from '../services/grade-submission.service';
 
@@ -62,6 +64,20 @@ export class GradeSubmissionController {
       throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);
     }
     return this.service.createSubmission(teacherId, createDto);
+  }
+
+  @Patch(':id')
+  @Roles(UserRole.TEACHER)
+  async updateDraft(
+    @Req() req: IRequestWithUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateGradeSubmissionDto,
+  ) {
+    const teacherId = req.user.teacher_id;
+    if (!teacherId) {
+      throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);
+    }
+    return this.service.updateDraft(teacherId, id, dto);
   }
 
   @Get()

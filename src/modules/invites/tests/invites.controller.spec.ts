@@ -1,4 +1,5 @@
 import { HttpStatus } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 
 import * as sysMsg from '../../../constants/system.messages';
@@ -26,7 +27,10 @@ describe('InvitesController', () => {
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [InvitesController],
-      providers: [{ provide: InviteService, useValue: mockService }],
+      providers: [
+        { provide: InviteService, useValue: mockService },
+        { provide: ConfigService, useValue: { get: jest.fn() } },
+      ],
     }).compile();
 
     controller = module.get<InvitesController>(InvitesController);

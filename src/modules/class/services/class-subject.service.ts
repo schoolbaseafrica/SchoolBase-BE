@@ -14,6 +14,7 @@ import { EventAction } from '../../notification/dto/event-trigger.dto';
 import { SubjectModelAction } from '../../subject/model-actions/subject.actions';
 import { SubjectService } from '../../subject/services/subject.service';
 import { TeacherModelAction } from '../../teacher/model-actions/teacher-actions';
+import { Schedule } from '../../timetable/entities/schedule.entity';
 import {
   BulkCreateClassSubjectResponseDto,
   ListClassSubjectQueryDto,
@@ -142,6 +143,20 @@ export class ClassSubjectService {
       identifierOptions: { id: teacherId },
     });
     if (!teacher) throw new NotFoundException(sysMsg.TEACHER_NOT_FOUND);
+    const scheduledLessons = await this.dataSource
+      .getRepository(Schedule)
+      .find({
+        where: {
+          timetable: { class_id: classSubject.class.id },
+          subject_id: classSubject.subject.id,
+        },
+        select: { teacher_id: true },
+      });
+    if (scheduledLessons.some((lesson) => lesson.teacher_id !== teacherId)) {
+      throw new ConflictException(
+        'This subject is scheduled with another teacher. Update the timetable before changing its result-entry assignment.',
+      );
+    }
     await this.classSubjectAction.update({
       identifierOptions: {
         id,

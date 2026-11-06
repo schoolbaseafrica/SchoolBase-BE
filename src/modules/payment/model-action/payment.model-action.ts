@@ -23,17 +23,18 @@ export class PaymentModelAction extends AbstractModelAction<Payment> {
     studentId: string,
     feeComponentId: string,
     termId: string,
+    sessionWide = false,
   ): Promise<number> {
-    const result = await this.repository
+    const query = this.repository
       .createQueryBuilder('payment')
       .select('SUM(payment.amount_paid)', 'total')
       .where('payment.student_id = :studentId', { studentId })
       .andWhere('payment.fee_component_id = :feeComponentId', {
         feeComponentId,
       })
-      .andWhere('payment.term_id = :termId', { termId })
-      .andWhere('payment.status = :status', { status: 'paid' })
-      .getRawOne();
+      .andWhere('payment.status = :status', { status: 'paid' });
+    if (!sessionWide) query.andWhere('payment.term_id = :termId', { termId });
+    const result = await query.getRawOne();
 
     return parseFloat(result?.total) || 0;
   }

@@ -11,6 +11,7 @@ import { Parent } from '../parent/entities/parent.entity';
 import { SessionModule } from '../session/session.module';
 import { Student } from '../student/entities/student.entity';
 import { Teacher } from '../teacher/entities/teacher.entity';
+import { User } from '../user/entities/user.entity';
 import { UserModule } from '../user/user.module';
 
 import { AuthController } from './auth.controller';
@@ -25,7 +26,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     EmailModule,
     SessionModule,
     PassportModule,
-    TypeOrmModule.forFeature([Teacher, Student, Parent, Invite]),
+    TypeOrmModule.forFeature([Teacher, Student, Parent, Invite, User]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

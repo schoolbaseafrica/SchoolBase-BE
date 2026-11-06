@@ -2,6 +2,8 @@ import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
+import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
 import { TimetableService } from '../../timetable/timetable.service';
 import { UserService } from '../../user/user.service';
@@ -21,6 +23,8 @@ export class StudentDashboardService {
     private readonly userService: UserService,
     private readonly studentModelAction: StudentModelAction,
     private readonly timetableService: TimetableService,
+    private readonly academicSessionService: AcademicSessionService,
+    private readonly classStudentModelAction: ClassStudentModelAction,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
   ) {
     this.logger = baseLogger.child({ context: StudentDashboardService.name });
@@ -42,17 +46,31 @@ export class StudentDashboardService {
 
     const student = students[0];
 
-    // Fetch all dashboard data
+    const activeSession = await this.academicSessionService.activeSessions();
+    const { payload: assignments } = await this.classStudentModelAction.list({
+      filterRecordOptions: {
+        student: { id: student.id },
+        session_id: activeSession.data.id,
+        is_active: true,
+      },
+      relations: { class: true },
+      paginationPayload: { page: 1, limit: 1 },
+    });
+    const currentClass = assignments[0]?.class ?? null;
+
+    // Fetch all dashboard data for the active academic period.
     const [todaysTimetable, latestResults, announcements] = await Promise.all([
-      this.getTodaysTimetable(student.id),
+      this.getTodaysTimetable(currentClass?.id),
       this.getLatestResults(student.id),
       this.getAnnouncements(),
     ]);
 
     // Build metadata
     const metadata = {
-      class: student.stream?.name || 'Not Assigned',
-      enrollment_status: student ? 'Active' : 'Pending',
+      class: currentClass
+        ? `${currentClass.name}${currentClass.arm ? ` ${currentClass.arm}` : ''}`
+        : 'Not Assigned',
+      enrollment_status: currentClass ? 'Active' : 'Pending',
       total_subjects: todaysTimetable.length > 0 ? todaysTimetable.length : 0,
     };
 
@@ -73,22 +91,12 @@ export class StudentDashboardService {
    * Uses TimetableService to get the class timetable and filters for today
    */
   private async getTodaysTimetable(
-    studentId: string,
+    classId?: string,
   ): Promise<TimetableItemDto[]> {
-    this.logger.info(`Fetching today's timetable for student ${studentId}`);
-
-    // Get student with stream (class) information
-    const { payload: students } = await this.studentModelAction.list({
-      filterRecordOptions: { id: studentId },
-      relations: { stream: { class: true } },
-    });
-
-    if (!students || students.length === 0 || !students[0].stream?.class) {
-      this.logger.warn(`Student ${studentId} has no assigned class`);
+    if (!classId) {
+      this.logger.warn('Student has no class assignment in the active session');
       return [];
     }
-
-    const classId = students[0].stream.class.id;
 
     // Get timetable for the class
     const timetable = await this.timetableService.findByClass(classId);
@@ -130,7 +138,7 @@ export class StudentDashboardService {
       }));
 
     this.logger.info(
-      `Found ${todaysSchedules.length} classes for today for student ${studentId}`,
+      `Found ${todaysSchedules.length} classes for active-session class ${classId}`,
     );
     return todaysSchedules;
   }
