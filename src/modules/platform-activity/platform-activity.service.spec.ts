@@ -16,6 +16,7 @@ describe('PlatformActivityService', () => {
     settings.PLATFORM_ACTIVITY_URL =
       'https://platform.example/school-signals/staff-login';
     settings.PLATFORM_SCHOOL_TOKEN = 'a'.repeat(64);
+    settings.APP_SLUG = 'demo';
     settings.DB_NAME = 'sb_demo';
     query.mockReset();
     fetchMock.mockReset();
@@ -53,7 +54,9 @@ describe('PlatformActivityService', () => {
       'last_staff_login_at',
       'observed_at',
       'report_id',
+      'school_slug',
     ]);
+    expect(body.school_slug).toBe('demo');
     expect(body.last_staff_login_at).toBe(loginAt.toISOString());
     expect(body.database_bytes).toBe(1048576);
   });

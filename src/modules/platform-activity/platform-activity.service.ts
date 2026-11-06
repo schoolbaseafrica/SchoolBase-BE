@@ -48,7 +48,9 @@ export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
   private validConfiguration(): boolean {
     const token = this.config.get<string>('PLATFORM_SCHOOL_TOKEN') || '';
     const rawUrl = this.config.get<string>('PLATFORM_ACTIVITY_URL') || '';
+    const schoolSlug = this.config.get<string>('APP_SLUG') || '';
     if (!/^[A-Za-z0-9_-]{40,}$/.test(token)) return false;
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(schoolSlug)) return false;
     try {
       const url = new URL(rawUrl);
       return (
@@ -133,6 +135,7 @@ export class PlatformActivityService implements OnModuleInit, OnModuleDestroy {
           },
           body: JSON.stringify({
             report_id: randomUUID(),
+            school_slug: this.config.get<string>('APP_SLUG'),
             observed_at: observedAt.toISOString(),
             last_staff_login_at: loginAt?.toISOString() ?? null,
             ...(this.validImageRef()
