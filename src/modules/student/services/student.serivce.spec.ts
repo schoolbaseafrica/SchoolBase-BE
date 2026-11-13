@@ -449,6 +449,10 @@ describe('StudentService', () => {
         interval: StudentGrowthInterval.MONTH,
       });
 
+      expect((mockDataSource.query as jest.Mock).mock.calls[1][0]).toContain(
+        'student_user.is_active = true',
+      );
+
       expect(result.data.report).toEqual([
         expect.objectContaining({
           label: 'Sep 2026',

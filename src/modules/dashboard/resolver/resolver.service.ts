@@ -120,9 +120,9 @@ export class ResolverService {
       `SELECT
         (SELECT COUNT(*)::int FROM students s
           JOIN users u ON u.id = s.user_id AND u.is_active = true
-          WHERE s.is_deleted = false) AS students,
+          WHERE s.is_deleted IS NOT TRUE) AS students,
         (SELECT COUNT(DISTINCT cs.student_id)::int FROM class_students cs
-          JOIN students s ON s.id = cs.student_id AND s.is_deleted = false
+          JOIN students s ON s.id = cs.student_id AND s.is_deleted IS NOT TRUE
           JOIN users u ON u.id = s.user_id AND u.is_active = true
           WHERE cs.is_active = true AND cs.session_id = COALESCE(
             $1::text,
@@ -130,8 +130,9 @@ export class ResolverService {
               WHERE status = 'Active' AND deleted_at IS NULL
               ORDER BY start_date DESC LIMIT 1)
           )) AS current_session_students,
-        (SELECT COUNT(*)::int FROM teachers
-          WHERE is_active = true) AS teachers,
+        (SELECT COUNT(*)::int FROM teachers t
+          JOIN users u ON u.id = t.user_id AND u.is_active = true
+          WHERE t.is_active = true) AS teachers,
         (SELECT COUNT(*)::int FROM parents
           WHERE is_active = true AND deleted_at IS NULL) AS parents`,
       [sessionId ?? null],

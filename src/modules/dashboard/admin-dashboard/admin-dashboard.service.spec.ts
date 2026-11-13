@@ -51,6 +51,15 @@ describe('AdminDashboardService', () => {
     expect(result.teachers).toEqual({ marked: 4, eligible: 6 });
     expect(result.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(dataSource.query).toHaveBeenCalledTimes(2);
+    expect((dataSource.query as jest.Mock).mock.calls[0][0]).toContain(
+      's.is_deleted IS NOT TRUE',
+    );
+    expect((dataSource.query as jest.Mock).mock.calls[0][1][0]).toBe(
+      '6141e83e-a4f1-4896-b184-eaf6e0e8d78d',
+    );
+    expect((dataSource.query as jest.Mock).mock.calls[1][0]).toContain(
+      't.is_active = true AND u.is_active = true',
+    );
   });
 
   it('should load today activities with all data', async () => {

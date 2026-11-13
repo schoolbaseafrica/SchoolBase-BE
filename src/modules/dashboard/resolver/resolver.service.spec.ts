@@ -86,8 +86,13 @@ describe('ResolverService', () => {
       total_parents: 1,
     });
     expect(dataSource.query).toHaveBeenCalledWith(
-      expect.stringMatching(/cs\.session_id = COALESCE\(\s*\$1::text/),
+      expect.stringMatching(
+        /s\.is_deleted IS NOT TRUE[\s\S]*cs\.session_id = COALESCE\(\s*\$1::text/,
+      ),
       [null],
+    );
+    expect((dataSource.query as jest.Mock).mock.calls[0][0]).toContain(
+      'JOIN users u ON u.id = t.user_id AND u.is_active = true',
     );
   });
 

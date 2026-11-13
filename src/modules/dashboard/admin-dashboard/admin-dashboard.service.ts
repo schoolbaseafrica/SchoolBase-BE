@@ -43,7 +43,7 @@ export class AdminDashboardService {
       this.dataSource.query(
         `WITH enrolled AS (
            SELECT DISTINCT cs.student_id FROM class_students cs
-           JOIN students s ON s.id = cs.student_id AND s.is_deleted = false
+           JOIN students s ON s.id = cs.student_id AND s.is_deleted IS NOT TRUE
            JOIN users u ON u.id = s.user_id AND u.is_active = true
            WHERE cs.session_id = $1 AND cs.is_active = true
          )
