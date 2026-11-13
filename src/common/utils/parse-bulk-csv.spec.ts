@@ -9,6 +9,13 @@ const file = (text: string, name = 'parents.csv') =>
   }) as Express.Multer.File;
 
 describe('parseBulkCsv', () => {
+  it('preserves leading zeros in registration numbers present in the CSV', async () => {
+    const rows = await parseBulkCsv(
+      file('Registration Number,First Name\n0044,Ada\n'),
+    );
+    expect(rows[0].registration_number).toBe('0044');
+  });
+
   it('normalizes headings and preserves quoted commas', async () => {
     const rows = await parseBulkCsv(
       file(

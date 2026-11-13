@@ -116,19 +116,35 @@ export class ResolverService {
   private async getAdminMetadata(
     sessionId?: string,
   ): Promise<DashboardMetadataAdmin> {
-    void sessionId;
     const [counts] = (await this.dataSource.query(
       `SELECT
-        (SELECT COUNT(*)::int FROM students
-          WHERE is_deleted = false) AS students,
+        (SELECT COUNT(*)::int FROM students s
+          JOIN users u ON u.id = s.user_id AND u.is_active = true
+          WHERE s.is_deleted = false) AS students,
+        (SELECT COUNT(DISTINCT cs.student_id)::int FROM class_students cs
+          JOIN students s ON s.id = cs.student_id AND s.is_deleted = false
+          JOIN users u ON u.id = s.user_id AND u.is_active = true
+          WHERE cs.is_active = true AND cs.session_id = COALESCE(
+            $1::text,
+            (SELECT id::text FROM academic_sessions
+              WHERE status = 'Active' AND deleted_at IS NULL
+              ORDER BY start_date DESC LIMIT 1)
+          )) AS current_session_students,
         (SELECT COUNT(*)::int FROM teachers
           WHERE is_active = true) AS teachers,
         (SELECT COUNT(*)::int FROM parents
           WHERE is_active = true AND deleted_at IS NULL) AS parents`,
-    )) as Array<{ students: number; teachers: number; parents: number }>;
+      [sessionId ?? null],
+    )) as Array<{
+      students: number;
+      current_session_students: number;
+      teachers: number;
+      parents: number;
+    }>;
 
     return {
       total_students: counts?.students ?? 0,
+      current_session_students: counts?.current_session_students ?? 0,
       total_teachers: counts?.teachers ?? 0,
       total_parents: counts?.parents ?? 0,
     };

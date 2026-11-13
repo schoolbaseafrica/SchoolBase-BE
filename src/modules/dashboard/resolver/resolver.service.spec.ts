@@ -53,7 +53,9 @@ describe('ResolverService', () => {
     dataSource = {
       query: jest
         .fn()
-        .mockResolvedValue([{ students: 2, teachers: 1, parents: 1 }]),
+        .mockResolvedValue([
+          { students: 2, current_session_students: 1, teachers: 1, parents: 1 },
+        ]),
     } as unknown as DataSource;
 
     service = new ResolverService(
@@ -79,9 +81,14 @@ describe('ResolverService', () => {
     expect(result.modules).toEqual(DASHBOARD_MODULES[UserRole.ADMIN]);
     expect(result.metadata).toEqual({
       total_students: 2,
+      current_session_students: 1,
       total_teachers: 1,
       total_parents: 1,
     });
+    expect(dataSource.query).toHaveBeenCalledWith(
+      expect.stringMatching(/cs\.session_id = COALESCE\(\s*\$1::text/),
+      [null],
+    );
   });
 
   it('should throw ForbiddenException if user has no role', async () => {

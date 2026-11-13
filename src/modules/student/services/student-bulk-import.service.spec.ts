@@ -7,7 +7,11 @@ import { StudentService } from './student.service';
 
 describe('StudentBulkImportService', () => {
   const findOne = jest.fn();
-  const dataSource = { getRepository: jest.fn().mockReturnValue({ findOne }) };
+  const query = jest.fn();
+  const dataSource = {
+    getRepository: jest.fn().mockReturnValue({ findOne }),
+    query,
+  };
   const students = { create: jest.fn(), update: jest.fn() };
   const classes = { assignStudentToClass: jest.fn() };
   const service = new StudentBulkImportService(
@@ -124,6 +128,56 @@ describe('StudentBulkImportService', () => {
     expect(result).toMatchObject({ ready: 1, failed: 0 });
     expect(result.results[0].changed_fields).toEqual(['email']);
     expect(students.update).not.toHaveBeenCalled();
+  });
+
+  it('recovers a unique registration number whose leading zeros were removed', async () => {
+    query.mockResolvedValue([{ id: 'student-1', registration_number: '0044' }]);
+    findOne.mockResolvedValue({
+      id: 'student-1',
+      registration_number: '0044',
+      user: { is_active: true, phone: '08011111111' },
+    });
+    const preview = await service.previewUpdates([
+      { registration_number: '44', phone: '08022222222' },
+    ]);
+    expect(preview).toMatchObject({ ready: 1, failed: 0 });
+    expect(preview.results[0]).toMatchObject({
+      registration_number: '44',
+      matched_registration_number: '0044',
+    });
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('ltrim'), [
+      '44',
+    ]);
+    expect(students.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks an ambiguous numeric registration number even if one exact match exists', async () => {
+    query.mockResolvedValue([
+      { id: 'student-1', registration_number: '44' },
+      { id: 'student-2', registration_number: '0044' },
+    ]);
+    const result = await service.updateExisting(
+      [{ registration_number: '44', phone: '08022222222' }],
+      'admin-1',
+    );
+    expect(result).toMatchObject({ updated: 0, failed: 1 });
+    expect(result.results[0].error).toContain('multiple students');
+    expect(findOne).not.toHaveBeenCalled();
+    expect(students.update).not.toHaveBeenCalled();
+  });
+
+  it('uses an exact registration number with leading zeros when similar numbers exist', async () => {
+    findOne.mockResolvedValue({
+      id: 'student-2',
+      registration_number: '0044',
+      user: { is_active: true, phone: '08011111111' },
+    });
+    const preview = await service.previewUpdates([
+      { registration_number: '0044', phone: '08022222222' },
+    ]);
+    expect(preview).toMatchObject({ ready: 1, failed: 0 });
+    expect(preview.results[0].matched_registration_number).toBe('0044');
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('blocks all updates if the file contains an unmatched student', async () => {

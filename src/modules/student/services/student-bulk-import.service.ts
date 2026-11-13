@@ -74,9 +74,11 @@ export class StudentBulkImportService {
 
   private async prepareUpdates(rows: Record<string, string>[]) {
     const seen = new Set<string>();
+    const seenStudents = new Set<string>();
     const results: Array<{
       row: number;
       registration_number: string;
+      matched_registration_number?: string;
       student_id?: string;
       class_id?: string;
       changed_fields: string[];
@@ -111,6 +113,7 @@ export class StudentBulkImportService {
         entry.error = `Row ${entry.row}: Registration Number is required to match an existing student`;
         continue;
       }
+      const numericRegistration = /^[0-9]+$/.test(registration_number);
       if (seen.has(registration_number)) {
         entry.error = `Row ${entry.row}: Registration Number appears more than once in this file`;
         continue;
@@ -127,14 +130,48 @@ export class StudentBulkImportService {
         entry.error = `Row ${entry.row}: Unsupported update column(s): ${unsupported.join(', ')}`;
         continue;
       }
-      const student = await this.dataSource.getRepository(Student).findOne({
-        where: { registration_number, is_deleted: false },
-        relations: { user: true },
-      });
+      let student: Student | null = null;
+      if (numericRegistration && registration_number.startsWith('0')) {
+        student = await this.dataSource.getRepository(Student).findOne({
+          where: { registration_number, is_deleted: false },
+          relations: { user: true },
+        });
+      }
+      if (!student && numericRegistration) {
+        const matches: Array<{ id: string; registration_number: string }> =
+          await this.dataSource.query(
+            `SELECT id, registration_number FROM students
+             WHERE is_deleted = false AND registration_number ~ '^[0-9]+$'
+               AND ltrim(registration_number, '0') = $1
+             LIMIT 2`,
+            [registration_number.replace(/^0+/, '')],
+          );
+        if (matches.length > 1) {
+          entry.error = `Row ${entry.row}: Registration Number ${registration_number} could match multiple students after leading zeros were removed. Restore the full Registration Number from the student profile and upload again`;
+          continue;
+        }
+        student = matches.length
+          ? await this.dataSource.getRepository(Student).findOne({
+              where: { id: matches[0].id, is_deleted: false },
+              relations: { user: true },
+            })
+          : null;
+      } else if (!numericRegistration) {
+        student = await this.dataSource.getRepository(Student).findOne({
+          where: { registration_number, is_deleted: false },
+          relations: { user: true },
+        });
+      }
       if (!student || !student.user?.is_active) {
-        entry.error = `Row ${entry.row}: No active student has Registration Number ${registration_number}`;
+        entry.error = `Row ${entry.row}: No active student has Registration Number ${registration_number}. If a spreadsheet removed leading zeros, restore the full number from the student profile`;
         continue;
       }
+      if (seenStudents.has(student.id)) {
+        entry.error = `Row ${entry.row}: This student appears more than once in this file. Use separate uploads for profile and class changes`;
+        continue;
+      }
+      seenStudents.add(student.id);
+      entry.matched_registration_number = student.registration_number;
       const values = Object.fromEntries(
         allowed
           .filter((field) => row[field]?.trim())
@@ -241,6 +278,7 @@ export class StudentBulkImportService {
       results: results.map((item) => ({
         row: item.row,
         registration_number: item.registration_number,
+        matched_registration_number: item.matched_registration_number,
         changed_fields: item.changed_fields,
         error: item.error,
       })),
@@ -258,6 +296,7 @@ export class StudentBulkImportService {
         results: prepared.map((item) => ({
           row: item.row,
           registration_number: item.registration_number,
+          matched_registration_number: item.matched_registration_number,
           changed_fields: item.changed_fields,
           error: item.error,
         })),
