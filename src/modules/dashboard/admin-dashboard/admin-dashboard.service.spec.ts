@@ -1,3 +1,5 @@
+import { ConfigService } from '@nestjs/config';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
@@ -10,6 +12,7 @@ describe('AdminDashboardService', () => {
   let timetableModelAction: TimetableModelAction;
   let logger: Logger;
   let academicSessionService: AcademicSessionService;
+  let dataSource: DataSource;
 
   beforeEach(() => {
     timetableModelAction = {
@@ -26,12 +29,28 @@ describe('AdminDashboardService', () => {
         .fn()
         .mockResolvedValue({ data: { id: 'session-1' } }),
     } as unknown as AcademicSessionService;
+    dataSource = { query: jest.fn() } as unknown as DataSource;
 
     service = new AdminDashboardService(
       timetableModelAction,
       academicSessionService,
       logger,
+      dataSource,
+      { get: () => 'Africa/Lagos' } as unknown as ConfigService,
     );
+  });
+
+  it('reports distinct daily student and teacher marks for the selected session', async () => {
+    (dataSource.query as jest.Mock)
+      .mockResolvedValueOnce([{ marked: '12', eligible: '20' }])
+      .mockResolvedValueOnce([{ marked: '4', eligible: '6' }]);
+    const result = await service.loadTodayAttendance(
+      '6141e83e-a4f1-4896-b184-eaf6e0e8d78d',
+    );
+    expect(result.students).toEqual({ marked: 12, eligible: 20 });
+    expect(result.teachers).toEqual({ marked: 4, eligible: 6 });
+    expect(result.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(dataSource.query).toHaveBeenCalledTimes(2);
   });
 
   it('should load today activities with all data', async () => {

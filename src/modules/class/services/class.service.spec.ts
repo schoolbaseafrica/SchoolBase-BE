@@ -590,14 +590,18 @@ describe('ClassService', () => {
         payload: mockRawClasses,
         paginationMeta: { total: 1, page: 1, limit: 20 },
       });
+      mockDataSource.query.mockResolvedValueOnce([
+        { class_id: 'class-id-1', student_count: '23' },
+        { class_id: 'class-id-2', student_count: '18' },
+      ]);
 
       const expectedGrouped = [
         {
           name: 'JSS1',
           academicSession: { id: 'session-id', name: '2027/2028' },
           classes: [
-            { id: 'class-id-1', arm: 'A' },
-            { id: 'class-id-2', arm: 'B' },
+            { id: 'class-id-1', arm: 'A', student_count: 23 },
+            { id: 'class-id-2', arm: 'B', student_count: 18 },
           ],
         },
       ];

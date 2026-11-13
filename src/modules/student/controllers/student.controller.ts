@@ -85,6 +85,29 @@ export class StudentController {
     return this.bulkImport.import(await parseBulkCsv(file), actor.id);
   }
 
+  @Post('bulk-upload/preview-updates')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  async previewBulkUpdates(@UploadedFile() file: Express.Multer.File) {
+    return this.bulkImport.previewUpdates(await parseBulkCsv(file));
+  }
+
+  @Post('bulk-upload/update-existing')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  async updateExistingFromCsv(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() actor: { id: string },
+  ) {
+    return this.bulkImport.updateExisting(await parseBulkCsv(file), actor.id);
+  }
+
   @Post('me/photo-capture-links')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.STUDENT)

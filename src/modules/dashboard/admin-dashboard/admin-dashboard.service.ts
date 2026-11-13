@@ -1,5 +1,8 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { isUUID } from 'class-validator';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
@@ -18,8 +21,61 @@ export class AdminDashboardService {
     private readonly timetableModelAction: TimetableModelAction,
     private readonly academicSessionService: AcademicSessionService,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
+    private readonly dataSource: DataSource,
+    private readonly config: ConfigService,
   ) {
     this.logger = baseLogger.child({ context: AdminDashboardService.name });
+  }
+
+  async loadTodayAttendance(sessionId?: string) {
+    const selectedSessionId =
+      sessionId || (await this.academicSessionService.activeSessions()).data.id;
+    if (!isUUID(selectedSessionId)) {
+      throw new BadRequestException('A valid academic session is required');
+    }
+    const today = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: this.config.get<string>('SCHOOL_TIMEZONE') || 'Africa/Lagos',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const [studentRows, teacherRows] = await Promise.all([
+      this.dataSource.query(
+        `WITH enrolled AS (
+           SELECT DISTINCT cs.student_id FROM class_students cs
+           JOIN students s ON s.id = cs.student_id AND s.is_deleted = false
+           JOIN users u ON u.id = s.user_id AND u.is_active = true
+           WHERE cs.session_id = $1 AND cs.is_active = true
+         )
+         SELECT (SELECT COUNT(*) FROM enrolled)::text AS eligible,
+                (SELECT COUNT(DISTINCT a.student_id) FROM student_daily_attendance a
+                 JOIN enrolled e ON e.student_id = a.student_id
+                 WHERE a.session_id = $1::uuid AND a.date = $2::date)::text AS marked`,
+        [selectedSessionId, today],
+      ),
+      this.dataSource.query(
+        `WITH active_teachers AS (
+           SELECT t.id FROM teachers t JOIN users u ON u.id = t.user_id
+           WHERE t.is_active = true AND u.is_active = true
+         )
+         SELECT (SELECT COUNT(*) FROM active_teachers)::text AS eligible,
+                (SELECT COUNT(DISTINCT a.teacher_id) FROM teacher_daily_attendance a
+                 JOIN active_teachers t ON t.id = a.teacher_id
+                 WHERE a.date = $1::date)::text AS marked`,
+        [today],
+      ),
+    ]);
+    return {
+      date: today,
+      students: {
+        marked: Number(studentRows[0]?.marked ?? 0),
+        eligible: Number(studentRows[0]?.eligible ?? 0),
+      },
+      teachers: {
+        marked: Number(teacherRows[0]?.marked ?? 0),
+        eligible: Number(teacherRows[0]?.eligible ?? 0),
+      },
+    };
   }
 
   async loadTodayActivities(

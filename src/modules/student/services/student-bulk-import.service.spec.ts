@@ -8,7 +8,7 @@ import { StudentService } from './student.service';
 describe('StudentBulkImportService', () => {
   const findOne = jest.fn();
   const dataSource = { getRepository: jest.fn().mockReturnValue({ findOne }) };
-  const students = { create: jest.fn() };
+  const students = { create: jest.fn(), update: jest.fn() };
   const classes = { assignStudentToClass: jest.fn() };
   const service = new StudentBulkImportService(
     dataSource as unknown as DataSource,
@@ -111,5 +111,111 @@ describe('StudentBulkImportService', () => {
       expect.objectContaining({ email: undefined }),
       undefined,
     );
+  });
+
+  it('previews an existing student update without changing blank columns', async () => {
+    findOne.mockResolvedValue({
+      id: 'student-1',
+      user: { is_active: true, email: null, phone: '08011111111' },
+    });
+    const result = await service.previewUpdates([
+      { registration_number: 'DEM0001', email: 'ada@example.com', phone: '' },
+    ]);
+    expect(result).toMatchObject({ ready: 1, failed: 0 });
+    expect(result.results[0].changed_fields).toEqual(['email']);
+    expect(students.update).not.toHaveBeenCalled();
+  });
+
+  it('blocks all updates if the file contains an unmatched student', async () => {
+    findOne
+      .mockResolvedValueOnce({
+        id: 'student-1',
+        user: { is_active: true, phone: '08011111111' },
+      })
+      .mockResolvedValueOnce(null);
+    const result = await service.updateExisting(
+      [
+        { registration_number: 'DEM0001', phone: '08022222222' },
+        { registration_number: 'MISSING', phone: '08033333333' },
+      ],
+      'admin-1',
+    );
+    expect(result).toMatchObject({ updated: 0, failed: 1 });
+    expect(students.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsupported populated columns instead of silently ignoring them', async () => {
+    const result = await service.previewUpdates([
+      { registration_number: 'DEM0001', nickname: 'Ada' },
+    ]);
+    expect(result).toMatchObject({ ready: 0, failed: 1 });
+    expect(result.results[0].error).toContain('nickname');
+    expect(students.update).not.toHaveBeenCalled();
+  });
+
+  it('previews and assigns an unassigned student to an existing current-session class', async () => {
+    const student = { id: 'student-1', user: { is_active: true } };
+    const targetClass = {
+      id: 'class-1',
+      name: 'JSS 1',
+      arm: 'A',
+      academicSession: { id: 'session-1' },
+    };
+    findOne
+      .mockResolvedValueOnce(student)
+      .mockResolvedValueOnce(targetClass)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(student)
+      .mockResolvedValueOnce(targetClass)
+      .mockResolvedValueOnce(null);
+    classes.assignStudentToClass.mockResolvedValue({});
+    const rows = [{ registration_number: 'DEM0001', class: 'Jss 1', arm: 'a' }];
+    const preview = await service.previewUpdates(rows);
+    expect(preview).toMatchObject({ ready: 1, failed: 0 });
+    expect(preview.results[0].changed_fields).toEqual(['class']);
+    expect(classes.assignStudentToClass).not.toHaveBeenCalled();
+    const result = await service.updateExisting(rows, 'admin-1');
+    expect(result).toMatchObject({ updated: 1, failed: 0 });
+    expect(classes.assignStudentToClass).toHaveBeenCalledWith(
+      'class-1',
+      'student-1',
+    );
+    expect(students.update).not.toHaveBeenCalled();
+  });
+
+  it('does not replace a current-session class through CSV update', async () => {
+    findOne
+      .mockResolvedValueOnce({ id: 'student-1', user: { is_active: true } })
+      .mockResolvedValueOnce({
+        id: 'new-class',
+        academicSession: { id: 'session-1' },
+      })
+      .mockResolvedValueOnce({
+        class: { id: 'old-class', name: 'JSS 1', arm: 'B' },
+      });
+    const result = await service.previewUpdates([
+      { registration_number: 'DEM0001', class: 'JSS 1', arm: 'A' },
+    ]);
+    expect(result).toMatchObject({ ready: 0, failed: 1 });
+    expect(result.results[0].error).toContain('already assigned');
+  });
+
+  it('updates only supplied nonempty fields and records the actor', async () => {
+    findOne.mockResolvedValue({
+      id: 'student-1',
+      user: { is_active: true, phone: '08011111111' },
+    });
+    students.update.mockResolvedValue({});
+    const result = await service.updateExisting(
+      [{ registration_number: 'DEM0001', phone: '08022222222', email: '' }],
+      'admin-1',
+    );
+    expect(result).toMatchObject({ updated: 1, failed: 0 });
+    expect(students.update).toHaveBeenCalledWith(
+      'student-1',
+      expect.objectContaining({ phone: '08022222222' }),
+      'admin-1',
+    );
+    expect(students.update.mock.calls[0][1]).not.toHaveProperty('email');
   });
 });

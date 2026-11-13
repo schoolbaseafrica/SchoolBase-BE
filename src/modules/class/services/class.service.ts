@@ -441,12 +441,29 @@ export class ClassService {
 
     const classes = Array.isArray(classesRaw) ? classesRaw : [];
 
+    const classIds = classes.map((cls) => cls.id);
+    const counts: Array<{ class_id: string; student_count: string }> =
+      classIds.length === 0
+        ? []
+        : await this.dataSource.query(
+            `SELECT cs.class_id, COUNT(DISTINCT cs.student_id)::text AS student_count
+             FROM class_students cs
+             JOIN students s ON s.id = cs.student_id AND s.is_deleted = false
+             JOIN users u ON u.id = s.user_id AND u.is_active = true
+             WHERE cs.class_id = ANY($1::uuid[]) AND cs.is_active = true
+             GROUP BY cs.class_id`,
+            [classIds],
+          );
+    const countByClass = new Map(
+      counts.map((item) => [item.class_id, Number(item.student_count)]),
+    );
+
     const grouped: Record<
       string,
       {
         name: string;
         academicSession: { id: string; name: string };
-        classes: { id: string; arm?: string }[];
+        classes: { id: string; arm?: string; student_count: number }[];
       }
     > = {};
 
@@ -462,7 +479,11 @@ export class ClassService {
           classes: [],
         };
       }
-      grouped[key].classes.push({ id: cls.id, arm: cls.arm });
+      grouped[key].classes.push({
+        id: cls.id,
+        arm: cls.arm,
+        student_count: countByClass.get(cls.id) ?? 0,
+      });
     }
 
     return {
