@@ -280,6 +280,9 @@ describe('GradeService', () => {
       expect(calculateGrade(45)).toBe('E');
       expect(calculateGrade(30)).toBe('F');
       expect(calculateGrade(0)).toBe('F');
+      expect(calculateGrade(79.5)).toBe('B');
+      expect(calculateGrade(69.99)).toBe('C');
+      expect(() => calculateGrade(100.01)).toThrow(BadRequestException);
     });
   });
 

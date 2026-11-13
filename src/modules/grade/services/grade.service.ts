@@ -11,6 +11,7 @@ import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
 import { ClassSubject } from '../../class/entities/class-subject.entity';
+import { calculateGradeLetter as calculateResultGradeLetter } from '../../result/utils/grading.util';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions';
 import { GradeResponseDto, UpdateGradeDto } from '../dto';
@@ -20,16 +21,6 @@ import { GradeModelAction } from '../model-actions';
 @Injectable()
 export class GradeService {
   private readonly logger: Logger;
-
-  // Grading scale: A (80-100), B (70-79), C (60-69), D (50-59), E (40-49), F (0-39)
-  private readonly gradingScale = [
-    { min: 80, max: 100, grade: 'A' },
-    { min: 70, max: 79, grade: 'B' },
-    { min: 60, max: 69, grade: 'C' },
-    { min: 50, max: 59, grade: 'D' },
-    { min: 40, max: 49, grade: 'E' },
-    { min: 0, max: 39, grade: 'F' },
-  ];
 
   constructor(
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
@@ -44,12 +35,10 @@ export class GradeService {
    * Calculate grade letter based on total score
    */
   private calculateGradeLetter(totalScore: number): string {
-    for (const scale of this.gradingScale) {
-      if (totalScore >= scale.min && totalScore <= scale.max) {
-        return scale.grade;
-      }
-    }
-    return 'F';
+    const grade = calculateResultGradeLetter(totalScore);
+    if (!grade)
+      throw new BadRequestException('Total score must be between 0 and 100');
+    return grade;
   }
 
   /**

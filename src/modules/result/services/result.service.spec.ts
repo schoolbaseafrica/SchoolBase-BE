@@ -413,6 +413,68 @@ describe('ResultService', () => {
       );
     });
 
+    it('keeps zero subject scores in generated result lines', async () => {
+      const classId = 'class-id';
+      const termId = 'term-id';
+      const sessionId = 'session-id';
+      classModelAction.get.mockResolvedValue({
+        id: classId,
+        is_deleted: false,
+        academicSession: { id: sessionId },
+      } as never);
+      termModelAction.get.mockResolvedValue({
+        id: termId,
+        academicSession: { id: sessionId },
+      } as never);
+      academicSessionModelAction.get.mockResolvedValue({
+        id: sessionId,
+      } as never);
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [{ student: { id: 'student-id' } }],
+      } as never);
+      classSubjectModelAction.list.mockResolvedValue({
+        payload: [{ id: 'subject-id' }],
+      } as never);
+      (
+        service as unknown as { computeStudentResultData: jest.Mock }
+      ).computeStudentResultData = jest.fn().mockResolvedValue({
+        student_id: 'student-id',
+        class_id: classId,
+        grades: [
+          {
+            subject_id: 'subject-id',
+            ca_score: 0,
+            exam_score: 0,
+            total_score: 0,
+            grade_letter: 'F',
+            comment: null,
+          },
+        ],
+        total_score: 0,
+        average_score: 0,
+        subject_count: 1,
+      });
+      resultModelAction.get.mockResolvedValue(null);
+      mockQueryRunner.manager.save.mockImplementation(async (_type, value) =>
+        Array.isArray(value) ? value : { ...value, id: 'result-id' },
+      );
+
+      await service.generateClassResults(classId, termId, sessionId);
+
+      const lines = mockQueryRunner.manager.save.mock.calls.find((call) =>
+        Array.isArray(call[1]),
+      )?.[1] as Array<{
+        ca_score: number | null;
+        exam_score: number | null;
+        total_score: number | null;
+      }>;
+      expect(lines[0]).toMatchObject({
+        ca_score: 0,
+        exam_score: 0,
+        total_score: 0,
+      });
+    });
+
     it('should throw NotFoundException when class does not exist', async () => {
       const classId = 'class-uuid-123';
       const termId = 'term-uuid-123';
@@ -453,6 +515,44 @@ describe('ResultService', () => {
       await expect(
         service.generateClassResults(classId, termId, sessionId),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  it('returns zero scores as numbers in result readbacks', () => {
+    const response = (
+      service as unknown as {
+        transformToResponseDto: (result: Result) => {
+          total_score: number | null;
+          average_score: number | null;
+          subject_lines: Array<{
+            ca_score: number | null;
+            exam_score: number | null;
+            total_score: number | null;
+          }>;
+        };
+      }
+    ).transformToResponseDto({
+      ...mockResult,
+      total_score: 0,
+      average_score: 0,
+      subject_lines: [
+        {
+          id: 'line-id',
+          subject: { id: 'subject-id', name: 'Mathematics' },
+          ca_score: 0,
+          exam_score: 0,
+          total_score: 0,
+          grade_letter: 'F',
+          remark: 'Fail',
+        },
+      ],
+    } as unknown as Result);
+
+    expect(response).toMatchObject({ total_score: 0, average_score: 0 });
+    expect(response.subject_lines[0]).toMatchObject({
+      ca_score: 0,
+      exam_score: 0,
+      total_score: 0,
     });
   });
 

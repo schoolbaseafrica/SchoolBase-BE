@@ -39,6 +39,10 @@ import {
 } from '../model-actions';
 import { calculateGradeLetter, getOverallRemark } from '../utils/grading.util';
 
+function toNullableNumber(value: number | null | undefined): number | null {
+  return value === null || value === undefined ? null : Number(value);
+}
+
 @Injectable()
 export class ResultService {
   private readonly logger: Logger;
@@ -361,11 +365,9 @@ export class ResultService {
           const line = new ResultSubjectLine();
           line.result_id = savedResult.id;
           line.subject_id = grade.subject_id;
-          line.ca_score = grade.ca_score ? Number(grade.ca_score) : null;
-          line.exam_score = grade.exam_score ? Number(grade.exam_score) : null;
-          line.total_score = grade.total_score
-            ? Number(grade.total_score)
-            : null;
+          line.ca_score = toNullableNumber(grade.ca_score);
+          line.exam_score = toNullableNumber(grade.exam_score);
+          line.total_score = toNullableNumber(grade.total_score);
           line.grade_letter = grade.grade_letter;
           line.remark = grade.comment || getOverallRemark(grade.total_score);
           return line;
@@ -509,9 +511,9 @@ export class ResultService {
         subjectGradesMap.set(subjectId, {
           subject_id: subjectId,
           subject_name: subjectName,
-          ca_score: grade.ca_score ? Number(grade.ca_score) : null,
-          exam_score: grade.exam_score ? Number(grade.exam_score) : null,
-          total_score: grade.total_score ? Number(grade.total_score) : null,
+          ca_score: toNullableNumber(grade.ca_score),
+          exam_score: toNullableNumber(grade.exam_score),
+          total_score: toNullableNumber(grade.total_score),
           grade_letter: grade.grade_letter,
           comment: grade.comment,
         });
@@ -700,8 +702,8 @@ export class ResultService {
         name: result.academicSession?.name || '',
         academicYear: result.academicSession?.academicYear,
       },
-      total_score: result.total_score ? Number(result.total_score) : null,
-      average_score: result.average_score ? Number(result.average_score) : null,
+      total_score: toNullableNumber(result.total_score),
+      average_score: toNullableNumber(result.average_score),
       grade_letter: result.grade_letter,
       position: result.position,
       remark: result.remark,
@@ -713,9 +715,9 @@ export class ResultService {
             id: line.subject?.id || '',
             name: line.subject?.name || '',
           },
-          ca_score: line.ca_score ? Number(line.ca_score) : null,
-          exam_score: line.exam_score ? Number(line.exam_score) : null,
-          total_score: line.total_score ? Number(line.total_score) : null,
+          ca_score: toNullableNumber(line.ca_score),
+          exam_score: toNullableNumber(line.exam_score),
+          total_score: toNullableNumber(line.total_score),
           grade_letter: line.grade_letter,
           remark: line.remark,
         })) || [],
