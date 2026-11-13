@@ -15,11 +15,14 @@ import {
   ResultModelAction,
   ResultSubjectLineModelAction,
 } from './model-actions';
+import { GradingPolicyVersion } from './policy/grading-policy-version.entity';
+import { GradingPolicyController } from './policy/grading-policy.controller';
+import { GradingPolicyService } from './policy/grading-policy.service';
 import { ResultService } from './services';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Result, ResultSubjectLine]),
+    TypeOrmModule.forFeature([Result, ResultSubjectLine, GradingPolicyVersion]),
     StudentModule,
     ClassModule,
     TermModule,
@@ -27,13 +30,14 @@ import { ResultService } from './services';
     NotificationModule,
     forwardRef(() => GradeModule),
   ],
-  controllers: [ResultController],
+  controllers: [ResultController, GradingPolicyController],
   providers: [
     ResultService,
     ResultModelAction,
     ResultSubjectLineModelAction,
     ResultNotificationService,
+    GradingPolicyService,
   ],
-  exports: [ResultService, ResultModelAction],
+  exports: [ResultService, ResultModelAction, GradingPolicyService],
 })
 export class ResultModule {}

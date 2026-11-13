@@ -18,6 +18,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { IsOptional, IsString, MaxLength } from 'class-validator';
 
 import { StudentModelAction } from 'src/modules/student/model-actions';
 
@@ -48,6 +49,13 @@ interface IRequestWithUser extends Request {
   };
 }
 
+class PublishResultDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  correction_reason?: string;
+}
+
 @ApiTags('Results')
 @ApiBearerAuth()
 @Controller('results')
@@ -57,6 +65,30 @@ export class ResultController {
     private readonly resultService: ResultService,
     private readonly studentModelAction: StudentModelAction,
   ) {}
+
+  @Post(':resultId/publish')
+  @Roles(UserRole.ADMIN)
+  publishResult(
+    @Param('resultId', ParseUUIDPipe) resultId: string,
+    @Body() dto: PublishResultDto,
+    @Req() req: IRequestWithUser,
+  ) {
+    return this.resultService.publishResult(
+      resultId,
+      req.user.userId,
+      dto.correction_reason,
+    );
+  }
+
+  @Get(':resultId/publication')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)
+  async getLatestPublication(
+    @Param('resultId', ParseUUIDPipe) resultId: string,
+    @Req() req: IRequestWithUser,
+  ) {
+    await this.getResultById(req, resultId);
+    return this.resultService.getLatestPublication(resultId);
+  }
 
   @Get()
   @DocsGetAllResults()

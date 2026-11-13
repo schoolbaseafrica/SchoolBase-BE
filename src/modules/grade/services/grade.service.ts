@@ -11,7 +11,12 @@ import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
 import { ClassSubject } from '../../class/entities/class-subject.entity';
-import { calculateGradeLetter as calculateResultGradeLetter } from '../../result/utils/grading.util';
+import {
+  evaluateGradingPolicy,
+  IGradingPolicyDefinition,
+  LEGACY_GRADING_POLICY,
+} from '../../result/policy/grading-policy';
+import { GradingPolicyService } from '../../result/policy/grading-policy.service';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions';
 import { GradeResponseDto, UpdateGradeDto } from '../dto';
@@ -27,6 +32,7 @@ export class GradeService {
     private readonly gradeModelAction: GradeModelAction,
     private readonly dataSource: DataSource,
     private readonly studentModelAction: StudentModelAction,
+    private readonly gradingPolicyService: GradingPolicyService,
   ) {
     this.logger = baseLogger.child({ context: GradeService.name });
   }
@@ -34,8 +40,11 @@ export class GradeService {
   /**
    * Calculate grade letter based on total score
    */
-  private calculateGradeLetter(totalScore: number): string {
-    const grade = calculateResultGradeLetter(totalScore);
+  private calculateGradeLetter(
+    totalScore: number,
+    definition: IGradingPolicyDefinition = LEGACY_GRADING_POLICY,
+  ): string {
+    const grade = evaluateGradingPolicy(totalScore, definition)?.grade;
     if (!grade)
       throw new BadRequestException('Total score must be between 0 and 100');
     return grade;
@@ -92,8 +101,14 @@ export class GradeService {
       caScore !== null && examScore !== null
         ? Number(caScore) + Number(examScore)
         : null;
+    const policy = await this.gradingPolicyService.resolve(
+      grade.submission.term_id,
+      grade.submission.class_id,
+    );
     const gradeLetter =
-      totalScore !== null ? this.calculateGradeLetter(totalScore) : null;
+      totalScore !== null
+        ? this.calculateGradeLetter(totalScore, policy.definition)
+        : null;
 
     const updatedGrade = await this.gradeModelAction.update({
       identifierOptions: { id: gradeId },
@@ -102,6 +117,7 @@ export class GradeService {
         exam_score: examScore,
         total_score: totalScore,
         grade_letter: gradeLetter,
+        grading_policy_version_id: policy.id,
         comment: updateDto.comment ?? grade.comment,
       },
       transactionOptions: { useTransaction: false },

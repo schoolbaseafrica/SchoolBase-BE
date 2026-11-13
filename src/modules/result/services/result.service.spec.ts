@@ -25,6 +25,8 @@ import {
   ResultModelAction,
   ResultSubjectLineModelAction,
 } from '../model-actions';
+import { LEGACY_GRADING_POLICY } from '../policy/grading-policy';
+import { GradingPolicyService } from '../policy/grading-policy.service';
 
 import { ResultService } from './result.service';
 
@@ -37,6 +39,7 @@ describe('ResultService', () => {
   let academicSessionModelAction: jest.Mocked<AcademicSessionModelAction>;
   let studentModelAction: StudentModelAction;
   let classSubjectModelAction: jest.Mocked<ClassSubjectModelAction>;
+  let dataSource: jest.Mocked<DataSource>;
 
   const mockLogger = {
     child: jest.fn().mockReturnThis(),
@@ -163,6 +166,7 @@ describe('ResultService', () => {
     term_id: 'term1',
     term: mockTerm,
     academic_session_id: 'session1',
+    grading_policy_version_id: null,
     academicSession: mockAcademicSession,
     total_score: 80,
     average_score: 80,
@@ -189,6 +193,16 @@ describe('ResultService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ResultService,
+        {
+          provide: GradingPolicyService,
+          useValue: {
+            resolve: jest.fn().mockResolvedValue({
+              id: null,
+              version: 1,
+              definition: LEGACY_GRADING_POLICY,
+            }),
+          },
+        },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: mockLogger,
@@ -248,6 +262,8 @@ describe('ResultService', () => {
         {
           provide: DataSource,
           useValue: {
+            transaction: jest.fn(),
+            query: jest.fn().mockResolvedValue([]),
             createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
             getRepository: jest.fn().mockReturnValue({
               createQueryBuilder: jest.fn().mockReturnValue(mockQueryBuilder),
@@ -279,10 +295,103 @@ describe('ResultService', () => {
     classStudentModelAction = module.get(ClassStudentModelAction);
     termModelAction = module.get(TermModelAction);
     academicSessionModelAction = module.get(AcademicSessionModelAction);
+    dataSource = module.get(DataSource);
   });
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('publication revisions', () => {
+    const publishable = {
+      ...mockResult,
+      subject_count: 1,
+      subject_lines: [
+        {
+          id: 'line1',
+          subject: { id: 'subject1', name: 'Mathematics' },
+          ca_score: 20,
+          exam_score: 60,
+          total_score: 80,
+          grade_letter: 'A',
+          remark: 'Excellent',
+        },
+      ],
+    } as unknown as Result;
+    it('stores a snapshot of the result and school identity', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: mockResult.id }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'school1', name: 'SchoolBase' }])
+        .mockResolvedValueOnce([{ id: 'publication1', revision: 1 }]);
+      const manager = {
+        query,
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(publishable),
+        }),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation(async (callback) =>
+          (callback as unknown as (value: typeof manager) => Promise<unknown>)(
+            manager,
+          ),
+        );
+      await expect(
+        service.publishResult(mockResult.id, 'admin1'),
+      ).resolves.toMatchObject({ revision: 1 });
+      const insert = query.mock.calls[3][1] as unknown[];
+      const snapshot = JSON.parse(insert[2] as string);
+      expect(snapshot.result.student.registration_number).toBe('REG001');
+      expect(snapshot.school.name).toBe('SchoolBase');
+      expect(snapshot.gradingPolicy.policy_key).toBe('schoolbase-classic');
+    });
+
+    it('requires a reason before replacing the published revision', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: mockResult.id }])
+        .mockResolvedValueOnce([{ revision: 1 }]);
+      const manager = {
+        query,
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(publishable),
+        }),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation(async (callback) =>
+          (callback as unknown as (value: typeof manager) => Promise<unknown>)(
+            manager,
+          ),
+        );
+      await expect(
+        service.publishResult(mockResult.id, 'admin1'),
+      ).rejects.toThrow('correction reason');
+      expect(query).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects incomplete results before a publication can be created', async () => {
+      const query = jest.fn().mockResolvedValue([{ id: mockResult.id }]);
+      const manager = {
+        query,
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(mockResult),
+        }),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation(async (callback) =>
+          (callback as unknown as (value: typeof manager) => Promise<unknown>)(
+            manager,
+          ),
+        );
+      await expect(
+        service.publishResult(mockResult.id, 'admin1'),
+      ).rejects.toThrow('Generate a complete result');
+      expect(query).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('getResultById', () => {
@@ -870,6 +979,29 @@ describe('ResultService', () => {
       expect(result.data).toHaveLength(1);
       expect(result.data[0]).toEqual(
         service['transformToResponseDto'](mockResult),
+      );
+    });
+
+    it('returns the latest published revision instead of regenerated live values', async () => {
+      jest.spyOn(studentModelAction, 'get').mockResolvedValue(mockStudent);
+      jest.spyOn(resultModelAction, 'list').mockResolvedValue({
+        payload: [mockResult],
+        paginationMeta: mockPaginationMeta,
+      });
+      const published = {
+        ...service['transformToResponseDto'](mockResult),
+        total_score: 42,
+      };
+      dataSource.query.mockResolvedValueOnce([
+        { result_id: mockResult.id, snapshot: { result: published } },
+      ]);
+
+      const result = await service.getStudentResults(studentId, query);
+
+      expect(result.data[0]).toEqual(published);
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('ORDER BY result_id, revision DESC'),
+        [[mockResult.id]],
       );
     });
 

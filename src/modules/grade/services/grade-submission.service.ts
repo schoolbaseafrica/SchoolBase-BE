@@ -11,8 +11,13 @@ import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, FindOptionsWhere } from 'typeorm';
 import { Logger } from 'winston';
 
+import {
+  evaluateGradingPolicy,
+  IGradingPolicyDefinition,
+  LEGACY_GRADING_POLICY,
+} from 'src/modules/result/policy/grading-policy';
+import { GradingPolicyService } from 'src/modules/result/policy/grading-policy.service';
 import { ResultService } from 'src/modules/result/services';
-import { calculateGradeLetter as calculateResultGradeLetter } from 'src/modules/result/utils/grading.util';
 
 import * as sysMsg from '../../../constants/system.messages';
 import { ClassSubject } from '../../class/entities';
@@ -44,6 +49,7 @@ export class GradeSubmissionService {
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => ResultService))
     private readonly resultService: ResultService,
+    private readonly gradingPolicyService: GradingPolicyService,
   ) {
     this.logger = baseLogger.child({ context: GradeSubmissionService.name });
   }
@@ -51,8 +57,11 @@ export class GradeSubmissionService {
   /**
    * Calculate grade letter based on total score
    */
-  private calculateGradeLetter(totalScore: number): string {
-    const grade = calculateResultGradeLetter(totalScore);
+  private calculateGradeLetter(
+    totalScore: number,
+    definition: IGradingPolicyDefinition = LEGACY_GRADING_POLICY,
+  ): string {
+    const grade = evaluateGradingPolicy(totalScore, definition)?.grade;
     if (!grade)
       throw new BadRequestException('Total score must be between 0 and 100');
     return grade;
@@ -133,6 +142,10 @@ export class GradeSubmissionService {
       });
 
       // Create individual grades for each student
+      const policy = await this.gradingPolicyService.resolve(
+        createDto.term_id,
+        createDto.class_id,
+      );
       const grades: Grade[] = [];
       for (const studentGrade of createDto.grades) {
         const totalScore =
@@ -144,7 +157,9 @@ export class GradeSubmissionService {
             : null;
 
         const gradeLetter =
-          totalScore !== null ? this.calculateGradeLetter(totalScore) : null;
+          totalScore !== null
+            ? this.calculateGradeLetter(totalScore, policy.definition)
+            : null;
 
         const grade = await this.gradeModelAction.create({
           createPayload: {
@@ -154,6 +169,7 @@ export class GradeSubmissionService {
             exam_score: studentGrade.exam_score ?? null,
             total_score: totalScore,
             grade_letter: gradeLetter,
+            grading_policy_version_id: policy.id,
             comment: studentGrade.comment ?? null,
           },
           transactionOptions: {
@@ -238,6 +254,11 @@ export class GradeSubmissionService {
         throw new BadRequestException(sysMsg.GRADE_INVALID_STATUS_TRANSITION);
       }
 
+      const policy = await this.gradingPolicyService.resolve(
+        submission.term_id,
+        submission.class_id,
+      );
+
       const gradesRepo = manager.getRepository(Grade);
       const existing = await gradesRepo.find({
         where: { submission_id: submissionId },
@@ -272,8 +293,9 @@ export class GradeSubmissionService {
             : null;
         grade.grade_letter =
           grade.total_score !== null
-            ? this.calculateGradeLetter(grade.total_score)
+            ? this.calculateGradeLetter(grade.total_score, policy.definition)
             : null;
+        grade.grading_policy_version_id = policy.id;
         grade.comment = entry.comment ?? null;
         await gradesRepo.save(grade);
       }

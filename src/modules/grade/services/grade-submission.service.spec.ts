@@ -7,6 +7,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
 
+import { LEGACY_GRADING_POLICY } from 'src/modules/result/policy/grading-policy';
+import { GradingPolicyService } from 'src/modules/result/policy/grading-policy.service';
 import { ResultService } from 'src/modules/result/services';
 
 import { ClassStudent } from '../../class/entities/class-student.entity';
@@ -81,6 +83,15 @@ describe('GradeService', () => {
               message: 'Results generated',
               generated_count: 0,
               result_ids: [],
+            }),
+          },
+        },
+        {
+          provide: GradingPolicyService,
+          useValue: {
+            resolve: jest.fn().mockResolvedValue({
+              id: null,
+              definition: LEGACY_GRADING_POLICY,
             }),
           },
         },
@@ -224,6 +235,11 @@ describe('GradeService', () => {
         {} as never,
         dataSource as never,
         {} as never,
+        {
+          resolve: jest
+            .fn()
+            .mockResolvedValue({ id: null, definition: LEGACY_GRADING_POLICY }),
+        } as never,
       );
       return { instance, gradeRepo, studentRepo, savedGrades };
     };

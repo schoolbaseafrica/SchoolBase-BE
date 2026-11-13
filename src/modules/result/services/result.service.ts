@@ -37,7 +37,11 @@ import {
   ResultModelAction,
   ResultSubjectLineModelAction,
 } from '../model-actions';
-import { calculateGradeLetter, getOverallRemark } from '../utils/grading.util';
+import {
+  evaluateGradingPolicy,
+  LEGACY_GRADING_POLICY,
+} from '../policy/grading-policy';
+import { GradingPolicyService } from '../policy/grading-policy.service';
 
 function toNullableNumber(value: number | null | undefined): number | null {
   return value === null || value === undefined ? null : Number(value);
@@ -64,8 +68,115 @@ export class ResultService {
     private readonly dataSource: DataSource,
     private readonly resultNotificationService: ResultNotificationService,
     private readonly classSubjectModelAction: ClassSubjectModelAction,
+    private readonly gradingPolicyService: GradingPolicyService,
   ) {
     this.logger = baseLogger.child({ context: ResultService.name });
+  }
+
+  async getLatestPublication(resultId: string) {
+    const result = await this.resultModelAction.get({
+      identifierOptions: { id: resultId },
+    });
+    if (!result) throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
+    const rows = await this.dataSource.query(
+      `SELECT id, result_id, revision, snapshot, template_id, template_version,
+              grading_policy_version_id, published_by, published_at, correction_reason
+       FROM result_publications WHERE result_id = $1 ORDER BY revision DESC LIMIT 1`,
+      [resultId],
+    );
+    return rows[0] ?? null;
+  }
+
+  async publishResult(
+    resultId: string,
+    actorId: string,
+    correctionReason?: string,
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const locked = await manager.query(
+        'SELECT id FROM results WHERE id = $1 FOR UPDATE',
+        [resultId],
+      );
+      if (!locked.length) throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
+      const result = await manager.getRepository(Result).findOne({
+        where: { id: resultId },
+        relations: {
+          student: { user: true },
+          class: true,
+          term: true,
+          academicSession: true,
+          subject_lines: { subject: true },
+        },
+      });
+      if (!result) throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
+      if (
+        !result.generated_at ||
+        !result.subject_lines?.length ||
+        result.subject_count !== result.subject_lines.length ||
+        result.average_score === null ||
+        !result.grade_letter
+      ) {
+        throw new BadRequestException(
+          'Generate a complete result with subject scores before publishing',
+        );
+      }
+      const previous = await manager.query(
+        'SELECT revision FROM result_publications WHERE result_id = $1 ORDER BY revision DESC LIMIT 1',
+        [resultId],
+      );
+      const revision = previous.length ? Number(previous[0].revision) + 1 : 1;
+      if (revision > 1 && !correctionReason?.trim()) {
+        throw new BadRequestException(
+          'A correction reason is required to publish a new revision',
+        );
+      }
+      const school = await manager.query(
+        'SELECT id, name, address, logo_url, primary_color FROM schools ORDER BY created_at LIMIT 1',
+      );
+      if (school.length !== 1) {
+        throw new BadRequestException(
+          'School identity is unavailable for publication',
+        );
+      }
+      const policy = result.grading_policy_version_id
+        ? await manager.query(
+            'SELECT policy_key, version, definition FROM grading_policy_versions WHERE id = $1',
+            [result.grading_policy_version_id],
+          )
+        : [];
+      if (result.grading_policy_version_id && policy.length !== 1) {
+        throw new BadRequestException(
+          'Result grading policy version is unavailable',
+        );
+      }
+      const snapshot = {
+        result: this.transformToResponseDto(result),
+        school: school[0],
+        gradingPolicy: policy[0] ?? {
+          policy_key: 'schoolbase-classic',
+          version: 1,
+          definition: LEGACY_GRADING_POLICY,
+        },
+      };
+      const inserted = await manager.query(
+        `INSERT INTO result_publications
+          (result_id, revision, snapshot, grading_policy_version_id, template_id, template_version, published_by, correction_reason)
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8)
+         RETURNING id, result_id, revision, snapshot, template_id, template_version,
+                   grading_policy_version_id, published_by, published_at, correction_reason`,
+        [
+          resultId,
+          revision,
+          JSON.stringify(snapshot),
+          result.grading_policy_version_id,
+          'schoolbase-current-default',
+          1,
+          actorId,
+          correctionReason?.trim() ?? null,
+        ],
+      );
+      return inserted[0];
+    });
   }
 
   /**
@@ -165,8 +276,28 @@ export class ResultService {
       paginationPayload: { page, limit },
     });
 
-    const transformedResults = results.payload.map((result) =>
-      this.transformToResponseDto(result),
+    const resultIds = results.payload.map((result) => result.id);
+    const publications = resultIds.length
+      ? await this.dataSource.query(
+          `SELECT DISTINCT ON (result_id) result_id, snapshot
+           FROM result_publications
+           WHERE result_id = ANY($1::uuid[])
+           ORDER BY result_id, revision DESC`,
+          [resultIds],
+        )
+      : [];
+    const publishedByResultId = new Map<string, ResultResponseDto>(
+      publications.map(
+        (publication: {
+          result_id: string;
+          snapshot: { result: ResultResponseDto };
+        }) => [publication.result_id, publication.snapshot.result],
+      ),
+    );
+    const transformedResults = results.payload.map(
+      (result) =>
+        publishedByResultId.get(result.id) ??
+        this.transformToResponseDto(result),
     );
 
     return {
@@ -209,6 +340,11 @@ export class ResultService {
 
     // Use class's session if not provided
     const sessionId = academicSessionId || classEntity.academicSession.id;
+    if (sessionId !== classEntity.academicSession.id) {
+      throw new BadRequestException(
+        'Class does not belong to academic session',
+      );
+    }
 
     // Validate term and session
     const term = await this.termModelAction.get({
@@ -231,6 +367,11 @@ export class ResultService {
     if (!session) {
       throw new NotFoundException(sysMsg.ACADEMIC_SESSION_NOT_FOUND);
     }
+
+    const gradingPolicy = await this.gradingPolicyService.resolve(
+      termId,
+      classId,
+    );
 
     // Get all active students in the class for this session
     const studentAssignments = await this.classStudentModelAction.list({
@@ -344,8 +485,13 @@ export class ResultService {
         result.academic_session_id = sessionId;
         result.total_score = resultData.total_score;
         result.average_score = resultData.average_score;
-        result.grade_letter = calculateGradeLetter(resultData.average_score);
-        result.remark = getOverallRemark(resultData.average_score);
+        const overallBand = evaluateGradingPolicy(
+          resultData.average_score,
+          gradingPolicy.definition,
+        );
+        result.grade_letter = overallBand?.grade ?? null;
+        result.remark = overallBand?.remark ?? 'No grades available';
+        result.grading_policy_version_id = gradingPolicy.id;
         result.position = resultData.position;
         result.subject_count = resultData.subject_count;
         result.generated_at = new Date();
@@ -368,8 +514,13 @@ export class ResultService {
           line.ca_score = toNullableNumber(grade.ca_score);
           line.exam_score = toNullableNumber(grade.exam_score);
           line.total_score = toNullableNumber(grade.total_score);
-          line.grade_letter = grade.grade_letter;
-          line.remark = grade.comment || getOverallRemark(grade.total_score);
+          const subjectBand = evaluateGradingPolicy(
+            grade.total_score,
+            gradingPolicy.definition,
+          );
+          line.grade_letter = subjectBand?.grade ?? null;
+          line.remark =
+            grade.comment || subjectBand?.remark || 'No grades available';
           return line;
         });
 
