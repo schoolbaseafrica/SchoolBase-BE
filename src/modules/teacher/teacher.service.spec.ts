@@ -184,6 +184,71 @@ describe('TeacherService', () => {
     jest.clearAllMocks();
   });
 
+  describe('linkAdmin', () => {
+    const dto = {
+      admin_user_id: '4f39dd2b-8791-4b46-9231-0b231f1030d4',
+      title: TeacherTitle.MR,
+    };
+
+    it('reuses the admin account and adds a teacher profile', async () => {
+      const admin = {
+        ...mockUser,
+        id: dto.admin_user_id,
+        role: [UserRole.ADMIN],
+      } as User;
+      const userRepo = {
+        findOne: jest.fn().mockResolvedValue(admin),
+        save: jest.fn().mockResolvedValue(admin),
+      };
+      const teacherRepo = {
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest.fn((value) => value),
+        save: jest.fn().mockImplementation(async (value) => ({
+          ...value,
+          id: mockTeacherId,
+        })),
+      };
+      (queryRunner.manager.getRepository as jest.Mock).mockImplementation(
+        (entity) => (entity === User ? userRepo : teacherRepo),
+      );
+      (generateEmploymentId as jest.Mock).mockResolvedValue('EMP-2026-001');
+
+      const result = await service.linkAdmin(dto, admin.id);
+
+      expect(result.id).toBe(mockTeacherId);
+      expect(teacherRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ user_id: admin.id }),
+      );
+      expect(userRepo.save).toHaveBeenCalledWith(
+        expect.objectContaining({ role: [UserRole.ADMIN, UserRole.TEACHER] }),
+      );
+      expect(userModelAction.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a second teacher profile for the same admin', async () => {
+      const admin = {
+        ...mockUser,
+        id: dto.admin_user_id,
+        role: [UserRole.ADMIN],
+      } as User;
+      const userRepo = {
+        findOne: jest.fn().mockResolvedValue(admin),
+        save: jest.fn(),
+      };
+      const teacherRepo = {
+        findOne: jest.fn().mockResolvedValue(mockTeacher),
+        save: jest.fn(),
+      };
+      (queryRunner.manager.getRepository as jest.Mock).mockImplementation(
+        (entity) => (entity === User ? userRepo : teacherRepo),
+      );
+      await expect(service.linkAdmin(dto, admin.id)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(userRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('generatePassword', () => {
     it('should generate a password with strength indicator', () => {
       const result = service.generatePassword();

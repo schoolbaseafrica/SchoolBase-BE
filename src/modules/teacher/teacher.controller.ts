@@ -34,6 +34,7 @@ import {
   UpdateTeacherDto,
   TeacherResponseDto,
   GetTeachersQueryDto,
+  LinkAdminTeacherDto,
 } from './dto';
 import { GeneratePasswordResponseDto } from './dto/generate-password-response.dto';
 import { TeacherService } from './teacher.service';
@@ -44,6 +45,20 @@ import { TeacherService } from './teacher.service';
 @ApiBearerAuth()
 export class TeacherController {
   constructor(private readonly teacherService: TeacherService) {}
+
+  @Post('link-admin')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Give an existing admin a teacher profile and role',
+  })
+  @ApiBody({ type: LinkAdminTeacherDto })
+  async linkAdmin(
+    @Body() dto: LinkAdminTeacherDto,
+    @CurrentUser() actor: { id: string },
+  ): Promise<TeacherResponseDto> {
+    return this.teacherService.linkAdmin(dto, actor.id);
+  }
 
   // --- GET: GENERATE PASSWORD (PUBLIC ENDPOINT WITH RATE LIMITING) ---
   @Get('generate-password')

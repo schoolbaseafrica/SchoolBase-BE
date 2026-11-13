@@ -29,6 +29,7 @@ import { UserModelAction } from '../user/model-actions/user-actions';
 import {
   CreateTeacherDto,
   GetTeachersQueryDto,
+  LinkAdminTeacherDto,
   TeacherResponseDto,
   UpdateTeacherDto,
 } from './dto';
@@ -79,6 +80,94 @@ export class TeacherService {
   }
 
   // --- CREATE ---
+  async linkAdmin(
+    dto: LinkAdminTeacherDto,
+    actorUserId: string,
+  ): Promise<TeacherResponseDto> {
+    const school = await this.dataSource.getRepository(School).findOne({
+      where: { installation_completed: true },
+    });
+    const manualId = dto.employment_id?.trim();
+    if (manualId && !school?.allow_manual_teacher_ids) {
+      throw new BadRequestException(
+        'Manual teacher IDs are disabled in school settings',
+      );
+    }
+
+    const response = await this.dataSource.transaction(async (manager) => {
+      const users = manager.getRepository(User);
+      const teachers = manager.getRepository(Teacher);
+      const admin = await users.findOne({
+        where: { id: dto.admin_user_id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (
+        !admin ||
+        admin.deleted_at ||
+        !admin.is_active ||
+        !admin.role.includes(UserRole.ADMIN)
+      ) {
+        throw new NotFoundException('Active admin account not found');
+      }
+      if (await teachers.findOne({ where: { user_id: admin.id } })) {
+        throw new ConflictException('This admin already has a teacher profile');
+      }
+      await manager.query(
+        `SELECT pg_advisory_xact_lock(hashtext('schoolbase:teacher-id'))`,
+      );
+      let employmentId = manualId;
+      if (!employmentId) {
+        employmentId = await generateEmploymentId(
+          teachers,
+          school?.teacher_id_format,
+          school?.teacher_id_prefix ?? 'EMP',
+          school?.school_code ?? '',
+        );
+      } else {
+        const matches = (await manager.query(
+          `SELECT 1 FROM "teachers" WHERE "employment_id" = $1 LIMIT 1`,
+          [employmentId],
+        )) as unknown[];
+        if (matches.length)
+          throw new ConflictException(
+            `Employment ID ${employmentId} already exists.`,
+          );
+      }
+      const teacher = await teachers.save(
+        teachers.create({
+          user_id: admin.id,
+          employment_id: employmentId,
+          title: dto.title,
+          is_active: true,
+        }),
+      );
+      admin.role = [...new Set([...admin.role, UserRole.TEACHER])];
+      await users.save(admin);
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: 'TEACHER',
+        entityId: teacher.id,
+        action: 'CREATE',
+        description: 'Existing admin linked to teacher profile',
+        newValues: { admin_user_id: admin.id, employment_id: employmentId },
+      });
+      return {
+        ...teacher,
+        first_name: admin.first_name,
+        last_name: admin.last_name,
+        middle_name: admin.middle_name,
+        email: admin.email,
+        phone: admin.phone,
+        gender: admin.gender,
+        date_of_birth: admin.dob,
+        home_address: admin.homeAddress,
+      };
+    });
+    return plainToInstance(TeacherResponseDto, response, {
+      excludeExtraneousValues: true,
+    });
+  }
+
   async create(
     createDto: CreateTeacherDto,
     actorUserId?: string,
