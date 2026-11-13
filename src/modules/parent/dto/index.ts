@@ -7,3 +7,4 @@ export * from './link-students.dto';
 export * from './parent-student-link-response.dto';
 export * from './student-basic.dto';
 export * from './student-profile.dto';
+export * from './link-staff-parent.dto';

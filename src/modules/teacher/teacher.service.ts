@@ -469,11 +469,11 @@ export class TeacherService {
     }
 
     if (
-      teacher.user?.role?.includes(UserRole.ADMIN) &&
+      teacher.user?.role?.some((role) => role !== UserRole.TEACHER) &&
       updateDto.is_active !== undefined
     )
       throw new ForbiddenException(
-        'Admin access is managed by the school owner',
+        'This shared account cannot be deactivated from the teacher profile',
       );
 
     // IMMUTABILITY CHECK: Employment ID cannot be updated
@@ -596,9 +596,9 @@ export class TeacherService {
       throw new NotFoundException(`Teacher with ID ${id} not found`);
     }
 
-    if (teacher.user?.role?.includes(UserRole.ADMIN))
+    if (teacher.user?.role?.some((role) => role !== UserRole.TEACHER))
       throw new ForbiddenException(
-        'Admin access is managed by the school owner',
+        'This shared account cannot be removed from the teacher profile',
       );
 
     return this.dataSource.transaction(async (manager) => {

@@ -615,6 +615,16 @@ describe('TeacherService', () => {
   });
 
   describe('update', () => {
+    it('cannot deactivate a parent account through its teacher profile', async () => {
+      teacherModelAction.get.mockResolvedValue({
+        ...mockTeacher,
+        user: { ...mockUser, role: [UserRole.TEACHER, UserRole.PARENT] },
+      } as Teacher);
+      await expect(
+        service.update(mockTeacherId, { is_active: false }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     it('cannot change account access for an admin who is also a teacher', async () => {
       teacherModelAction.get.mockResolvedValue({
         ...mockTeacher,
@@ -699,6 +709,16 @@ describe('TeacherService', () => {
   });
 
   describe('remove', () => {
+    it('cannot remove a teacher profile by deactivating a shared parent account', async () => {
+      teacherModelAction.get.mockResolvedValue({
+        ...mockTeacher,
+        user: { ...mockUser, role: [UserRole.TEACHER, UserRole.PARENT] },
+      } as Teacher);
+      await expect(service.remove(mockTeacherId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
       teacherModelAction.get.mockResolvedValue(mockTeacher as Teacher);
       teacherModelAction.update.mockResolvedValue(mockTeacher as Teacher);

@@ -69,6 +69,84 @@ export class ParentService {
     this.logger = baseLogger.child({ context: ParentService.name });
   }
 
+  async eligibleStaff(search: string) {
+    const term = search.trim();
+    if (term.length < 2) return [];
+    return this.dataSource.query(
+      `SELECT u."id", u."first_name", u."last_name", u."email", u."role"
+       FROM "users" u
+       WHERE u."is_active" = true AND u."deleted_at" IS NULL
+         AND ('ADMIN' = ANY(u."role") OR 'TEACHER' = ANY(u."role"))
+         AND NOT EXISTS (SELECT 1 FROM "parents" p WHERE p."user_id" = u."id")
+         AND (u."first_name" ILIKE $1 OR u."last_name" ILIKE $1 OR u."email" ILIKE $1)
+       ORDER BY u."last_name", u."first_name", u."id"
+       LIMIT 25`,
+      [`%${term}%`],
+    );
+  }
+
+  async linkStaff(
+    userId: string,
+    actorUserId: string,
+  ): Promise<ParentResponseDto> {
+    const response = await this.dataSource.transaction(async (manager) => {
+      const users = manager.getRepository(User);
+      const parents = manager.getRepository(Parent);
+      const user = await users.findOne({
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (
+        !user ||
+        user.deleted_at ||
+        !user.is_active ||
+        (!user.role.includes(UserRole.ADMIN) &&
+          !user.role.includes(UserRole.TEACHER))
+      ) {
+        throw new NotFoundException(
+          'Active admin or teacher account not found',
+        );
+      }
+      if (await parents.findOne({ where: { user_id: user.id } })) {
+        throw new ConflictException(
+          'This account already has a parent profile',
+        );
+      }
+      const parent = await parents.save(
+        parents.create({
+          user_id: user.id,
+          is_active: true,
+        }),
+      );
+      user.role = [...new Set([...user.role, UserRole.PARENT])];
+      await users.save(user);
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: 'PARENT',
+        entityId: parent.id,
+        action: 'CREATE',
+        description: 'Existing staff account linked to parent profile',
+        newValues: { user_id: user.id },
+      });
+      return {
+        ...parent,
+        first_name: user.first_name,
+        last_name: user.last_name,
+        middle_name: user.middle_name,
+        email: user.email,
+        phone: user.phone,
+        gender: user.gender,
+        date_of_birth: user.dob,
+        home_address: user.homeAddress,
+        created_at: parent.createdAt,
+        updated_at: parent.updatedAt,
+      };
+    });
+    return plainToInstance(ParentResponseDto, response, {
+      excludeExtraneousValues: true,
+    });
+  }
+
   async bulkCreate(rows: Record<string, string>[], actorUserId?: string) {
     const results: Array<{
       email: string;
@@ -294,11 +372,11 @@ export class ParentService {
     }
 
     if (
-      parent.user?.role?.includes(UserRole.ADMIN) &&
+      parent.user?.role?.some((role) => role !== UserRole.PARENT) &&
       updateDto.is_active !== undefined
     )
       throw new ForbiddenException(
-        'Admin access is managed by the school owner',
+        'This shared account cannot be deactivated from the parent profile',
       );
 
     // Check for email conflict if email is being updated
@@ -424,9 +502,9 @@ export class ParentService {
       throw new NotFoundException(sysMsg.PARENT_NOT_FOUND);
     }
 
-    if (parent.user?.role?.includes(UserRole.ADMIN))
+    if (parent.user?.role?.some((role) => role !== UserRole.PARENT))
       throw new ForbiddenException(
-        'Admin access is managed by the school owner',
+        'This shared account cannot be removed from the parent profile',
       );
 
     return this.dataSource.transaction(async (manager) => {

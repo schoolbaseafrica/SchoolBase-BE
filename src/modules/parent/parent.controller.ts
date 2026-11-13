@@ -51,6 +51,7 @@ import {
   ParentStudentLinkResponseDto,
   StudentBasicDto,
   StudentProfileDto,
+  LinkStaffParentDto,
 } from './dto';
 import { ParentService, IUserPayload } from './parent.service';
 
@@ -60,6 +61,28 @@ import { ParentService, IUserPayload } from './parent.service';
 @ApiParentBearerAuth()
 export class ParentController {
   constructor(private readonly parentService: ParentService) {}
+
+  @Get('eligible-staff')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Search active admins and teachers without a parent profile',
+  })
+  async eligibleStaff(@Query('search') search = '') {
+    return this.parentService.eligibleStaff(search);
+  }
+
+  @Post('link-staff')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Add a parent profile to an existing admin or teacher account',
+  })
+  async linkStaff(
+    @Body() dto: LinkStaffParentDto,
+    @CurrentUser() actor: { id: string },
+  ): Promise<ParentResponseDto> {
+    return this.parentService.linkStaff(dto.user_id, actor.id);
+  }
 
   @Post('bulk-upload')
   @Roles(UserRole.ADMIN)

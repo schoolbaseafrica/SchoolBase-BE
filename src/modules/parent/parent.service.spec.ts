@@ -257,6 +257,82 @@ describe('ParentService', () => {
     jest.clearAllMocks();
   });
 
+  describe('linkStaff', () => {
+    const adminId = '4f39dd2b-8791-4b46-9231-0b231f1030d4';
+
+    it.each([UserRole.ADMIN, UserRole.TEACHER])(
+      'adds a parent profile to an existing %s account',
+      async (role) => {
+        const person = { ...mockUser, id: adminId, role: [role] } as User;
+        const users = {
+          findOne: jest.fn().mockResolvedValue(person),
+          save: jest.fn().mockResolvedValue(person),
+        };
+        const parents = {
+          findOne: jest.fn().mockResolvedValue(null),
+          create: jest.fn((payload) => payload),
+          save: jest.fn().mockImplementation(async (payload) => ({
+            ...payload,
+            id: mockParentId,
+          })),
+        };
+        (queryRunner.manager.getRepository as jest.Mock) = jest.fn((entity) =>
+          entity === User ? users : parents,
+        );
+
+        const result = await service.linkStaff(adminId, adminId);
+
+        expect(result.id).toBe(mockParentId);
+        expect(users.save).toHaveBeenCalledWith(
+          expect.objectContaining({ role: [role, UserRole.PARENT] }),
+        );
+        expect(parents.save).toHaveBeenCalledWith(
+          expect.objectContaining({ user_id: adminId, is_active: true }),
+        );
+        expect(userModelAction.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects a second parent profile', async () => {
+      const users = {
+        findOne: jest.fn().mockResolvedValue({
+          ...mockUser,
+          id: adminId,
+          role: [UserRole.ADMIN],
+        }),
+        save: jest.fn(),
+      };
+      const parents = {
+        findOne: jest.fn().mockResolvedValue(mockParent),
+        save: jest.fn(),
+      };
+      (queryRunner.manager.getRepository as jest.Mock) = jest.fn((entity) =>
+        entity === User ? users : parents,
+      );
+
+      await expect(service.linkStaff(adminId, adminId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(users.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects an account without an active staff role', async () => {
+      const users = {
+        findOne: jest.fn().mockResolvedValue({
+          ...mockUser,
+          id: adminId,
+          role: [UserRole.STUDENT],
+        }),
+        save: jest.fn(),
+      };
+      (queryRunner.manager.getRepository as jest.Mock) = jest.fn(() => users);
+      await expect(service.linkStaff(adminId, adminId)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(users.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('bulkCreate', () => {
     it('creates valid rows and reports invalid rows without creating them', async () => {
       const create = jest
@@ -640,6 +716,16 @@ describe('ParentService', () => {
   });
 
   describe('update', () => {
+    it('cannot deactivate a teacher account through its parent profile', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.TEACHER, UserRole.PARENT] },
+      } as Parent);
+      await expect(
+        service.update(mockParentId, { is_active: false }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     it('cannot change account access for an admin who is also a parent', async () => {
       parentModelAction.get.mockResolvedValue({
         ...mockParent,
@@ -939,6 +1025,16 @@ describe('ParentService', () => {
   });
 
   describe('remove', () => {
+    it('cannot remove a parent profile by deactivating a shared teacher account', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.TEACHER, UserRole.PARENT] },
+      } as Parent);
+      await expect(service.remove(mockParentId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     it('cannot remove an admin who is also a parent', async () => {
       parentModelAction.get.mockResolvedValue({
         ...mockParent,
