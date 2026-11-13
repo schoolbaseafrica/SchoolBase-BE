@@ -22,6 +22,7 @@ import { TermService } from '../../academic-term/term.service';
 import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { ClassModelAction } from '../../class/model-actions/class.actions';
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
 import { GradeSubmissionStatus } from '../../grade/entities';
 import { GradeModelAction } from '../../grade/model-actions';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
@@ -69,6 +70,7 @@ export class ResultService {
     private readonly resultNotificationService: ResultNotificationService,
     private readonly classSubjectModelAction: ClassSubjectModelAction,
     private readonly gradingPolicyService: GradingPolicyService,
+    private readonly subjectEnrollmentService: StudentSubjectEnrollmentService,
   ) {
     this.logger = baseLogger.child({ context: ResultService.name });
   }
@@ -448,14 +450,6 @@ export class ResultService {
     // Calculate positions
     const resultsWithPositions = this.calculatePositions(studentResults);
 
-    // 1. GET TOTAL EXPECTED SUBJECTS FOR THE CLASS
-    // We need this to compare against the student's processed results
-    const classSubjectsList = await this.classSubjectModelAction.list({
-      filterRecordOptions: { class: { id: classId } },
-      paginationPayload: { limit: 1000, page: 1 },
-    });
-    const totalClassSubjects = classSubjectsList.payload.length;
-
     // this holds data needed for notifications
     const studentsToNotify: { result_id: string; student_id: string }[] = [];
     // Save all results in a transaction
@@ -526,8 +520,16 @@ export class ResultService {
 
         await queryRunner.manager.save(ResultSubjectLine, subjectLines);
 
-        // check if the student has a grade for every subject in the class
-        if (resultData.subject_count >= totalClassSubjects) {
+        const expectedSubjects =
+          await this.subjectEnrollmentService.expectedSubjectCount(
+            resultData.student_id,
+            classId,
+            termId,
+          );
+        if (
+          expectedSubjects > 0 &&
+          resultData.subject_count === expectedSubjects
+        ) {
           studentsToNotify.push({
             result_id: savedResult.id,
             student_id: resultData.student_id,

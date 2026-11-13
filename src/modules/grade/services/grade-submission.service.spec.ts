@@ -12,6 +12,7 @@ import { GradingPolicyService } from 'src/modules/result/policy/grading-policy.s
 import { ResultService } from 'src/modules/result/services';
 
 import { ClassStudent } from '../../class/entities/class-student.entity';
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
 import { StudentModelAction } from '../../student/model-actions';
 import { CreateGradeSubmissionDto } from '../dto';
 import { Grade, GradeSubmission, GradeSubmissionStatus } from '../entities';
@@ -47,6 +48,10 @@ describe('GradeService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         GradeSubmissionService,
+        {
+          provide: StudentSubjectEnrollmentService,
+          useValue: { isStudentEligible: jest.fn().mockResolvedValue(true) },
+        },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: mockLogger,
@@ -234,6 +239,7 @@ describe('GradeService', () => {
         {} as never,
         {} as never,
         dataSource as never,
+        { isStudentEligible: jest.fn().mockResolvedValue(true) } as never,
         {} as never,
         {
           resolve: jest

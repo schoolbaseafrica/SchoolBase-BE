@@ -7,6 +7,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
 
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
+import { LEGACY_GRADING_POLICY } from '../../result/policy/grading-policy';
+import { GradingPolicyService } from '../../result/policy/grading-policy.service';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions';
 import { GradeSubmissionStatus } from '../entities/grade-submission.entity';
@@ -42,6 +45,19 @@ describe('GradeService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         GradeService,
+        {
+          provide: GradingPolicyService,
+          useValue: {
+            resolve: jest.fn().mockResolvedValue({
+              id: null,
+              definition: LEGACY_GRADING_POLICY,
+            }),
+          },
+        },
+        {
+          provide: StudentSubjectEnrollmentService,
+          useValue: { isStudentEligible: jest.fn().mockResolvedValue(true) },
+        },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: mockLogger,

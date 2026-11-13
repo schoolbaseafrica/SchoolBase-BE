@@ -51,6 +51,7 @@ import {
 } from '../types/base-response.interface';
 
 import { ClassStudentValidationService } from './class-student-validation.service';
+import { StudentSubjectEnrollmentService } from './student-subject-enrollment.service';
 
 @Injectable()
 export class ClassService {
@@ -64,6 +65,7 @@ export class ClassService {
     private readonly academicSessionModelAction: AcademicSessionModelAction,
     private readonly teacherModelAction: TeacherModelAction,
     private readonly dataSource: DataSource,
+    private readonly subjectEnrollmentService: StudentSubjectEnrollmentService,
     private readonly classStudentValidationService: ClassStudentValidationService,
     private readonly notificationService: NotificationService,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
@@ -947,6 +949,8 @@ export class ClassService {
   async getStudentsByClass(
     classId: string,
     sessionId?: string,
+    subjectId?: string,
+    termId?: string,
   ): Promise<StudentAssignmentResponseDto[]> {
     // 1. Validate class exists and get its academic session
     const classExist = await this.classModelAction.get({
@@ -960,25 +964,50 @@ export class ClassService {
     // 2. Use the class's academic session (or provided sessionId for filtering)
     const target_session_id = sessionId || classExist.academicSession.id;
 
+    if (subjectId && !termId)
+      throw new BadRequestException('Term is required for a subject roster');
+    if (sessionId && sessionId !== classExist.academicSession.id)
+      throw new BadRequestException(
+        'Class does not belong to the selected session',
+      );
+
+    const eligibleIds =
+      subjectId && termId
+        ? new Set(
+            await this.subjectEnrollmentService.getEligibleStudentIds(
+              classId,
+              subjectId,
+              termId,
+            ),
+          )
+        : null;
+
     // 3. Fetch Assignments with Relations
-    const assignments = await this.classStudentModelAction.list({
-      filterRecordOptions: {
-        class: { id: classId },
-        session_id: target_session_id,
-        is_active: true,
-      },
-      relations: {
-        student: { user: true },
-      },
-    });
+    const roster = [];
+    let page = 1;
+    while (true) {
+      const batch = await this.classStudentModelAction.list({
+        filterRecordOptions: {
+          class: { id: classId },
+          session_id: target_session_id,
+          is_active: true,
+        },
+        relations: { student: { user: true } },
+        paginationPayload: { page, limit: 200 },
+      });
+      roster.push(...batch.payload);
+      if (batch.payload.length < 200) break;
+      page++;
+    }
 
     // 4. Map to DTO
-    return assignments.payload
+    return roster
       .filter(
         (assignment) =>
           assignment.student &&
           !assignment.student.is_deleted &&
-          assignment.student.user?.is_active,
+          assignment.student.user?.is_active &&
+          (!eligibleIds || eligibleIds.has(assignment.student.id)),
       )
       .map((assignment) => {
         const student = assignment.student;

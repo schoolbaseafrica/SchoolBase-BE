@@ -29,6 +29,8 @@ import { ClassModelAction } from '../model-actions/class.actions';
 import { ClassStudentValidationService } from '../services/class-student-validation.service';
 import { ClassService } from '../services/class.service';
 
+import { StudentSubjectEnrollmentService } from './student-subject-enrollment.service';
+
 // Mock Data Constants
 const MOCK_CLASS_ID = '1';
 const MOCK_SESSION_ID = '2023-2024';
@@ -148,6 +150,10 @@ describe('ClassService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ClassService,
+        {
+          provide: StudentSubjectEnrollmentService,
+          useValue: { getEligibleStudentIds: jest.fn().mockResolvedValue([]) },
+        },
         {
           provide: ClassModelAction,
           useValue: mockClassModelActionMethods,

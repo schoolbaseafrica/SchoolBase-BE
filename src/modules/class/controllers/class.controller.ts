@@ -265,7 +265,12 @@ export class ClassController {
         req.user.teacher_id,
       );
     }
-    return this.classService.getStudentsByClass(classId, query.session_id);
+    return this.classService.getStudentsByClass(
+      classId,
+      query.session_id,
+      query.subject_id,
+      query.term_id,
+    );
   }
 
   // --- GET: GET TEACHERS IN CLASS ---

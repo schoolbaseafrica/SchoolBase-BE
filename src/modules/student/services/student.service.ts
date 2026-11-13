@@ -801,6 +801,22 @@ export class StudentService {
       throw new ForbiddenException(sysMsg.FORBIDDEN);
     }
 
+    const classSubjects = student.stream?.class?.classSubjects;
+    if (classSubjects?.some((subject) => subject.is_elective)) {
+      const selected: Array<{ class_subject_id: string }> =
+        await this.dataSource.query(
+          `SELECT e.class_subject_id FROM student_subject_enrollments e
+         JOIN terms t ON t.id = e.term_id
+         WHERE e.student_id = $1 AND t.session_id = $2 AND t.is_current = true
+           AND t.deleted_at IS NULL`,
+          [studentId, student.stream.class.academicSession.id],
+        );
+      const selectedIds = new Set(selected.map((row) => row.class_subject_id));
+      student.stream.class.classSubjects = classSubjects.filter(
+        (subject) => !subject.is_elective || selectedIds.has(subject.id),
+      );
+    }
+
     this.logger.info(`Fetched student profile for student ID: ${studentId}`);
 
     return new StudentProfileResponseDto(

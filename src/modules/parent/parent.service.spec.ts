@@ -147,6 +147,7 @@ describe('ParentService', () => {
 
     // Mock DataSource
     dataSource = {
+      query: jest.fn().mockResolvedValue([]),
       createQueryRunner: jest.fn().mockReturnValue(queryRunner),
       transaction: jest.fn().mockImplementation(async (callback) => {
         // Simulate transaction by calling callback with queryRunner.manager

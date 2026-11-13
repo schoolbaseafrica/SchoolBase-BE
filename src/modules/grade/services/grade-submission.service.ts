@@ -22,6 +22,7 @@ import { ResultService } from 'src/modules/result/services';
 import * as sysMsg from '../../../constants/system.messages';
 import { ClassSubject } from '../../class/entities';
 import { ClassStudent } from '../../class/entities/class-student.entity';
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
 import { StudentModelAction } from '../../student/model-actions';
 import {
   CreateGradeSubmissionDto,
@@ -47,6 +48,7 @@ export class GradeSubmissionService {
     private readonly gradeModelAction: GradeModelAction,
     private readonly studentModelAction: StudentModelAction,
     private readonly dataSource: DataSource,
+    private readonly subjectEnrollmentService: StudentSubjectEnrollmentService,
     @Inject(forwardRef(() => ResultService))
     private readonly resultService: ResultService,
     private readonly gradingPolicyService: GradingPolicyService,
@@ -122,6 +124,26 @@ export class GradeSubmissionService {
 
     if (existingSubmission) {
       throw new BadRequestException(sysMsg.GRADE_SUBMISSION_EXISTS);
+    }
+
+    if (
+      new Set(createDto.grades.map((grade) => grade.student_id)).size !==
+      createDto.grades.length
+    )
+      throw new BadRequestException('Each student can appear only once');
+    for (const entry of createDto.grades) {
+      if (
+        !(await this.subjectEnrollmentService.isStudentEligible(
+          createDto.class_id,
+          createDto.subject_id,
+          createDto.term_id,
+          entry.student_id,
+        ))
+      ) {
+        throw new BadRequestException(
+          'A student is not enrolled in this subject for the selected term',
+        );
+      }
     }
 
     return this.dataSource.transaction(async (manager) => {
@@ -277,6 +299,18 @@ export class GradeSubmissionService {
         if (!enrolled) {
           throw new BadRequestException(
             'Student is not enrolled in this class',
+          );
+        }
+        if (
+          !(await this.subjectEnrollmentService.isStudentEligible(
+            submission.class_id,
+            submission.subject_id,
+            submission.term_id,
+            entry.student_id,
+          ))
+        ) {
+          throw new BadRequestException(
+            'A student is not enrolled in this subject for the selected term',
           );
         }
         const grade =

@@ -19,6 +19,7 @@ import {
 import { ClassStudentValidationService } from './services/class-student-validation.service';
 import { ClassSubjectService } from './services/class-subject.service';
 import { ClassService } from './services/class.service';
+import { StudentSubjectEnrollmentService } from './services/student-subject-enrollment.service';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { ClassService } from './services/class.service';
     ClassStudentModelAction,
     ClassSubjectModelAction,
     ClassSubjectService,
+    StudentSubjectEnrollmentService,
   ],
   exports: [
     ClassService,
@@ -45,6 +47,7 @@ import { ClassService } from './services/class.service';
     ClassTeacherModelAction,
     ClassStudentModelAction,
     ClassSubjectModelAction,
+    StudentSubjectEnrollmentService,
   ],
 })
 export class ClassModule {}

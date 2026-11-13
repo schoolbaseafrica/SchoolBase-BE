@@ -18,6 +18,7 @@ import { TermModelAction } from '../../academic-term/model-actions';
 import { Class } from '../../class/entities/class.entity';
 import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { ClassModelAction } from '../../class/model-actions/class.actions';
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
 import { GradeModelAction } from '../../grade/model-actions';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
 import { Result } from '../entities';
@@ -193,6 +194,10 @@ describe('ResultService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ResultService,
+        {
+          provide: StudentSubjectEnrollmentService,
+          useValue: { expectedSubjectCount: jest.fn().mockResolvedValue(1) },
+        },
         {
           provide: GradingPolicyService,
           useValue: {

@@ -11,6 +11,7 @@ import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
 import { ClassSubject } from '../../class/entities/class-subject.entity';
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
 import {
   evaluateGradingPolicy,
   IGradingPolicyDefinition,
@@ -31,6 +32,7 @@ export class GradeService {
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
     private readonly gradeModelAction: GradeModelAction,
     private readonly dataSource: DataSource,
+    private readonly subjectEnrollmentService: StudentSubjectEnrollmentService,
     private readonly studentModelAction: StudentModelAction,
     private readonly gradingPolicyService: GradingPolicyService,
   ) {
@@ -83,6 +85,19 @@ export class GradeService {
       });
     if (!currentAssignment) {
       throw new ForbiddenException(sysMsg.GRADE_TEACHER_NOT_ASSIGNED);
+    }
+
+    if (
+      !(await this.subjectEnrollmentService.isStudentEligible(
+        grade.submission.class_id,
+        grade.submission.subject_id,
+        grade.submission.term_id,
+        grade.student_id,
+      ))
+    ) {
+      throw new ForbiddenException(
+        'Student is not enrolled in this subject for the selected term',
+      );
     }
 
     // Check if submission is editable

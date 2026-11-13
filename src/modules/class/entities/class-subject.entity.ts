@@ -9,6 +9,9 @@ import { Class } from './class.entity';
 @Unique(['class', 'subject'])
 @Entity('class_subjects')
 export class ClassSubject extends BaseEntity {
+  @Column({ name: 'is_elective', type: 'boolean', default: false })
+  is_elective: boolean;
+
   @ManyToOne(() => Class, (cls) => cls.classSubjects, { nullable: false })
   @JoinColumn({ name: 'class_id' })
   class: Class;

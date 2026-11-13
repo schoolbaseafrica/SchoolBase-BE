@@ -522,20 +522,34 @@ export class ParentService {
       relations: ['subject', 'teacher', 'teacher.user'],
     });
 
-    return classSubjectsList.map((cs) => {
-      const teacherUser = cs.teacher?.user;
-      return plainToInstance(
-        StudentSubjectResponseDto,
-        {
-          subject_name: cs.subject.name,
-          teacher_name: teacherUser
-            ? `${teacherUser.first_name} ${teacherUser.last_name}`
-            : 'Not Assigned',
-          teacher_email: teacherUser ? teacherUser.email : 'N/A',
-        },
-        { excludeExtraneousValues: true },
+    const selectedElectives: Array<{ class_subject_id: string }> =
+      await this.dataSource.query(
+        `SELECT e.class_subject_id FROM student_subject_enrollments e
+       JOIN terms t ON t.id = e.term_id
+       WHERE e.student_id = $1 AND t.session_id = $2 AND t.is_current = true
+         AND t.deleted_at IS NULL`,
+        [studentId, classStudent.session_id],
       );
-    });
+    const selectedIds = new Set(
+      selectedElectives.map((row) => row.class_subject_id),
+    );
+
+    return classSubjectsList
+      .filter((cs) => !cs.is_elective || selectedIds.has(cs.id))
+      .map((cs) => {
+        const teacherUser = cs.teacher?.user;
+        return plainToInstance(
+          StudentSubjectResponseDto,
+          {
+            subject_name: cs.subject.name,
+            teacher_name: teacherUser
+              ? `${teacherUser.first_name} ${teacherUser.last_name}`
+              : 'Not Assigned',
+            teacher_email: teacherUser ? teacherUser.email : 'N/A',
+          },
+          { excludeExtraneousValues: true },
+        );
+      });
   }
 
   // --- HELPER METHOD TO TRANSFORM ENTITY TO DTO ---
@@ -855,6 +869,19 @@ export class ParentService {
       );
     }
     const assignedClass = enrollments[0]?.class;
+    const selectedProfileElectives: Array<{ class_subject_id: string }> =
+      assignedClass
+        ? await this.dataSource.query(
+            `SELECT e.class_subject_id FROM student_subject_enrollments e
+           JOIN terms t ON t.id = e.term_id
+           WHERE e.student_id = $1 AND t.session_id = $2 AND t.is_current = true
+             AND t.deleted_at IS NULL`,
+            [studentId, assignedClass.academicSession.id],
+          )
+        : [];
+    const selectedProfileIds = new Set(
+      selectedProfileElectives.map((row) => row.class_subject_id),
+    );
 
     return plainToInstance(
       StudentProfileDto,
@@ -867,16 +894,18 @@ export class ParentService {
         full_name: `${user.first_name}${user.middle_name ? ' ' + user.middle_name : ''} ${user.last_name}`,
         photo_url: student.photo_url,
         class_subjects:
-          assignedClass?.classSubjects?.map((cs) => ({
-            id: cs.id,
-            subject_id: cs.subject.id,
-            subject_name: cs.subject.name,
-            teacher_id: cs.teacher?.id || null,
-            teacher_name: cs.teacher?.user
-              ? `${cs.teacher.user.first_name} ${cs.teacher.user.last_name}`
-              : null,
-            teacher_assignment_date: cs.teacher_assignment_date || null,
-          })) || null,
+          assignedClass?.classSubjects
+            ?.filter((cs) => !cs.is_elective || selectedProfileIds.has(cs.id))
+            .map((cs) => ({
+              id: cs.id,
+              subject_id: cs.subject.id,
+              subject_name: cs.subject.name,
+              teacher_id: cs.teacher?.id || null,
+              teacher_name: cs.teacher?.user
+                ? `${cs.teacher.user.first_name} ${cs.teacher.user.last_name}`
+                : null,
+              teacher_assignment_date: cs.teacher_assignment_date || null,
+            })) || null,
         timetable: assignedClass?.timetable
           ? { id: assignedClass.timetable.id }
           : null,
