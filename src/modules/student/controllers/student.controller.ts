@@ -235,6 +235,25 @@ export class StudentController {
     };
   }
 
+  @Get(':id/subjects')
+  @Roles(UserRole.ADMIN)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  async getSubjectsForStudent(
+    @Param('id', ParseUUIDPipe) studentId: string,
+    @Query('session_id', ParseUUIDPipe) sessionId: string,
+    @Query('term_id', ParseUUIDPipe) termId: string,
+  ) {
+    return {
+      message: 'Student subjects retrieved successfully',
+      status_code: HttpStatus.OK,
+      data: await this.studentService.getSubjectsForStudent(
+        studentId,
+        sessionId,
+        termId,
+      ),
+    };
+  }
+
   // --- GET: GET SINGLE STUDENT BY ID ---
   @Get(':id')
   @GetStudentDocs()

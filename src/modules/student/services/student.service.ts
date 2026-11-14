@@ -872,4 +872,56 @@ export class StudentService {
         : null,
     };
   }
+
+  async getSubjectsForStudent(
+    studentId: string,
+    sessionId: string,
+    termId: string,
+  ) {
+    const student = await this.studentModelAction.get({
+      identifierOptions: { id: studentId },
+    });
+    if (!student || student.is_deleted) {
+      throw new NotFoundException(sysMsg.STUDENT_NOT_FOUND);
+    }
+
+    const terms: Array<{ id: string }> = await this.dataSource.query(
+      `SELECT id FROM terms WHERE id = $1 AND session_id = $2 AND deleted_at IS NULL`,
+      [termId, sessionId],
+    );
+    if (!terms.length) {
+      throw new BadRequestException(
+        'Term does not belong to the selected session',
+      );
+    }
+
+    const classes: Array<{ id: string; name: string }> =
+      await this.dataSource.query(
+        `SELECT c.id, c.name || CASE WHEN c.arm IS NULL OR c.arm = '' THEN '' ELSE ' ' || c.arm END AS name
+       FROM class_students cs JOIN class c ON c.id = cs.class_id
+       WHERE cs.student_id = $1 AND cs.session_id = $2 AND cs.is_active = true
+         AND c.academic_session_id = $2 AND c.is_deleted IS NOT TRUE
+       ORDER BY cs.created_at DESC LIMIT 1`,
+        [studentId, sessionId],
+      );
+    const assignedClass = classes[0] ?? null;
+    if (!assignedClass) return { class: null, subjects: [] };
+
+    const subjects: Array<{
+      id: string;
+      name: string;
+      is_elective: boolean;
+      is_enrolled: boolean;
+    }> = await this.dataSource.query(
+      `SELECT s.id, s.name, sub.is_elective,
+         (sub.is_elective = false OR EXISTS (
+           SELECT 1 FROM student_subject_enrollments e
+           WHERE e.class_subject_id = sub.id AND e.student_id = $2 AND e.term_id = $3
+         )) AS is_enrolled
+       FROM class_subjects sub JOIN subjects s ON s.id = sub.subject_id
+       WHERE sub.class_id = $1 ORDER BY lower(s.name), s.id`,
+      [assignedClass.id, studentId, termId],
+    );
+    return { class: assignedClass, subjects };
+  }
 }
