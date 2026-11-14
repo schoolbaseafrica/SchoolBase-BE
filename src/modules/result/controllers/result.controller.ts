@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -18,6 +19,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 import { StudentModelAction } from 'src/modules/student/model-actions';
 
@@ -48,6 +50,18 @@ interface IRequestWithUser extends Request {
   };
 }
 
+class PublishResultDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  correction_reason?: string;
+}
+
+class SelectReportTemplateDto {
+  @IsIn(['schoolbase-current-default', 'academic-atlas'])
+  template_id: string;
+}
+
 @ApiTags('Results')
 @ApiBearerAuth()
 @Controller('results')
@@ -57,6 +71,48 @@ export class ResultController {
     private readonly resultService: ResultService,
     private readonly studentModelAction: StudentModelAction,
   ) {}
+
+  @Get('report-template')
+  @Roles(UserRole.ADMIN)
+  getReportTemplate() {
+    return this.resultService.getReportTemplate();
+  }
+
+  @Put('report-template')
+  @Roles(UserRole.ADMIN)
+  selectReportTemplate(
+    @Body() dto: SelectReportTemplateDto,
+    @Req() req: IRequestWithUser,
+  ) {
+    return this.resultService.setReportTemplate(
+      dto.template_id,
+      req.user.userId,
+    );
+  }
+
+  @Post(':resultId/publish')
+  @Roles(UserRole.ADMIN)
+  publishResult(
+    @Param('resultId', ParseUUIDPipe) resultId: string,
+    @Body() dto: PublishResultDto,
+    @Req() req: IRequestWithUser,
+  ) {
+    return this.resultService.publishResult(
+      resultId,
+      req.user.userId,
+      dto.correction_reason,
+    );
+  }
+
+  @Get(':resultId/publication')
+  @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)
+  async getLatestPublication(
+    @Param('resultId', ParseUUIDPipe) resultId: string,
+    @Req() req: IRequestWithUser,
+  ) {
+    await this.getResultById(req, resultId);
+    return this.resultService.getLatestPublication(resultId);
+  }
 
   @Get()
   @DocsGetAllResults()
@@ -74,11 +130,15 @@ export class ResultController {
     description: 'Results generated successfully',
   })
   @Roles(UserRole.ADMIN, UserRole.TEACHER)
-  async generateResults(@Body() generateDto: GenerateResultDto) {
+  async generateResults(
+    @Body() generateDto: GenerateResultDto,
+    @Req() req: IRequestWithUser,
+  ) {
     return this.resultService.generateClassResults(
       generateDto.class_id,
       generateDto.term_id,
       generateDto.academic_session_id,
+      req.user.userId,
     );
   }
 
@@ -144,8 +204,23 @@ export class ResultController {
   })
   @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT, UserRole.PARENT)
   async getResultById(
+    @Req() req: IRequestWithUser,
     @Param('resultId', ParseUUIDPipe) resultId: string,
   ): Promise<ResultResponseDto> {
-    return this.resultService.getResultById(resultId);
+    const result = await this.resultService.getResultById(resultId);
+    if (req.user.roles.includes(UserRole.STUDENT)) {
+      if (req.user.student_id !== result.student.id) {
+        throw new ForbiddenException('Unauthorized access to student results');
+      }
+    } else if (req.user.roles.includes(UserRole.PARENT)) {
+      const student = await this.studentModelAction.get({
+        identifierOptions: { id: result.student.id },
+        relations: { parent: true },
+      });
+      if (!student?.parent || student.parent.id !== req.user.parent_id) {
+        throw new ForbiddenException('Unauthorized access to student results');
+      }
+    }
+    return result;
   }
 }

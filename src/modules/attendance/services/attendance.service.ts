@@ -16,8 +16,10 @@ import * as sysMsg from '../../../constants/system.messages';
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { TermName } from '../../academic-term/entities/term.entity';
 import { TermModelAction } from '../../academic-term/model-actions';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { ClassStudent } from '../../class/entities/class-student.entity';
 import { ClassTeacher } from '../../class/entities/class-teacher.entity';
+import { SchoolEmailAlertService } from '../../notification/services/school-email-alert.service';
 import { Teacher } from '../../teacher/entities/teacher.entity';
 import { Schedule } from '../../timetable/entities/schedule.entity';
 import { DayOfWeek } from '../../timetable/enums/timetable.enums';
@@ -70,6 +72,7 @@ export class AttendanceService {
     private readonly termModelAction: TermModelAction,
     private readonly dataSource: DataSource,
     private readonly editRequestModelAction: AttendanceEditRequestModelAction,
+    private readonly schoolEmailAlerts: SchoolEmailAlertService,
   ) {
     this.logger = baseLogger.child({ context: AttendanceService.name });
   }
@@ -89,6 +92,81 @@ export class AttendanceService {
       DayOfWeek.SATURDAY,
     ];
     return dayMap[dayNumber];
+  }
+
+  async assertClassTeacherAccess(
+    userId: string,
+    classId: string,
+    sessionId?: string,
+  ): Promise<void> {
+    const assignment = await this.dataSource.manager.findOne(ClassTeacher, {
+      where: {
+        teacher: { user_id: userId, is_active: true },
+        class: { id: classId },
+        ...(sessionId ? { session_id: sessionId } : {}),
+        is_active: true,
+      },
+    });
+    if (!assignment) {
+      throw new ForbiddenException(
+        'Only the class teacher can access daily attendance for this class',
+      );
+    }
+  }
+
+  async assertStudentClassTeacherAccess(
+    userId: string,
+    studentId: string,
+    sessionId?: string,
+  ): Promise<void> {
+    const rows = (await this.dataSource.query(
+      `SELECT 1 FROM class_students enrollment
+       JOIN class_teachers assignment ON assignment.class_id = enrollment.class_id
+         AND assignment.session_id = enrollment.session_id AND assignment.is_active = true
+       JOIN teachers teacher ON teacher.id = assignment.teacher_id
+       WHERE enrollment.student_id = $1 AND enrollment.is_active = true
+         AND teacher.user_id = $2 AND teacher.is_active = true
+         AND ($3::text IS NULL OR enrollment.session_id = $3)
+       LIMIT 1`,
+      [studentId, userId, sessionId ?? null],
+    )) as Array<Record<string, unknown>>;
+    if (!rows.length) {
+      throw new ForbiddenException(
+        'You are not the class teacher for this student',
+      );
+    }
+  }
+
+  async assertCanEditDailyAttendance(
+    userId: string,
+    attendanceId: string,
+  ): Promise<void> {
+    const rows = (await this.dataSource.query(
+      `SELECT 1 FROM student_daily_attendance attendance
+       JOIN class_teachers assignment ON assignment.class_id = attendance.class_id
+         AND assignment.session_id = attendance.session_id::text AND assignment.is_active = true
+       JOIN teachers teacher ON teacher.id = assignment.teacher_id
+       WHERE attendance.id = $1 AND teacher.user_id = $2 AND teacher.is_active = true
+       LIMIT 1`,
+      [attendanceId, userId],
+    )) as Array<Record<string, unknown>>;
+    if (!rows.length) {
+      throw new ForbiddenException(
+        'Only the class teacher can edit daily attendance',
+      );
+    }
+  }
+
+  async assertScheduleTeacherAccess(
+    userId: string,
+    scheduleId: string,
+  ): Promise<void> {
+    const schedule = await this.dataSource.manager.findOne(Schedule, {
+      where: { id: scheduleId, teacher: { user_id: userId, is_active: true } },
+    });
+    if (!schedule) {
+      throw new ForbiddenException('You are not assigned to this lesson');
+    }
   }
 
   /**
@@ -295,6 +373,20 @@ export class AttendanceService {
           markedCount++;
         }
       }
+      if (markedCount + updatedCount > 0) {
+        await writeActivityLog(manager, {
+          actorUserId: userId,
+          entityType: 'ATTENDANCE',
+          entityId: scheduleId,
+          action: 'MARK',
+          description: 'Schedule attendance marked',
+          metadata: {
+            date: attendanceDate.toISOString().slice(0, 10),
+            marked: markedCount,
+            updated: updatedCount,
+          },
+        });
+      }
     });
 
     this.logger.info(
@@ -332,6 +424,7 @@ export class AttendanceService {
         where: {
           teacher: { id: teacherId },
           class: { id: classId },
+          session_id: sessionId,
           is_active: true,
         },
       },
@@ -422,10 +515,39 @@ export class AttendanceService {
           markedCount++;
         }
       }
+      if (markedCount + updatedCount > 0) {
+        await writeActivityLog(manager, {
+          actorUserId: userId,
+          entityType: 'ATTENDANCE',
+          entityId: classId,
+          action: 'MARK',
+          description: 'Daily class attendance marked',
+          metadata: {
+            date: attendanceDate.toISOString().slice(0, 10),
+            marked: markedCount,
+            updated: updatedCount,
+          },
+        });
+      }
     });
 
     this.logger.info(
       `Teacher ${teacherId} marked daily attendance for class ${classId} on ${attendanceDate.toISOString().split('T')[0]}. Marked: ${markedCount}, Updated: ${updatedCount}`,
+    );
+
+    await this.schoolEmailAlerts.enqueueAttendance(
+      attendanceRecords
+        .filter(
+          (record) =>
+            record.status === DailyAttendanceStatus.ABSENT ||
+            record.status === DailyAttendanceStatus.LATE,
+        )
+        .map((record) => ({
+          student_id: record.student_id,
+          class_id: classId,
+          date: attendanceDate.toISOString().slice(0, 10),
+          status: record.status as 'ABSENT' | 'LATE',
+        })),
     );
 
     return { marked: markedCount, updated: updatedCount };
@@ -463,6 +585,7 @@ export class AttendanceService {
   async updateAttendance(
     attendanceId: string,
     dto: UpdateAttendanceDto,
+    actorUserId: string,
   ): Promise<{
     message: string;
     data: AttendanceResponseDto;
@@ -474,6 +597,8 @@ export class AttendanceService {
     if (!attendance) {
       throw new NotFoundException(sysMsg.ATTENDANCE_NOT_FOUND);
     }
+
+    await this.assertScheduleTeacherAccess(actorUserId, attendance.schedule_id);
 
     // Check if attendance is locked - admin approval required
     if (attendance.is_locked) {
@@ -493,12 +618,23 @@ export class AttendanceService {
       updatePayload.notes = dto.notes;
     }
 
-    const updated = await this.attendanceModelAction.update({
-      identifierOptions: { id: attendanceId },
-      updatePayload,
-      transactionOptions: {
-        useTransaction: false,
-      },
+    const updated = await this.dataSource.transaction(async (manager) => {
+      const record = await this.attendanceModelAction.update({
+        identifierOptions: { id: attendanceId },
+        updatePayload,
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: 'ATTENDANCE',
+        entityId: attendanceId,
+        action: 'UPDATE',
+        description: 'Schedule attendance corrected',
+        oldValues: { status: attendance.status },
+        newValues: { status: dto.status ?? attendance.status },
+        metadata: { changed_fields: Object.keys(dto) },
+      });
+      return record;
     });
 
     this.logger.info(`Attendance record ${attendanceId} updated`);
@@ -515,6 +651,7 @@ export class AttendanceService {
   async updateStudentDailyAttendance(
     attendanceId: string,
     dto: UpdateAttendanceDto,
+    actorUserId?: string,
   ): Promise<{
     message: string;
   }> {
@@ -550,11 +687,42 @@ export class AttendanceService {
       updateData.check_out_time = new Date(`1970-01-01T${dto.check_out_time}`);
     }
 
-    await this.studentDailyAttendanceModelAction.update({
-      identifierOptions: { id: attendanceId },
-      updatePayload: updateData,
-      transactionOptions: { useTransaction: false },
+    await this.dataSource.transaction(async (manager) => {
+      await this.studentDailyAttendanceModelAction.update({
+        identifierOptions: { id: attendanceId },
+        updatePayload: updateData,
+        transactionOptions: { useTransaction: true, transaction: manager },
+      });
+      if (actorUserId) {
+        await writeActivityLog(manager, {
+          actorUserId,
+          entityType: 'ATTENDANCE',
+          entityId: attendanceId,
+          action: 'UPDATE',
+          description: 'Daily student attendance corrected',
+          oldValues: { status: attendance.status },
+          newValues: { status: dto.status ?? attendance.status },
+          metadata: { changed_fields: Object.keys(dto) },
+        });
+      }
     });
+
+    if (
+      dto.status === DailyAttendanceStatus.ABSENT ||
+      dto.status === DailyAttendanceStatus.LATE
+    ) {
+      await this.schoolEmailAlerts.enqueueAttendance([
+        {
+          student_id: attendance.student_id,
+          class_id: attendance.class_id,
+          date:
+            attendance.date instanceof Date
+              ? attendance.date.toISOString().slice(0, 10)
+              : String(attendance.date).slice(0, 10),
+          status: dto.status,
+        },
+      ]);
+    }
 
     this.logger.info(`Student daily attendance record ${attendanceId} updated`);
 
@@ -687,7 +855,12 @@ export class AttendanceService {
 
   // Get a single student's monthly attendance for current month
 
-  async getStudentMonthlyAttendance(studentId: string): Promise<{
+  async getStudentMonthlyAttendance(
+    studentId: string,
+    sessionId?: string,
+    requestedYear?: number,
+    requestedMonth?: number,
+  ): Promise<{
     message: string;
     month: string;
     year: number;
@@ -708,8 +881,19 @@ export class AttendanceService {
   }> {
     // Get current month start and end dates
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
+    const year = requestedYear ?? now.getFullYear();
+    const monthNumber = requestedMonth ?? now.getMonth() + 1;
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(monthNumber) ||
+      monthNumber < 1 ||
+      monthNumber > 12
+    ) {
+      throw new BadRequestException(
+        'A valid attendance year and month are required',
+      );
+    }
+    const month = monthNumber - 1;
 
     // First day of current month
     const startDate = new Date(year, month, 1);
@@ -723,9 +907,11 @@ export class AttendanceService {
     const { payload: attendanceRecords } =
       await this.studentDailyAttendanceModelAction.list({
         filterRecordOptions: {
-          session_id: await this.academicSessionService
-            .activeSessions()
-            .then((s) => s.data.id),
+          session_id:
+            sessionId ??
+            (await this.academicSessionService
+              .activeSessions()
+              .then((s) => s.data.id)),
           student_id: studentId,
         },
       });
@@ -961,10 +1147,10 @@ export class AttendanceService {
         attendance_id: attendance?.id,
         status: attendance?.status,
         check_in_time: attendance?.check_in_time
-          ? attendance.check_in_time.toString()
+          ? attendance.check_in_time.toISOString()
           : undefined,
         check_out_time: attendance?.check_out_time
-          ? attendance.check_out_time.toString()
+          ? attendance.check_out_time.toISOString()
           : undefined,
         notes: attendance?.notes,
       };
@@ -1189,7 +1375,12 @@ export class AttendanceService {
 
   //parents endpoints to view child attendance
 
-  async getParentChildMonthlyAttendance(registrationNumber: string): Promise<{
+  async getParentChildMonthlyAttendance(
+    registrationNumber: string,
+    sessionId?: string,
+    requestedYear?: number,
+    requestedMonth?: number,
+  ): Promise<{
     message: string;
     month: string;
     year: number;
@@ -1225,8 +1416,19 @@ export class AttendanceService {
 
     // Get current month start and end dates
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
+    const year = requestedYear ?? now.getFullYear();
+    const monthNumber = requestedMonth ?? now.getMonth() + 1;
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(monthNumber) ||
+      monthNumber < 1 ||
+      monthNumber > 12
+    ) {
+      throw new BadRequestException(
+        'A valid attendance year and month are required',
+      );
+    }
+    const month = monthNumber - 1;
 
     const startDate = new Date(year, month, 1);
     const startDateStr = startDate.toISOString().split('T')[0];
@@ -1238,9 +1440,11 @@ export class AttendanceService {
     const { payload: attendanceRecords } =
       await this.studentDailyAttendanceModelAction.list({
         filterRecordOptions: {
-          session_id: await this.academicSessionService
-            .activeSessions()
-            .then((s) => s.data.id),
+          session_id:
+            sessionId ??
+            (await this.academicSessionService
+              .activeSessions()
+              .then((s) => s.data.id)),
           student_id: student.id, // 👈 use student.id after lookup
         },
       });
@@ -1413,6 +1617,12 @@ export class AttendanceService {
     adminId: string,
     dto: ReviewEditRequestDto,
   ) {
+    let approvedDailyAlert: {
+      student_id: string;
+      class_id: string;
+      date: string;
+      status: 'ABSENT' | 'LATE';
+    } | null = null;
     const request = await this.editRequestModelAction.get({
       identifierOptions: { id: requestId },
     });
@@ -1482,6 +1692,23 @@ export class AttendanceService {
         },
       });
 
+      if (
+        request.attendance_type === AttendanceType.DAILY &&
+        (proposedChanges.status === DailyAttendanceStatus.ABSENT ||
+          proposedChanges.status === DailyAttendanceStatus.LATE)
+      ) {
+        const daily = attendance as StudentDailyAttendance;
+        approvedDailyAlert = {
+          student_id: daily.student_id,
+          class_id: daily.class_id,
+          date:
+            daily.date instanceof Date
+              ? daily.date.toISOString().slice(0, 10)
+              : String(daily.date).slice(0, 10),
+          status: proposedChanges.status,
+        };
+      }
+
       this.logger.info(
         `Attendance updated via approved edit request: attendance_id=${request.attendance_id}, type=${request.attendance_type}, changes=${JSON.stringify(proposedChanges)}`,
       );
@@ -1500,6 +1727,9 @@ export class AttendanceService {
         useTransaction: false,
       },
     });
+    if (approvedDailyAlert) {
+      await this.schoolEmailAlerts.enqueueAttendance([approvedDailyAlert]);
+    }
 
     this.logger.info(
       `Edit request ${dto.status.toLowerCase()}: request_id=${requestId}, reviewed_by=${adminId}, attendance_id=${request.attendance_id}, requested_by=${request.requested_by}`,

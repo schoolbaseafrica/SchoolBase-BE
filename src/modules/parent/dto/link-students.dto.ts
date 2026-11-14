@@ -1,5 +1,13 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, ArrayNotEmpty, IsUUID, ArrayMinSize } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsArray,
+  ArrayNotEmpty,
+  IsUUID,
+  ArrayMinSize,
+  IsBoolean,
+  IsOptional,
+  IsObject,
+} from 'class-validator';
 
 export class LinkStudentsDto {
   @ApiProperty({
@@ -16,4 +24,19 @@ export class LinkStudentsDto {
   @ArrayMinSize(1, { message: 'At least one student ID must be provided' })
   @IsUUID('4', { each: true, message: 'Each student ID must be a valid UUID' })
   student_ids: string[];
+
+  @ApiPropertyOptional({
+    description: 'Confirm replacing an existing parent link',
+  })
+  @IsOptional()
+  @IsBoolean()
+  allow_reassignment?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Parent IDs shown when the administrator confirmed; null for unlinked students',
+  })
+  @IsOptional()
+  @IsObject()
+  expected_parent_ids?: Record<string, string | null>;
 }

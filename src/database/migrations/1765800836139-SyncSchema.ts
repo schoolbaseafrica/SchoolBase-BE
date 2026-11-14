@@ -4,6 +4,40 @@ export class SyncSchema1765800836139 implements MigrationInterface {
   name = 'SyncSchema1765800836139';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
+    // Production restores created on the previous migration lineage already
+    // contain the synchronized schema, but record it under the old baseline
+    // name. Replaying this generated migration would try to recreate populated
+    // tables. Detect that exact restore shape and apply only the schema object
+    // introduced on this lineage; TypeORM records this migration after up()
+    // completes successfully.
+    const legacyBaseline = await queryRunner.query(`
+      SELECT 1
+      FROM "migrations"
+      WHERE "name" = 'SyncSchema1730000000000'
+      LIMIT 1
+    `);
+    const restoredTermsTable = await queryRunner.hasTable('terms');
+
+    if (legacyBaseline.length > 0 && restoredTermsTable) {
+      await queryRunner.query(
+        `CREATE TABLE IF NOT EXISTS "landing_pages" ("id" uuid NOT NULL DEFAULT uuid_generate_v4(), "created_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "updated_at" TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(), "school_id" uuid NOT NULL, "hero" jsonb NOT NULL, "programs" jsonb NOT NULL DEFAULT '[]'::jsonb, "features" jsonb DEFAULT '[]'::jsonb, "facilities" jsonb DEFAULT '[]'::jsonb, "about" text, "why_us" text, "gallery" jsonb NOT NULL DEFAULT '[]'::jsonb, "testimonials" jsonb DEFAULT '[]'::jsonb, "faqs" jsonb DEFAULT '[]'::jsonb, "cta" jsonb NOT NULL, "contact" jsonb NOT NULL, "footer" jsonb NOT NULL, "palette" jsonb, CONSTRAINT "UQ_landing_pages_school_id" UNIQUE ("school_id"), CONSTRAINT "PK_landing_pages" PRIMARY KEY ("id"))`,
+      );
+      await queryRunner.query(
+        `CREATE INDEX IF NOT EXISTS "IDX_landing_pages_school_id" ON "landing_pages" ("school_id")`,
+      );
+      await queryRunner.query(`
+        DO $$ BEGIN
+          ALTER TABLE "landing_pages"
+            ADD CONSTRAINT "FK_landing_pages_school"
+            FOREIGN KEY ("school_id") REFERENCES "schools"("id")
+            ON DELETE CASCADE ON UPDATE NO ACTION;
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+        END $$;
+      `);
+      return;
+    }
+
     await queryRunner.query(
       `ALTER TABLE "sessions" DROP CONSTRAINT IF EXISTS "FK_sessions_user"`,
     );

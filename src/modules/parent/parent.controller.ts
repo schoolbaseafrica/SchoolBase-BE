@@ -13,9 +13,13 @@ import {
   HttpStatus,
   ParseUUIDPipe,
   Request,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiOperation } from '@nestjs/swagger';
 
+import { parseBulkCsv } from '../../common/utils/parse-bulk-csv';
 import * as sysMsg from '../../constants/system.messages';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -47,6 +51,7 @@ import {
   ParentStudentLinkResponseDto,
   StudentBasicDto,
   StudentProfileDto,
+  LinkStaffParentDto,
 } from './dto';
 import { ParentService, IUserPayload } from './parent.service';
 
@@ -57,17 +62,55 @@ import { ParentService, IUserPayload } from './parent.service';
 export class ParentController {
   constructor(private readonly parentService: ParentService) {}
 
+  @Get('eligible-staff')
+  @Roles(UserRole.ADMIN)
+  @ApiOperation({
+    summary: 'Search active admins and teachers without a parent profile',
+  })
+  async eligibleStaff(@Query('search') search = '') {
+    return this.parentService.eligibleStaff(search);
+  }
+
+  @Post('link-staff')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Add a parent profile to an existing admin or teacher account',
+  })
+  async linkStaff(
+    @Body() dto: LinkStaffParentDto,
+    @CurrentUser() actor: { id: string },
+  ): Promise<ParentResponseDto> {
+    return this.parentService.linkStaff(dto.user_id, actor.id);
+  }
+
+  @Post('bulk-upload')
+  @Roles(UserRole.ADMIN)
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
+  async bulkUpload(
+    @UploadedFile() file: Express.Multer.File,
+    @CurrentUser() actor: { id: string },
+  ) {
+    const rows = await parseBulkCsv(file);
+    return this.parentService.bulkCreate(rows, actor.id);
+  }
+
   // --- POST: CREATE PARENT (ADMIN ONLY) ---
   @Post()
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.CREATED)
   @ApiCreateParent()
-  async create(@Body() createDto: CreateParentDto): Promise<{
+  async create(
+    @Body() createDto: CreateParentDto,
+    @CurrentUser() actor: { id: string },
+  ): Promise<{
     message: string;
     status_code: number;
     data: ParentResponseDto;
   }> {
-    const data = await this.parentService.create(createDto);
+    const data = await this.parentService.create(createDto, actor.id);
     return {
       message: sysMsg.PARENT_CREATED,
       status_code: HttpStatus.CREATED,
@@ -147,12 +190,13 @@ export class ParentController {
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateDto: UpdateParentDto,
+    @CurrentUser() actor: { id: string },
   ): Promise<{
     message: string;
     status_code: number;
     data: ParentResponseDto;
   }> {
-    const data = await this.parentService.update(id, updateDto);
+    const data = await this.parentService.update(id, updateDto, actor.id);
     return {
       message: sysMsg.PARENT_UPDATED,
       status_code: HttpStatus.OK,
@@ -165,11 +209,14 @@ export class ParentController {
   @Roles(UserRole.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiDeleteParent()
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<{
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: { id: string },
+  ): Promise<{
     message: string;
     status_code: number;
   }> {
-    await this.parentService.remove(id);
+    await this.parentService.remove(id, actor.id);
     return {
       message: sysMsg.PARENT_DELETED,
       status_code: HttpStatus.OK,

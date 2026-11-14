@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpStatus,
   Inject,
   Injectable,
@@ -17,6 +18,7 @@ import {
   SessionStatus,
 } from '../../academic-session/entities/academic-session.entity';
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { EventAction } from '../../notification/dto/event-trigger.dto';
 import { NotificationService } from '../../notification/services/notification.service';
 import {
@@ -33,8 +35,12 @@ import {
   StudentAssignmentResponseDto,
   TeacherAssignmentResponseDto,
   UpdateClassDto,
+  PromoteStudentsDto,
+  PromotionPreview,
 } from '../dto';
 import { ClassStudent } from '../entities/class-student.entity';
+import { ClassTeacher } from '../entities/class-teacher.entity';
+import { Class } from '../entities/class.entity';
 import { ClassStudentModelAction } from '../model-actions/class-student.action';
 import { ClassTeacherModelAction } from '../model-actions/class-teacher.action';
 import { ClassModelAction } from '../model-actions/class.actions';
@@ -45,6 +51,7 @@ import {
 } from '../types/base-response.interface';
 
 import { ClassStudentValidationService } from './class-student-validation.service';
+import { StudentSubjectEnrollmentService } from './student-subject-enrollment.service';
 
 @Injectable()
 export class ClassService {
@@ -58,6 +65,7 @@ export class ClassService {
     private readonly academicSessionModelAction: AcademicSessionModelAction,
     private readonly teacherModelAction: TeacherModelAction,
     private readonly dataSource: DataSource,
+    private readonly subjectEnrollmentService: StudentSubjectEnrollmentService,
     private readonly classStudentValidationService: ClassStudentValidationService,
     private readonly notificationService: NotificationService,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
@@ -100,24 +108,32 @@ export class ClassService {
     });
 
     // Map to DTO
-    return assignments.payload.map((assignment) => {
-      const streamList: Stream[] = assignment.class.streams || [];
-      const streamNames = streamList.map((s) => s.name).join(', ');
-      return {
-        teacher_id: assignment.teacher.id,
-        name: assignment.teacher.user
-          ? `${assignment.teacher.user.first_name} ${assignment.teacher.user.last_name}`
-          : `Teacher ${assignment.teacher.employment_id}`,
-        assignment_date: assignment.assignment_date,
-        streams: streamNames,
-      };
-    });
+    return assignments.payload
+      .filter(
+        (assignment) =>
+          assignment.teacher?.is_active && assignment.teacher.user?.is_active,
+      )
+      .map((assignment) => {
+        const streamList: Stream[] = assignment.class.streams || [];
+        const streamNames = streamList.map((s) => s.name).join(', ');
+        return {
+          teacher_id: assignment.teacher.id,
+          name: assignment.teacher.user
+            ? `${assignment.teacher.user.first_name} ${assignment.teacher.user.last_name}`
+            : `Teacher ${assignment.teacher.employment_id}`,
+          assignment_date: assignment.assignment_date,
+          streams: streamNames,
+        };
+      });
   }
 
   /**
    * Creates a class and links it to the active academic session.
    */
-  async create(createClassDto: CreateClassDto): Promise<ICreateClassResponse> {
+  async create(
+    createClassDto: CreateClassDto,
+    actorUserId: string,
+  ): Promise<ICreateClassResponse> {
     const { name, arm, teacherIds } = createClassDto;
 
     // Validate teacherIds are valid UUIDs and remove duplicates
@@ -183,6 +199,20 @@ export class ClassService {
         }
       }
 
+      await writeActivityLog(manager, {
+        actorUserId,
+        entityType: 'CLASS',
+        entityId: newClass.id,
+        action: 'CREATE',
+        description: `Created class ${name}${arm ? ` ${arm}` : ''} in ${academicSession.name}`,
+        newValues: {
+          name,
+          arm: arm ?? null,
+          academic_session_id: academicSession.id,
+          teacher_ids: uniqueTeacherIds,
+        },
+      });
+
       this.logger.info(sysMsg.CLASS_CREATED, newClass);
       return newClass;
     });
@@ -211,6 +241,114 @@ export class ClassService {
     if (payload.length > 1)
       throw new ConflictException('Multiple active sessions found');
     return payload[0];
+  }
+
+  async assignTeacherToClass(
+    teacherId: string,
+    classId: string,
+    sessionId?: string,
+  ) {
+    const [teacher, classEntity] = await Promise.all([
+      this.teacherModelAction.get({ identifierOptions: { id: teacherId } }),
+      this.classModelAction.get({
+        identifierOptions: { id: classId },
+        relations: { academicSession: true },
+      }),
+    ]);
+
+    if (!teacher || !teacher.is_active) {
+      throw new NotFoundException(
+        'The selected teacher was not found or is inactive.',
+      );
+    }
+    if (!classEntity || classEntity.is_deleted) {
+      throw new NotFoundException(
+        'The selected class was not found or has been archived.',
+      );
+    }
+
+    const classSessionId = classEntity.academicSession?.id;
+    if (!classSessionId) {
+      throw new BadRequestException(
+        'The selected class is not linked to an academic session.',
+      );
+    }
+    if (sessionId && sessionId !== classSessionId) {
+      throw new BadRequestException(
+        `This class belongs to ${classEntity.academicSession.name}. Select a class from the intended session and try again.`,
+      );
+    }
+
+    const result = await this.dataSource.transaction(async (manager) => {
+      const repository = manager.getRepository(ClassTeacher);
+      const existing = await repository.findOne({
+        where: {
+          teacher: { id: teacherId },
+          class: { id: classId },
+          session_id: classSessionId,
+        },
+      });
+
+      if (existing) {
+        if (existing.is_active) return { assignment: existing, created: false };
+        existing.is_active = true;
+        existing.assignment_date = new Date();
+        return { assignment: await repository.save(existing), created: true };
+      }
+
+      const assignment = repository.create({
+        teacher: { id: teacherId },
+        class: { id: classId },
+        session_id: classSessionId,
+        assignment_date: new Date(),
+        is_active: true,
+      });
+      return { assignment: await repository.save(assignment), created: true };
+    });
+
+    return {
+      message: result.created
+        ? `Teacher assigned to ${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''} successfully.`
+        : `Teacher is already assigned to ${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''}.`,
+      teacher_id: teacherId,
+      class_id: classId,
+      class_name: `${classEntity.name}${classEntity.arm ? ` ${classEntity.arm}` : ''}`,
+      assignment_date: result.assignment.assignment_date,
+    };
+  }
+
+  async unassignTeacherFromClass(
+    teacherId: string,
+    classId: string,
+    sessionId?: string,
+  ) {
+    const classEntity = await this.classModelAction.get({
+      identifierOptions: { id: classId },
+      relations: { academicSession: true },
+    });
+    if (!classEntity || classEntity.is_deleted) {
+      throw new NotFoundException('The selected class was not found.');
+    }
+
+    const targetSessionId = sessionId || classEntity.academicSession?.id;
+    const repository = this.dataSource.getRepository(ClassTeacher);
+    const assignment = await repository.findOne({
+      where: {
+        teacher: { id: teacherId },
+        class: { id: classId },
+        session_id: targetSessionId,
+        is_active: true,
+      },
+    });
+    if (!assignment) {
+      throw new NotFoundException(
+        'This teacher is not assigned to the selected class for that session.',
+      );
+    }
+
+    assignment.is_active = false;
+    await repository.save(assignment);
+    return { message: 'Teacher unassigned from class successfully.' };
   }
 
   /**
@@ -279,11 +417,25 @@ export class ClassService {
   /**
    * Fetches all classes grouped by name and academic session, including arm.
    */
-  async getGroupedClasses(page = 1, limit = 20) {
+  async getGroupedClasses(
+    page = 1,
+    limit = 20,
+    includeArchived = false,
+    sessionId?: string,
+    includeAllSessions = false,
+  ) {
+    const targetSessionId = includeAllSessions
+      ? undefined
+      : sessionId || (await this.getActiveSession()).id;
     // Use generic list method from AbstractModelAction
     const { payload: classesRaw, paginationMeta } =
       await this.classModelAction.list({
-        filterRecordOptions: { is_deleted: false },
+        filterRecordOptions: {
+          ...(includeArchived ? {} : { is_deleted: false }),
+          ...(targetSessionId
+            ? { academicSession: { id: targetSessionId } }
+            : {}),
+        },
         relations: { academicSession: true },
         order: { name: 'ASC', arm: 'ASC' },
         paginationPayload: { page, limit },
@@ -291,12 +443,29 @@ export class ClassService {
 
     const classes = Array.isArray(classesRaw) ? classesRaw : [];
 
+    const classIds = classes.map((cls) => cls.id);
+    const counts: Array<{ class_id: string; student_count: string }> =
+      classIds.length === 0
+        ? []
+        : await this.dataSource.query(
+            `SELECT cs.class_id, COUNT(DISTINCT cs.student_id)::text AS student_count
+             FROM class_students cs
+             JOIN students s ON s.id = cs.student_id AND s.is_deleted = false
+             JOIN users u ON u.id = s.user_id AND u.is_active = true
+             WHERE cs.class_id = ANY($1::uuid[]) AND cs.is_active = true
+             GROUP BY cs.class_id`,
+            [classIds],
+          );
+    const countByClass = new Map(
+      counts.map((item) => [item.class_id, Number(item.student_count)]),
+    );
+
     const grouped: Record<
       string,
       {
         name: string;
         academicSession: { id: string; name: string };
-        classes: { id: string; arm?: string }[];
+        classes: { id: string; arm?: string; student_count: number }[];
       }
     > = {};
 
@@ -312,7 +481,11 @@ export class ClassService {
           classes: [],
         };
       }
-      grouped[key].classes.push({ id: cls.id, arm: cls.arm });
+      grouped[key].classes.push({
+        id: cls.id,
+        arm: cls.arm,
+        student_count: countByClass.get(cls.id) ?? 0,
+      });
     }
 
     return {
@@ -776,6 +949,8 @@ export class ClassService {
   async getStudentsByClass(
     classId: string,
     sessionId?: string,
+    subjectId?: string,
+    termId?: string,
   ): Promise<StudentAssignmentResponseDto[]> {
     // 1. Validate class exists and get its academic session
     const classExist = await this.classModelAction.get({
@@ -789,33 +964,131 @@ export class ClassService {
     // 2. Use the class's academic session (or provided sessionId for filtering)
     const target_session_id = sessionId || classExist.academicSession.id;
 
+    if (subjectId && !termId)
+      throw new BadRequestException('Term is required for a subject roster');
+    if (sessionId && sessionId !== classExist.academicSession.id)
+      throw new BadRequestException(
+        'Class does not belong to the selected session',
+      );
+
+    const eligibleIds =
+      subjectId && termId
+        ? new Set(
+            await this.subjectEnrollmentService.getEligibleStudentIds(
+              classId,
+              subjectId,
+              termId,
+            ),
+          )
+        : null;
+
     // 3. Fetch Assignments with Relations
-    const assignments = await this.classStudentModelAction.list({
-      filterRecordOptions: {
-        class: { id: classId },
-        session_id: target_session_id,
-        is_active: true,
-      },
-      relations: {
-        student: { user: true },
-      },
-    });
+    const roster = [];
+    let page = 1;
+    while (true) {
+      const batch = await this.classStudentModelAction.list({
+        filterRecordOptions: {
+          class: { id: classId },
+          session_id: target_session_id,
+          is_active: true,
+        },
+        relations: { student: { user: true } },
+        paginationPayload: { page, limit: 200 },
+      });
+      roster.push(...batch.payload);
+      if (batch.payload.length < 200) break;
+      page++;
+    }
 
     // 4. Map to DTO
-    return assignments.payload.map((assignment) => {
-      const student = assignment.student;
-      const user = student.user;
-      const fullName = user
-        ? `${user.first_name} ${user.last_name}`
-        : `Student ${student.registration_number}`;
-      return {
-        student_id: student.id,
-        registration_number: student.registration_number,
-        name: fullName,
-        enrollment_date: assignment.enrollment_date,
-        is_active: assignment.is_active,
-      };
-    });
+    return roster
+      .filter(
+        (assignment) =>
+          assignment.student &&
+          !assignment.student.is_deleted &&
+          assignment.student.user?.is_active &&
+          (!eligibleIds || eligibleIds.has(assignment.student.id)),
+      )
+      .map((assignment) => {
+        const student = assignment.student;
+        const user = student.user;
+        const fullName = user
+          ? `${user.first_name} ${user.last_name}`
+          : `Student ${student.registration_number}`;
+        return {
+          student_id: student.id,
+          registration_number: student.registration_number,
+          name: fullName,
+          enrollment_date: assignment.enrollment_date,
+          is_active: assignment.is_active,
+        };
+      });
+  }
+
+  async assertTeacherCanViewClass(
+    classId: string,
+    teacherId: string,
+  ): Promise<void> {
+    const assignments = (await this.dataSource.query(
+      `SELECT 1 FROM "class" c
+       WHERE c.id = $1 AND c.is_deleted = false AND (
+         EXISTS (SELECT 1 FROM class_teachers ct
+                 WHERE ct.class_id = c.id AND ct.teacher_id = $2
+                   AND ct.session_id = c.academic_session_id::text AND ct.is_active = true)
+         OR EXISTS (SELECT 1 FROM class_subjects cs
+                    JOIN teachers teacher ON teacher.id = cs.teacher_id
+                    WHERE cs.class_id = c.id AND cs.teacher_id = $2
+                      AND teacher.is_active = true)
+       ) LIMIT 1`,
+      [classId, teacherId],
+    )) as Array<Record<string, unknown>>;
+    if (assignments.length === 0) {
+      throw new ForbiddenException('You are not assigned to this class');
+    }
+  }
+
+  async getTeachingClasses(
+    teacherId: string,
+    sessionId?: string,
+  ): Promise<ClassResponseDto[]> {
+    const targetSession = sessionId || (await this.getActiveSession());
+    const targetSessionId =
+      typeof targetSession === 'string' ? targetSession : targetSession.id;
+    if (!isUUID(targetSessionId)) {
+      throw new BadRequestException('Invalid academic session ID');
+    }
+    const classes = (await this.dataSource.query(
+      `SELECT c.id, c.name, c.arm,
+         session.id AS "sessionId", session.name AS "sessionName"
+       FROM "class" c
+       JOIN academic_sessions session ON session.id = c.academic_session_id
+       JOIN teachers teacher ON teacher.id = $1 AND teacher.is_active = true
+       WHERE session.id = $2::uuid AND c.is_deleted = false
+         AND (
+           EXISTS (SELECT 1 FROM class_teachers ct
+                   WHERE ct.class_id = c.id AND ct.teacher_id = teacher.id
+                     AND ct.session_id = session.id::text AND ct.is_active = true)
+           OR EXISTS (SELECT 1 FROM class_subjects cs
+                      WHERE cs.class_id = c.id AND cs.teacher_id = teacher.id)
+         )
+       ORDER BY c.name, c.arm`,
+      [teacherId, targetSessionId],
+    )) as Array<{
+      id: string;
+      name: string;
+      arm: string | null;
+      sessionId: string;
+      sessionName: string;
+    }>;
+    return classes.map((item) => ({
+      id: item.id,
+      name: item.name,
+      arm: item.arm,
+      academicSession: {
+        id: item.sessionId,
+        name: item.sessionName,
+      },
+    }));
   }
 
   /**
@@ -937,6 +1210,279 @@ export class ClassService {
     });
 
     return Array.from(uniqueClasses.values());
+  }
+
+  async getPromotionStatus(sourceSessionId: string, targetSessionId: string) {
+    if (sourceSessionId === targetSessionId) {
+      throw new BadRequestException(
+        'Source and target academic sessions must be different.',
+      );
+    }
+    const [sourceSession, targetSession] = await Promise.all([
+      this.academicSessionModelAction.get({
+        identifierOptions: { id: sourceSessionId },
+      }),
+      this.academicSessionModelAction.get({
+        identifierOptions: { id: targetSessionId },
+      }),
+    ]);
+    if (!sourceSession || !targetSession) {
+      throw new NotFoundException(
+        'Source or target academic session not found.',
+      );
+    }
+
+    const repository = this.dataSource.getRepository(ClassStudent);
+    const [sourceAssignments, targetAssignments] = await Promise.all([
+      repository
+        .createQueryBuilder('assignment')
+        .innerJoin('assignment.class', 'class')
+        .innerJoin('assignment.student', 'student')
+        .select('class.id', 'classId')
+        .addSelect('student.id', 'studentId')
+        .where('assignment.session_id = :sessionId', {
+          sessionId: sourceSessionId,
+        })
+        .andWhere('assignment.is_active = true')
+        .andWhere('class.is_deleted = false')
+        .andWhere('student.is_deleted = false')
+        .getRawMany<{ classId: string; studentId: string }>(),
+      repository
+        .createQueryBuilder('assignment')
+        .innerJoin('assignment.student', 'student')
+        .select('student.id', 'studentId')
+        .where('assignment.session_id = :sessionId', {
+          sessionId: targetSessionId,
+        })
+        .andWhere('assignment.is_active = true')
+        .getRawMany<{ studentId: string }>(),
+    ]);
+    const targetStudentIds = new Set(
+      targetAssignments.map((row) => row.studentId),
+    );
+    const status = new Map<
+      string,
+      {
+        sourceClassId: string;
+        total: number;
+        alreadyInTarget: number;
+        remaining: number;
+      }
+    >();
+    for (const assignment of sourceAssignments) {
+      const item = status.get(assignment.classId) ?? {
+        sourceClassId: assignment.classId,
+        total: 0,
+        alreadyInTarget: 0,
+        remaining: 0,
+      };
+      item.total++;
+      if (targetStudentIds.has(assignment.studentId)) item.alreadyInTarget++;
+      else item.remaining++;
+      status.set(assignment.classId, item);
+    }
+    return Array.from(status.values());
+  }
+
+  async previewPromotion(dto: PromoteStudentsDto): Promise<PromotionPreview> {
+    if (dto.sourceSessionId === dto.targetSessionId) {
+      throw new BadRequestException(
+        'Source and target academic sessions must be different.',
+      );
+    }
+
+    const sourceSession = await this.academicSessionModelAction.get({
+      identifierOptions: { id: dto.sourceSessionId },
+    });
+    const targetSession = await this.academicSessionModelAction.get({
+      identifierOptions: { id: dto.targetSessionId },
+    });
+    if (!sourceSession || !targetSession) {
+      throw new NotFoundException(
+        'Source or target academic session not found.',
+      );
+    }
+
+    const duplicateSourceIds = dto.armMappings
+      .map((mapping) => mapping.sourceClassId)
+      .filter((id, index, values) => values.indexOf(id) !== index);
+    if (duplicateSourceIds.length > 0) {
+      throw new BadRequestException(
+        'Each source class can only appear once in a promotion.',
+      );
+    }
+
+    const targetAssignments = await this.classStudentModelAction.list({
+      filterRecordOptions: {
+        session_id: dto.targetSessionId,
+        is_active: true,
+      },
+      relations: { student: true, class: true },
+    });
+    const studentsAlreadyInTarget = new Set(
+      targetAssignments.payload.map((assignment) => assignment.student.id),
+    );
+
+    const mappings = [];
+    for (const mapping of dto.armMappings) {
+      const sourceClass = await this.classModelAction.get({
+        identifierOptions: { id: mapping.sourceClassId },
+        relations: { academicSession: true },
+      });
+      const targetClass = await this.classModelAction.get({
+        identifierOptions: { id: mapping.targetClassId },
+        relations: { academicSession: true },
+      });
+      const errors: string[] = [];
+
+      if (!sourceClass || sourceClass.is_deleted) {
+        errors.push('Source class does not exist or is archived.');
+      } else if (sourceClass.academicSession.id !== dto.sourceSessionId) {
+        errors.push('Source class does not belong to the source session.');
+      }
+      if (!targetClass || targetClass.is_deleted) {
+        errors.push('Target class does not exist or is archived.');
+      } else if (targetClass.academicSession.id !== dto.targetSessionId) {
+        errors.push('Target class does not belong to the target session.');
+      }
+
+      const sourceAssignments = sourceClass
+        ? await this.classStudentModelAction.list({
+            filterRecordOptions: {
+              class: { id: sourceClass.id },
+              session_id: dto.sourceSessionId,
+              is_active: true,
+              student: { is_deleted: false },
+            },
+            relations: { student: true },
+          })
+        : { payload: [] };
+      const studentIds = sourceAssignments.payload.map(
+        (assignment) => assignment.student.id,
+      );
+      const alreadyInTargetStudentIds = studentIds.filter((id) =>
+        studentsAlreadyInTarget.has(id),
+      );
+      const toPromoteStudentIds = studentIds.filter(
+        (id) => !studentsAlreadyInTarget.has(id),
+      );
+
+      mappings.push({
+        sourceClassId: mapping.sourceClassId,
+        targetClassId: mapping.targetClassId,
+        sourceClassName: sourceClass
+          ? `${sourceClass.name}${sourceClass.arm ? ` ${sourceClass.arm}` : ''}`
+          : 'Unknown class',
+        targetClassName: targetClass
+          ? `${targetClass.name}${targetClass.arm ? ` ${targetClass.arm}` : ''}`
+          : 'Unknown class',
+        toPromote: toPromoteStudentIds.length,
+        toPromoteStudentIds,
+        alreadyInTarget: alreadyInTargetStudentIds.length,
+        alreadyInTargetStudentIds,
+        errors,
+      });
+    }
+
+    return {
+      sourceSessionId: dto.sourceSessionId,
+      targetSessionId: dto.targetSessionId,
+      mappings,
+      errors: mappings.flatMap((mapping) => mapping.errors),
+    };
+  }
+
+  async executePromotion(dto: PromoteStudentsDto, actorUserId: string) {
+    const preview = await this.previewPromotion(dto);
+    if (preview.errors.length > 0) {
+      throw new BadRequestException({
+        message: 'Promotion validation failed.',
+        errors: preview.errors,
+      });
+    }
+
+    const details = preview.mappings.map((mapping) => ({
+      sourceClassId: mapping.sourceClassId,
+      targetClassId: mapping.targetClassId,
+      promoted: 0,
+      skipped: mapping.alreadyInTarget,
+      failed: 0,
+    }));
+
+    await this.dataSource.transaction(async (manager) => {
+      for (const [mappingIndex, mapping] of preview.mappings.entries()) {
+        const promotedStudentIds: string[] = [];
+        for (const studentId of mapping.toPromoteStudentIds) {
+          const existingTargetAssignment = await manager.findOne(ClassStudent, {
+            where: {
+              student: { id: studentId },
+              session_id: dto.targetSessionId,
+            },
+            relations: { class: true },
+          });
+
+          if (existingTargetAssignment?.is_active) {
+            details[mappingIndex].skipped++;
+            continue;
+          }
+
+          if (existingTargetAssignment) {
+            existingTargetAssignment.class = {
+              id: mapping.targetClassId,
+            } as Class;
+            existingTargetAssignment.is_active = true;
+            existingTargetAssignment.enrollment_date = new Date();
+            await manager.save(ClassStudent, existingTargetAssignment);
+          } else {
+            await manager.save(
+              ClassStudent,
+              manager.create(ClassStudent, {
+                class: { id: mapping.targetClassId } as Class,
+                student: { id: studentId },
+                session_id: dto.targetSessionId,
+                is_active: true,
+                enrollment_date: new Date(),
+              }),
+            );
+          }
+
+          await this.studentModelAction.update({
+            identifierOptions: { id: studentId },
+            updatePayload: { current_class_id: mapping.targetClassId },
+            transactionOptions: {
+              useTransaction: true,
+              transaction: manager,
+            },
+          });
+          details[mappingIndex].promoted++;
+          promotedStudentIds.push(studentId);
+        }
+
+        if (promotedStudentIds.length > 0) {
+          await writeActivityLog(manager, {
+            actorUserId,
+            entityType: 'STUDENT_PROMOTION',
+            entityId: mapping.targetClassId,
+            action: 'PROMOTE',
+            description: `Promoted ${promotedStudentIds.length} student${promotedStudentIds.length === 1 ? '' : 's'} from ${mapping.sourceClassName} to ${mapping.targetClassName}`,
+            metadata: {
+              source_session_id: dto.sourceSessionId,
+              target_session_id: dto.targetSessionId,
+              source_class_id: mapping.sourceClassId,
+              target_class_id: mapping.targetClassId,
+              student_ids: promotedStudentIds,
+            },
+          });
+        }
+      }
+    });
+
+    return {
+      promoted: details.reduce((total, item) => total + item.promoted, 0),
+      skipped: details.reduce((total, item) => total + item.skipped, 0),
+      failed: 0,
+      details,
+    };
   }
 
   protected async notifyClassUsers(

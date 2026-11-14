@@ -8,9 +8,13 @@
 
 import { UserRole } from 'src/modules/shared/enums';
 
+import {
+  evaluateGradingPolicy,
+  LEGACY_GRADING_POLICY,
+} from '../policy/grading-policy';
+
 export interface IGradingScale {
   min: number;
-  max: number;
   grade: string;
   remark: string;
 }
@@ -26,47 +30,24 @@ export interface IRequestWithUser extends Request {
   };
 }
 
-export const GRADING_SCALE: IGradingScale[] = [
-  { min: 80, max: 100, grade: 'A', remark: 'Excellent' },
-  { min: 70, max: 79, grade: 'B', remark: 'Very Good' },
-  { min: 60, max: 69, grade: 'C', remark: 'Good' },
-  { min: 50, max: 59, grade: 'D', remark: 'Fair' },
-  { min: 40, max: 49, grade: 'E', remark: 'Poor' },
-  { min: 0, max: 39, grade: 'F', remark: 'Fail' },
-];
+export const GRADING_SCALE: IGradingScale[] = LEGACY_GRADING_POLICY.bands;
 
 /**
  * Calculate grade letter based on total score
  */
 export function calculateGradeLetter(totalScore: number | null): string | null {
-  if (totalScore === null || totalScore < 0) {
-    return null;
-  }
-
-  for (const scale of GRADING_SCALE) {
-    if (totalScore >= scale.min && totalScore <= scale.max) {
-      return scale.grade;
-    }
-  }
-
-  return 'F';
+  return (
+    evaluateGradingPolicy(totalScore, LEGACY_GRADING_POLICY)?.grade ?? null
+  );
 }
 
 /**
  * Get remark based on total score
  */
 export function getRemark(totalScore: number | null): string | null {
-  if (totalScore === null || totalScore < 0) {
-    return null;
-  }
-
-  for (const scale of GRADING_SCALE) {
-    if (totalScore >= scale.min && totalScore <= scale.max) {
-      return scale.remark;
-    }
-  }
-
-  return GRADING_SCALE[GRADING_SCALE.length - 1].remark; // 'Fail'
+  return (
+    evaluateGradingPolicy(totalScore, LEGACY_GRADING_POLICY)?.remark ?? null
+  );
 }
 
 /**

@@ -68,6 +68,12 @@ export class ClassInfoDto {
   @ApiPropertyOptional()
   @Expose()
   arm?: string;
+
+  @ApiPropertyOptional({
+    description: 'Academic stream or section used to group classes',
+  })
+  @Expose()
+  stream?: string;
 }
 
 export class TermInfoDto {

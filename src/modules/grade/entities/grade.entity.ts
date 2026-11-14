@@ -19,6 +19,9 @@ export class Grade extends BaseEntity {
   @Column({ name: 'student_id', type: 'uuid' })
   student_id: string;
 
+  @Column({ name: 'grading_policy_version_id', type: 'uuid', nullable: true })
+  grading_policy_version_id: string | null;
+
   @ManyToOne(() => Student, { nullable: false })
   @JoinColumn({ name: 'student_id' })
   student: Student;

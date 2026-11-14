@@ -1,6 +1,8 @@
 import { ForbiddenException } from '@nestjs/common';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { ParentModelAction } from '../../parent/model-actions/parent-actions';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
@@ -19,6 +21,8 @@ describe('ResolverService', () => {
   let studentModelAction: StudentModelAction;
   let parentModelAction: ParentModelAction;
   let logger: Logger;
+  let academicSessionService: AcademicSessionService;
+  let dataSource: DataSource;
 
   beforeEach(() => {
     userService = {
@@ -41,6 +45,18 @@ describe('ResolverService', () => {
       warn: jest.fn(),
       info: jest.fn(),
     } as unknown as Logger;
+    academicSessionService = {
+      activeSessions: jest
+        .fn()
+        .mockResolvedValue({ data: { id: 'session-1' } }),
+    } as unknown as AcademicSessionService;
+    dataSource = {
+      query: jest
+        .fn()
+        .mockResolvedValue([
+          { students: 2, current_session_students: 1, teachers: 1, parents: 1 },
+        ]),
+    } as unknown as DataSource;
 
     service = new ResolverService(
       userService,
@@ -48,6 +64,8 @@ describe('ResolverService', () => {
       teacherModelAction,
       studentModelAction,
       parentModelAction,
+      academicSessionService,
+      dataSource,
       logger,
     );
   });
@@ -57,20 +75,25 @@ describe('ResolverService', () => {
       id: '1',
       role: [UserRole.ADMIN],
     });
-    (userModelAction.list as jest.Mock)
-      .mockResolvedValueOnce({ payload: [{}, {}] })
-      .mockResolvedValueOnce({ payload: [{}] })
-      .mockResolvedValueOnce({ payload: [{}] });
-
     const result = await service.resolveDashboard('1', [UserRole.ADMIN]);
 
     expect(result.dashboard).toBe(UserRole.ADMIN);
     expect(result.modules).toEqual(DASHBOARD_MODULES[UserRole.ADMIN]);
     expect(result.metadata).toEqual({
       total_students: 2,
+      current_session_students: 1,
       total_teachers: 1,
       total_parents: 1,
     });
+    expect(dataSource.query).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /s\.is_deleted IS NOT TRUE[\s\S]*cs\.session_id = COALESCE\(\s*\$1::text/,
+      ),
+      [null],
+    );
+    expect((dataSource.query as jest.Mock).mock.calls[0][0]).toContain(
+      'JOIN users u ON u.id = t.user_id AND u.is_active = true',
+    );
   });
 
   it('should throw ForbiddenException if user has no role', async () => {

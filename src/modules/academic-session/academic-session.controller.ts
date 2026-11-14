@@ -52,7 +52,7 @@ export class AcademicSessionController {
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN)
+  @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.PARENT, UserRole.STUDENT)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @DocsGetAllAcademicSessions()
@@ -65,7 +65,7 @@ export class AcademicSessionController {
 
   @Get('active')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.STUDENT)
+  @Roles(UserRole.ADMIN, UserRole.TEACHER, UserRole.PARENT, UserRole.STUDENT)
   @ApiBearerAuth()
   @HttpCode(HttpStatus.OK)
   @DocsGetActiveAcademicSession()

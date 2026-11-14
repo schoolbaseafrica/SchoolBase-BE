@@ -1,6 +1,8 @@
 import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { AcademicSessionModule } from '../academic-session/academic-session.module';
+import { TermModule } from '../academic-term/term.module';
 import { FeesModule } from '../fees/fees.module';
 import { FileModule } from '../shared/file/file.module';
 import { StudentModule } from '../student/student.module';
@@ -15,6 +17,8 @@ import { PaymentService } from './services/payment.service';
 
 @Module({
   imports: [
+    AcademicSessionModule,
+    TermModule,
     TypeOrmModule.forFeature([Payment]),
     forwardRef(() => FeesModule),
     FileModule,

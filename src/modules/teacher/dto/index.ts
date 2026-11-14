@@ -3,3 +3,4 @@ export * from './update-teacher.dto';
 export * from './teacher-response.dto';
 export * from './get-teachers-query.dto';
 export * from './generate-password-response.dto';
+export * from './link-admin-teacher.dto';

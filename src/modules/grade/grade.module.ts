@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { Term } from '../academic-term/entities/term.entity';
+import { ClassModule } from '../class/class.module';
 import { Class, ClassSubject, ClassStudent } from '../class/entities';
 import { ResultModule } from '../result/result.module';
 import { StudentModule } from '../student/student.module';
@@ -21,6 +22,7 @@ import { GradeService, GradeSubmissionService } from './services';
       Term,
       Class,
     ]),
+    ClassModule,
     StudentModule,
     forwardRef(() => ResultModule),
   ],

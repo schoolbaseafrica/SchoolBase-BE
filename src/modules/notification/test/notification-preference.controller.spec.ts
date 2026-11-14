@@ -77,8 +77,10 @@ describe('NotificationPreferenceController', () => {
       jest
         .spyOn(service, 'findOneByUserId')
         .mockResolvedValue(mockNotificationPreference);
-      const result =
-        await controller.getUserNotificationPreferences(MOCK_USER_ID);
+      const result = await controller.getUserNotificationPreferences(
+        MOCK_USER_ID,
+        mockReq,
+      );
       expect(result).toEqual({
         message: sysMsg.NOTIFICATION_PREFERENCE_RETRIEVED,
         data: mockNotificationPreference,
@@ -89,8 +91,18 @@ describe('NotificationPreferenceController', () => {
     it('should throw NotFoundException if preferences not found', async () => {
       jest.spyOn(service, 'findOneByUserId').mockResolvedValue(null);
       await expect(
-        controller.getUserNotificationPreferences(MOCK_USER_ID),
+        controller.getUserNotificationPreferences(MOCK_USER_ID, mockReq),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('denies reading another user’s preferences', async () => {
+      const otherUser = {
+        user: { userId: 'other-user', roles: [UserRole.STUDENT] },
+      } as IRequestWithUser;
+      await expect(
+        controller.getUserNotificationPreferences(MOCK_USER_ID, otherUser),
+      ).rejects.toThrow(ForbiddenException);
+      expect(service.findOneByUserId).not.toHaveBeenCalled();
     });
   });
 

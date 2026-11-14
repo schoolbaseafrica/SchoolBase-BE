@@ -49,6 +49,9 @@ export class Result extends BaseEntity {
   @Column({ name: 'academic_session_id', type: 'uuid' })
   academic_session_id: string;
 
+  @Column({ name: 'grading_policy_version_id', type: 'uuid', nullable: true })
+  grading_policy_version_id: string | null;
+
   @ManyToOne(() => AcademicSession, { nullable: false })
   @JoinColumn({ name: 'academic_session_id' })
   academicSession: AcademicSession;

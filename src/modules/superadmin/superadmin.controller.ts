@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
+import { InitialSetupGuard } from '../../common/guards/initial-setup.guard';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
 
 import {
@@ -27,6 +28,7 @@ export class SuperadminController {
   constructor(private readonly superadminService: SuperadminService) {}
 
   @Post()
+  @UseGuards(InitialSetupGuard)
   @ApiCreateSuperadmin()
   async create(@Body() createSuperadminDto: CreateSuperadminDto) {
     return this.superadminService.createSuperAdmin(createSuperadminDto);

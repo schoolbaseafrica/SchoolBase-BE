@@ -9,7 +9,6 @@ import {
   IsDateString,
   IsBoolean,
   IsOptional,
-  Matches,
   IsPhoneNumber,
 } from 'class-validator';
 
@@ -62,15 +61,13 @@ export class CreateTeacherDto {
 
   @ApiProperty({
     description:
-      'Employment ID (format: EMP-YYYY-XXX, e.g., EMP-2025-014). Auto-generated if not provided.',
+      'Employment ID. Auto-generated from the school format if not provided.',
     example: 'EMP-2025-014',
     required: false,
   })
   @IsOptional()
   @IsString()
-  @Matches(/^EMP-\d{4}-\d{3}$/, {
-    message: 'Employment ID must be in format EMP-YYYY-XXX',
-  })
+  @MaxLength(100)
   employment_id?: string;
 
   @ApiProperty({

@@ -3,6 +3,10 @@ import { ConfigService } from '@nestjs/config';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
 
+import {
+  resolveTenantLogo,
+  resolveTenantName,
+} from '../../config/tenant-identity';
 import { EmailTemplateID } from '../../constants/email-constants';
 import * as sysMsg from '../../constants/system.messages';
 import { UserRole } from '../shared/enums';
@@ -31,11 +35,8 @@ export class AccountCreationService {
   ) {
     const website_url = this.configService.get<string>('frontend.url');
     const change_password = `${website_url}/reset-password?token=${token}`;
-    const school_name =
-      this.configService.get<string>('app.name') || 'School Base';
-    const logo_url =
-      this.configService.get<string>('app.logo_url') ||
-      'https://via.placeholder.com/100';
+    const school_name = resolveTenantName(this.configService);
+    const logo_url = resolveTenantLogo(this.configService);
 
     const emailPayload: EmailPayload = {
       to: [{ email, name }],

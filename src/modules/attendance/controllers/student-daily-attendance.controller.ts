@@ -72,8 +72,16 @@ export class StudentDailyAttendanceController {
   @apiParentGetChildMonthlyAttendance()
   async getParentChildMonthlyAttendance(
     @Query('registration_number') matricNumber: string,
+    @Query('session_id') sessionId?: string,
+    @Query('year') year?: string,
+    @Query('month') month?: string,
   ) {
-    return this.attendanceService.getParentChildMonthlyAttendance(matricNumber);
+    return this.attendanceService.getParentChildMonthlyAttendance(
+      matricNumber,
+      sessionId,
+      year ? Number(year) : undefined,
+      month ? Number(month) : undefined,
+    );
   }
 
   // --- GET: CLASS DAILY ATTENDANCE SUMMARY (TEACHER/ADMIN) ---
@@ -83,8 +91,15 @@ export class StudentDailyAttendanceController {
   @ApiGetClassDailyAttendance()
   async getClassDailyAttendance(
     @Param('classId', ParseUUIDPipe) classId: string,
+    @Req() req: IRequestWithUser,
     @Query('date') date?: string,
   ) {
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertClassTeacherAccess(
+        req.user.userId,
+        classId,
+      );
+    }
     // Default to today if no date provided
     const targetDate = date || new Date().toISOString().split('T')[0];
     return this.attendanceService.getClassDailyAttendance(classId, targetDate);
@@ -99,7 +114,15 @@ export class StudentDailyAttendanceController {
     @Param('classId', ParseUUIDPipe) classId: string,
     @Query('session_id') sessionId: string,
     @Query('term') termKey: string,
+    @Req() req: IRequestWithUser,
   ) {
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertClassTeacherAccess(
+        req.user.userId,
+        classId,
+        sessionId,
+      );
+    }
     // Convert enum key (e.g., "SECOND") to enum value (e.g., "Second term")
     const term = TermName[termKey as keyof typeof TermName];
 
@@ -122,6 +145,9 @@ export class StudentDailyAttendanceController {
   async getStudentMonthlyAttendance(
     @Req() req: IRequestWithUser,
     @Param('studentId', ParseUUIDPipe) studentId: string,
+    @Query('session_id') sessionId?: string,
+    @Query('year') year?: string,
+    @Query('month') month?: string,
   ) {
     // Students can only view their own attendance
     if (req.user.role === UserRole.STUDENT && req.user.userId !== studentId) {
@@ -130,7 +156,20 @@ export class StudentDailyAttendanceController {
       );
     }
 
-    return this.attendanceService.getStudentMonthlyAttendance(studentId);
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertStudentClassTeacherAccess(
+        req.user.userId,
+        studentId,
+        sessionId,
+      );
+    }
+
+    return this.attendanceService.getStudentMonthlyAttendance(
+      studentId,
+      sessionId,
+      year ? Number(year) : undefined,
+      month ? Number(month) : undefined,
+    );
   }
 
   // --- GET: STUDENT TERM ATTENDANCE SUMMARY (STUDENT/TEACHER/ADMIN) ---
@@ -151,6 +190,14 @@ export class StudentDailyAttendanceController {
       );
     }
 
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertStudentClassTeacherAccess(
+        req.user.userId,
+        studentId,
+        sessionId,
+      );
+    }
+
     return this.attendanceService.getStudentTermAttendanceSummary(
       studentId,
       sessionId,
@@ -166,8 +213,19 @@ export class StudentDailyAttendanceController {
   async updateStudentDailyAttendance(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateStudentDailyAttendanceDto,
+    @Req() req: IRequestWithUser,
   ) {
-    return this.attendanceService.updateStudentDailyAttendance(id, dto);
+    if (req.user.role === UserRole.TEACHER) {
+      await this.attendanceService.assertCanEditDailyAttendance(
+        req.user.userId,
+        id,
+      );
+    }
+    return this.attendanceService.updateStudentDailyAttendance(
+      id,
+      dto,
+      req.user.userId,
+    );
   }
 
   // --- POST: CREATE EDIT REQUEST FOR LOCKED ATTENDANCE (TEACHER/ADMIN) ---

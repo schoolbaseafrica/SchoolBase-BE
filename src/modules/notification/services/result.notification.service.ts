@@ -13,6 +13,7 @@ import { ResultEventDto } from '../dto/event-trigger.dto';
 import { NotificationType } from '../types/notification.types';
 
 import { NotificationService } from './notification.service';
+import { SchoolEmailAlertService } from './school-email-alert.service';
 @Injectable()
 export class ResultNotificationService {
   private readonly logger: Logger;
@@ -26,6 +27,7 @@ export class ResultNotificationService {
     private readonly classSubjectModelAction: ClassSubjectModelAction,
     private readonly termModelAction: TermModelAction,
     private readonly academicSessionModelAction: AcademicSessionModelAction,
+    private readonly schoolEmailAlerts: SchoolEmailAlertService,
   ) {
     this.logger = baseLogger.child({
       context: ResultNotificationService.name,
@@ -131,6 +133,16 @@ export class ResultNotificationService {
           result_id: event.result_id,
           notification_count: notifications.length,
         });
+      }
+      if (student.parent?.user?.id) {
+        await this.schoolEmailAlerts.enqueue('results', [
+          {
+            recipient_user_id: student.parent.user.id,
+            subject: `${student_name}'s result is available`,
+            message: `${student_name}'s result for ${class_name}, ${term_name} (${session_name}) has been published. Sign in to SchoolBase to view it.`,
+            dedupe_key: `result:${event.result_id}:parent:${student.parent.user.id}`,
+          },
+        ]);
       }
     } catch (error) {
       this.logger.error('Failed to send result publication notifications', {

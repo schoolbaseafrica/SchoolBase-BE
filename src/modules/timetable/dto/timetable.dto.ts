@@ -8,6 +8,7 @@ import {
   IsBoolean,
   IsOptional,
   IsArray,
+  Matches,
   ValidateNested,
 } from 'class-validator';
 
@@ -23,6 +24,9 @@ export class CreateScheduleDto {
     description: 'Start time in HH:MM:SS format',
   })
   @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/, {
+    message: 'start_time must use HH:MM or HH:MM:SS format',
+  })
   start_time: string; // Format: HH:MM:SS
 
   @ApiProperty({
@@ -30,6 +34,9 @@ export class CreateScheduleDto {
     description: 'End time in HH:MM:SS format',
   })
   @IsString()
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/, {
+    message: 'end_time must use HH:MM or HH:MM:SS format',
+  })
   end_time: string;
 
   @ApiPropertyOptional({
@@ -44,11 +51,13 @@ export class CreateScheduleDto {
   @ApiPropertyOptional({ description: 'Subject ID', example: 'uuid-string' })
   @IsUUID()
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   subject_id?: string;
 
   @ApiPropertyOptional({ description: 'Teacher ID', example: 'uuid-string' })
   @IsUUID()
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   teacher_id?: string;
 
   @ApiPropertyOptional({
@@ -57,6 +66,7 @@ export class CreateScheduleDto {
   })
   @IsUUID()
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   room_id?: string;
 }
 

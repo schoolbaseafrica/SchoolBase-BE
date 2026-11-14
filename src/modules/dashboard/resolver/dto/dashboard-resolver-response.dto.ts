@@ -22,6 +22,9 @@ export class DashboardMetadataAdmin {
   total_students: number;
 
   @ApiProperty()
+  current_session_students: number;
+
+  @ApiProperty()
   total_teachers: number;
 
   @ApiProperty()

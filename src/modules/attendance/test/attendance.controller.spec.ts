@@ -12,6 +12,7 @@ import * as sysMsg from '../../../constants/system.messages';
 import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
 import { TermModelAction } from '../../academic-term/model-actions';
+import { SchoolEmailAlertService } from '../../notification/services/school-email-alert.service';
 import { ScheduleBasedAttendanceController } from '../controllers/schedule-based-attendance.controller';
 import { StudentDailyAttendanceController } from '../controllers/student-daily-attendance.controller';
 import { CreateEditRequestDto, ReviewEditRequestDto } from '../dto';
@@ -74,6 +75,10 @@ describe('ScheduleBasedAttendanceController', () => {
       controllers: [ScheduleBasedAttendanceController],
       providers: [
         AttendanceService,
+        {
+          provide: SchoolEmailAlertService,
+          useValue: { enqueueAttendance: jest.fn() },
+        },
         {
           provide: AttendanceModelAction,
           useValue: mockAttendanceModelAction,

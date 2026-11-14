@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString, IsUUID } from 'class-validator';
 
 export class GetStudentsQueryDto {
   @ApiPropertyOptional({
@@ -10,4 +10,16 @@ export class GetStudentsQueryDto {
   @IsOptional()
   @IsString()
   session_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'Subject ID for a term-specific score roster',
+  })
+  @IsOptional()
+  @IsUUID()
+  subject_id?: string;
+
+  @ApiPropertyOptional({ description: 'Term ID required with subject_id' })
+  @IsOptional()
+  @IsUUID()
+  term_id?: string;
 }

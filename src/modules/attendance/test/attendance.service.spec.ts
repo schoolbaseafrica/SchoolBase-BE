@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource, EntityManager, SelectQueryBuilder } from 'typeorm';
@@ -12,8 +16,14 @@ import {
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
 import { TermName } from '../../academic-term/entities/term.entity';
 import { TermModelAction } from '../../academic-term/model-actions';
+import { SchoolEmailAlertService } from '../../notification/services/school-email-alert.service';
 import { ScheduleBasedAttendance, StudentDailyAttendance } from '../entities';
-import { AttendanceStatus, DailyAttendanceStatus } from '../enums';
+import {
+  AttendanceStatus,
+  AttendanceType,
+  DailyAttendanceStatus,
+  EditRequestStatus,
+} from '../enums';
 import {
   AttendanceModelAction,
   StudentDailyAttendanceModelAction,
@@ -33,6 +43,7 @@ describe('AttendanceService', () => {
   const mockFindOne = jest.fn();
   const mockFind = jest.fn();
   const mockUpdate = jest.fn();
+  const enqueueAttendance = jest.fn();
 
   const mockEntityManager = {
     create: mockCreate,
@@ -40,6 +51,7 @@ describe('AttendanceService', () => {
     findOne: mockFindOne,
     find: mockFind,
     update: mockUpdate,
+    query: jest.fn().mockResolvedValue([]),
   } as unknown as EntityManager;
 
   const mockLogger = {
@@ -92,6 +104,7 @@ describe('AttendanceService', () => {
     };
 
     const mockDataSource = {
+      query: jest.fn().mockResolvedValue([]),
       transaction: jest.fn((callback) => callback(mockEntityManager)),
       manager: {
         findOne: mockFindOne,
@@ -134,6 +147,7 @@ describe('AttendanceService', () => {
           provide: DataSource,
           useValue: mockDataSource,
         },
+        { provide: SchoolEmailAlertService, useValue: { enqueueAttendance } },
         {
           provide: AttendanceEditRequestModelAction,
           useValue: mockEditRequestModelAction,
@@ -153,6 +167,46 @@ describe('AttendanceService', () => {
     academicSessionService = module.get(AcademicSessionService);
   });
 
+  describe('daily attendance access', () => {
+    it('compares text teacher sessions with UUID daily attendance sessions safely', async () => {
+      const query = jest
+        .spyOn(service['dataSource'], 'query')
+        .mockResolvedValueOnce([{ allowed: 1 }]);
+      await expect(
+        service.assertCanEditDailyAttendance('user-1', 'attendance-1'),
+      ).resolves.toBeUndefined();
+      expect(query).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'assignment.session_id = attendance.session_id::text',
+        ),
+        ['attendance-1', 'user-1'],
+      );
+    });
+
+    it('rejects a teacher who is not assigned to the class', async () => {
+      mockFindOne.mockResolvedValueOnce(null);
+      await expect(
+        service.assertClassTeacherAccess('user-1', 'class-1'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('allows the assigned class teacher', async () => {
+      mockFindOne.mockResolvedValueOnce({ id: 'assignment-1' });
+      await expect(
+        service.assertClassTeacherAccess('user-1', 'class-1', 'session-1'),
+      ).resolves.toBeUndefined();
+      expect(mockFindOne).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          where: expect.objectContaining({
+            session_id: 'session-1',
+            is_active: true,
+          }),
+        }),
+      );
+    });
+  });
+
   afterEach(async () => {
     jest.clearAllMocks();
     if (module) {
@@ -162,6 +216,42 @@ describe('AttendanceService', () => {
 
   it('should be defined', () => {
     expect(service).toBeDefined();
+  });
+
+  it('returns class check-in times as ISO timestamps for local display', async () => {
+    mockFind.mockResolvedValueOnce([
+      {
+        student: {
+          id: 'student-1',
+          user: { first_name: 'Ada', middle_name: '', last_name: 'Okafor' },
+        },
+      },
+    ]);
+    const records = [
+      {
+        student_id: 'student-1',
+        check_in_time: new Date('2026-10-05T08:30:00.000Z'),
+        check_out_time: new Date('2026-10-05T14:00:00.000Z'),
+        status: DailyAttendanceStatus.PRESENT,
+      },
+    ];
+    const dataSource = module.get<DataSource>(DataSource);
+    jest.spyOn(dataSource.manager, 'createQueryBuilder').mockReturnValueOnce({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      getMany: jest.fn().mockResolvedValue(records),
+    } as never);
+
+    const result = await service.getClassDailyAttendance(
+      'class-1',
+      '2026-10-05',
+    );
+    expect(result.students[0]).toEqual(
+      expect.objectContaining({
+        check_in_time: '2026-10-05T08:30:00.000Z',
+        check_out_time: '2026-10-05T14:00:00.000Z',
+      }),
+    );
   });
 
   describe('getScheduleAttendance', () => {
@@ -228,8 +318,13 @@ describe('AttendanceService', () => {
 
       attendanceModelAction.get.mockResolvedValue(existingAttendance);
       attendanceModelAction.update.mockResolvedValue(updatedAttendance);
+      mockFindOne.mockResolvedValueOnce({ id: 'schedule-123' });
 
-      const result = await service.updateAttendance(attendanceId, updateDto);
+      const result = await service.updateAttendance(
+        attendanceId,
+        updateDto,
+        'teacher-user-1',
+      );
 
       expect(result.data.status).toBe(AttendanceStatus.PRESENT);
       expect(result.message).toBe(sysMsg.ATTENDANCE_UPDATED_SUCCESSFULLY);
@@ -239,10 +334,44 @@ describe('AttendanceService', () => {
       attendanceModelAction.get.mockResolvedValue(null);
 
       await expect(
-        service.updateAttendance('non-existent', {
-          status: AttendanceStatus.PRESENT,
-        }),
+        service.updateAttendance(
+          'non-existent',
+          {
+            status: AttendanceStatus.PRESENT,
+          },
+          'teacher-user-1',
+        ),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects a teacher not assigned to the lesson before changing attendance', async () => {
+      attendanceModelAction.get.mockResolvedValue({
+        id: 'attendance-123',
+        schedule_id: 'schedule-123',
+        is_locked: false,
+      } as ScheduleBasedAttendance);
+      mockFindOne.mockResolvedValueOnce(null);
+
+      await expect(
+        service.updateAttendance(
+          'attendance-123',
+          { status: AttendanceStatus.PRESENT },
+          'unassigned-teacher-user',
+        ),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockFindOne).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          where: {
+            id: 'schedule-123',
+            teacher: {
+              user_id: 'unassigned-teacher-user',
+              is_active: true,
+            },
+          },
+        }),
+      );
+      expect(attendanceModelAction.update).not.toHaveBeenCalled();
     });
   });
 
@@ -358,6 +487,18 @@ describe('AttendanceService', () => {
       );
       expect(result.marked).toBeGreaterThanOrEqual(0);
       expect(result.total).toBe(2);
+      expect(mockEntityManager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining([teacherId, 'ATTENDANCE', 'class-123', 'MARK']),
+      );
+      expect(enqueueAttendance).toHaveBeenCalledWith([
+        {
+          student_id: 'student-002',
+          class_id: 'class-123',
+          date: '2025-12-02',
+          status: 'LATE',
+        },
+      ]);
     });
 
     it('should throw BadRequestException for future dates', async () => {
@@ -409,6 +550,59 @@ describe('AttendanceService', () => {
         identifierOptions: { id: attendanceId },
       });
     });
+
+    it('queues a parent alert when daily attendance is corrected to absent', async () => {
+      studentDailyAttendanceModelAction.get.mockResolvedValue({
+        id: 'attendance-id',
+        student_id: 'student-id',
+        class_id: 'class-id',
+        date: new Date('2026-10-08T00:00:00Z'),
+        is_locked: false,
+      } as StudentDailyAttendance);
+      await service.updateStudentDailyAttendance('attendance-id', {
+        status: DailyAttendanceStatus.ABSENT,
+      });
+      expect(enqueueAttendance).toHaveBeenCalledWith([
+        {
+          student_id: 'student-id',
+          class_id: 'class-id',
+          date: '2026-10-08',
+          status: 'ABSENT',
+        },
+      ]);
+    });
+  });
+
+  it('queues an alert after approving a late-attendance correction', async () => {
+    const editRequests = module.get(
+      AttendanceEditRequestModelAction,
+    ) as jest.Mocked<AttendanceEditRequestModelAction>;
+    editRequests.get.mockResolvedValue({
+      id: 'request-id',
+      attendance_id: 'attendance-id',
+      attendance_type: AttendanceType.DAILY,
+      status: EditRequestStatus.PENDING,
+      proposed_changes: { status: 'late' },
+      createdAt: new Date('2026-10-09T00:00:00Z'),
+    } as never);
+    studentDailyAttendanceModelAction.get.mockResolvedValue({
+      id: 'attendance-id',
+      student_id: 'student-id',
+      class_id: 'class-id',
+      date: new Date('2026-10-08T00:00:00Z'),
+      updatedAt: new Date('2026-10-08T00:00:00Z'),
+    } as StudentDailyAttendance);
+    await service.reviewEditRequest('request-id', 'admin-id', {
+      status: EditRequestStatus.APPROVED,
+    });
+    expect(enqueueAttendance).toHaveBeenCalledWith([
+      {
+        student_id: 'student-id',
+        class_id: 'class-id',
+        date: '2026-10-08',
+        status: 'LATE',
+      },
+    ]);
   });
 
   describe('getClassDailyAttendance', () => {

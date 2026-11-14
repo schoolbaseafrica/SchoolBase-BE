@@ -19,14 +19,15 @@ import {
 import { ClassStudentValidationService } from './services/class-student-validation.service';
 import { ClassSubjectService } from './services/class-subject.service';
 import { ClassService } from './services/class.service';
+import { StudentSubjectEnrollmentService } from './services/student-subject-enrollment.service';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Class, ClassTeacher, ClassSubject, ClassStudent]),
     AcademicSessionModule,
-    StudentModule,
+    forwardRef(() => StudentModule),
     TeachersModule,
-    NotificationModule,
+    forwardRef(() => NotificationModule),
     forwardRef(() => SubjectModule),
   ],
   controllers: [ClassController, ClassSubjectController],
@@ -38,12 +39,15 @@ import { ClassService } from './services/class.service';
     ClassStudentModelAction,
     ClassSubjectModelAction,
     ClassSubjectService,
+    StudentSubjectEnrollmentService,
   ],
   exports: [
+    ClassService,
     ClassModelAction,
     ClassTeacherModelAction,
     ClassStudentModelAction,
     ClassSubjectModelAction,
+    StudentSubjectEnrollmentService,
   ],
 })
 export class ClassModule {}

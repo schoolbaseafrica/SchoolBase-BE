@@ -18,6 +18,7 @@ import { TermModelAction } from '../../academic-term/model-actions';
 import { Class } from '../../class/entities/class.entity';
 import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { ClassModelAction } from '../../class/model-actions/class.actions';
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
 import { GradeModelAction } from '../../grade/model-actions';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
 import { Result } from '../entities';
@@ -25,6 +26,8 @@ import {
   ResultModelAction,
   ResultSubjectLineModelAction,
 } from '../model-actions';
+import { LEGACY_GRADING_POLICY } from '../policy/grading-policy';
+import { GradingPolicyService } from '../policy/grading-policy.service';
 
 import { ResultService } from './result.service';
 
@@ -36,6 +39,8 @@ describe('ResultService', () => {
   let termModelAction: jest.Mocked<TermModelAction>;
   let academicSessionModelAction: jest.Mocked<AcademicSessionModelAction>;
   let studentModelAction: StudentModelAction;
+  let classSubjectModelAction: jest.Mocked<ClassSubjectModelAction>;
+  let dataSource: jest.Mocked<DataSource>;
 
   const mockLogger = {
     child: jest.fn().mockReturnThis(),
@@ -53,6 +58,7 @@ describe('ResultService', () => {
     manager: {
       save: jest.fn(),
       delete: jest.fn(),
+      query: jest.fn().mockResolvedValue([]),
     },
   };
 
@@ -161,6 +167,7 @@ describe('ResultService', () => {
     term_id: 'term1',
     term: mockTerm,
     academic_session_id: 'session1',
+    grading_policy_version_id: null,
     academicSession: mockAcademicSession,
     total_score: 80,
     average_score: 80,
@@ -187,6 +194,20 @@ describe('ResultService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ResultService,
+        {
+          provide: StudentSubjectEnrollmentService,
+          useValue: { expectedSubjectCount: jest.fn().mockResolvedValue(1) },
+        },
+        {
+          provide: GradingPolicyService,
+          useValue: {
+            resolve: jest.fn().mockResolvedValue({
+              id: null,
+              version: 1,
+              definition: LEGACY_GRADING_POLICY,
+            }),
+          },
+        },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: mockLogger,
@@ -246,6 +267,8 @@ describe('ResultService', () => {
         {
           provide: DataSource,
           useValue: {
+            transaction: jest.fn(),
+            query: jest.fn().mockResolvedValue([]),
             createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
             getRepository: jest.fn().mockReturnValue({
               createQueryBuilder: jest.fn().mockReturnValue(mockQueryBuilder),
@@ -272,14 +295,116 @@ describe('ResultService', () => {
     service = module.get<ResultService>(ResultService);
     resultModelAction = module.get(ResultModelAction);
     studentModelAction = module.get<StudentModelAction>(StudentModelAction);
+    classSubjectModelAction = module.get(ClassSubjectModelAction);
     classModelAction = module.get(ClassModelAction);
     classStudentModelAction = module.get(ClassStudentModelAction);
     termModelAction = module.get(TermModelAction);
     academicSessionModelAction = module.get(AcademicSessionModelAction);
+    dataSource = module.get(DataSource);
   });
 
   afterEach(() => {
     jest.clearAllMocks();
+  });
+
+  describe('publication revisions', () => {
+    const publishable = {
+      ...mockResult,
+      subject_count: 1,
+      subject_lines: [
+        {
+          id: 'line1',
+          subject: { id: 'subject1', name: 'Mathematics' },
+          ca_score: 20,
+          exam_score: 60,
+          total_score: 80,
+          grade_letter: 'A',
+          remark: 'Excellent',
+        },
+      ],
+    } as unknown as Result;
+    it('stores a snapshot of the result and school identity', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: mockResult.id }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ id: 'school1', name: 'SchoolBase' }])
+        .mockResolvedValueOnce([
+          { template_id: 'academic-atlas', template_version: 1 },
+        ])
+        .mockResolvedValueOnce([{ subject_id: 'subject1', is_elective: false }])
+        .mockResolvedValueOnce([{ id: 'publication1', revision: 1 }]);
+      const manager = {
+        query,
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(publishable),
+        }),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation(async (callback) =>
+          (callback as unknown as (value: typeof manager) => Promise<unknown>)(
+            manager,
+          ),
+        );
+      await expect(
+        service.publishResult(mockResult.id, 'admin1'),
+      ).resolves.toMatchObject({ revision: 1 });
+      const insert = query.mock.calls[5][1] as unknown[];
+      const snapshot = JSON.parse(insert[2] as string);
+      expect(snapshot.result.student.registration_number).toBe('REG001');
+      expect(snapshot.school.name).toBe('SchoolBase');
+      expect(snapshot.gradingPolicy.policy_key).toBe('schoolbase-classic');
+      expect(snapshot.subjectGroups).toEqual([
+        { subject_id: 'subject1', is_elective: false },
+      ]);
+      expect(insert[4]).toBe('academic-atlas');
+    });
+
+    it('requires a reason before replacing the published revision', async () => {
+      const query = jest
+        .fn()
+        .mockResolvedValueOnce([{ id: mockResult.id }])
+        .mockResolvedValueOnce([{ revision: 1 }]);
+      const manager = {
+        query,
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(publishable),
+        }),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation(async (callback) =>
+          (callback as unknown as (value: typeof manager) => Promise<unknown>)(
+            manager,
+          ),
+        );
+      await expect(
+        service.publishResult(mockResult.id, 'admin1'),
+      ).rejects.toThrow('correction reason');
+      expect(query).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects incomplete results before a publication can be created', async () => {
+      const query = jest.fn().mockResolvedValue([{ id: mockResult.id }]);
+      const manager = {
+        query,
+        getRepository: jest.fn().mockReturnValue({
+          findOne: jest.fn().mockResolvedValue(mockResult),
+        }),
+      };
+      jest
+        .spyOn(dataSource, 'transaction')
+        .mockImplementation(async (callback) =>
+          (callback as unknown as (value: typeof manager) => Promise<unknown>)(
+            manager,
+          ),
+        );
+      await expect(
+        service.publishResult(mockResult.id, 'admin1'),
+      ).rejects.toThrow('Generate a complete result');
+      expect(query).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('getResultById', () => {
@@ -355,6 +480,123 @@ describe('ResultService', () => {
   });
 
   describe('generateClassResults', () => {
+    it('records result publication before committing the generated results', async () => {
+      const classId = 'class-id';
+      const termId = 'term-id';
+      const sessionId = 'session-id';
+      classModelAction.get.mockResolvedValue({
+        id: classId,
+        is_deleted: false,
+        academicSession: { id: sessionId },
+      } as never);
+      termModelAction.get.mockResolvedValue({
+        id: termId,
+        academicSession: { id: sessionId },
+      } as never);
+      academicSessionModelAction.get.mockResolvedValue({
+        id: sessionId,
+      } as never);
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [{ student: { id: 'student-id' } }],
+      } as never);
+      classSubjectModelAction.list.mockResolvedValue({
+        payload: [{ id: 'subject-id' }],
+      } as never);
+      (
+        service as unknown as { computeStudentResultData: jest.Mock }
+      ).computeStudentResultData = jest.fn().mockResolvedValue({
+        student_id: 'student-id',
+        class_id: classId,
+        grades: [],
+        total_score: 80,
+        average_score: 80,
+        subject_count: 1,
+      });
+      resultModelAction.get.mockResolvedValue(null);
+      mockQueryRunner.manager.save.mockImplementation(async (_type, value) =>
+        Array.isArray(value) ? value : { ...value, id: 'result-id' },
+      );
+
+      await service.generateClassResults(
+        classId,
+        termId,
+        sessionId,
+        'actor-id',
+      );
+
+      expect(mockQueryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining(['actor-id', 'RESULT', classId, 'PUBLISH']),
+      );
+      expect(
+        mockQueryRunner.manager.query.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        mockQueryRunner.commitTransaction.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('keeps zero subject scores in generated result lines', async () => {
+      const classId = 'class-id';
+      const termId = 'term-id';
+      const sessionId = 'session-id';
+      classModelAction.get.mockResolvedValue({
+        id: classId,
+        is_deleted: false,
+        academicSession: { id: sessionId },
+      } as never);
+      termModelAction.get.mockResolvedValue({
+        id: termId,
+        academicSession: { id: sessionId },
+      } as never);
+      academicSessionModelAction.get.mockResolvedValue({
+        id: sessionId,
+      } as never);
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [{ student: { id: 'student-id' } }],
+      } as never);
+      classSubjectModelAction.list.mockResolvedValue({
+        payload: [{ id: 'subject-id' }],
+      } as never);
+      (
+        service as unknown as { computeStudentResultData: jest.Mock }
+      ).computeStudentResultData = jest.fn().mockResolvedValue({
+        student_id: 'student-id',
+        class_id: classId,
+        grades: [
+          {
+            subject_id: 'subject-id',
+            ca_score: 0,
+            exam_score: 0,
+            total_score: 0,
+            grade_letter: 'F',
+            comment: null,
+          },
+        ],
+        total_score: 0,
+        average_score: 0,
+        subject_count: 1,
+      });
+      resultModelAction.get.mockResolvedValue(null);
+      mockQueryRunner.manager.save.mockImplementation(async (_type, value) =>
+        Array.isArray(value) ? value : { ...value, id: 'result-id' },
+      );
+
+      await service.generateClassResults(classId, termId, sessionId);
+
+      const lines = mockQueryRunner.manager.save.mock.calls.find((call) =>
+        Array.isArray(call[1]),
+      )?.[1] as Array<{
+        ca_score: number | null;
+        exam_score: number | null;
+        total_score: number | null;
+      }>;
+      expect(lines[0]).toMatchObject({
+        ca_score: 0,
+        exam_score: 0,
+        total_score: 0,
+      });
+    });
+
     it('should throw NotFoundException when class does not exist', async () => {
       const classId = 'class-uuid-123';
       const termId = 'term-uuid-123';
@@ -395,6 +637,44 @@ describe('ResultService', () => {
       await expect(
         service.generateClassResults(classId, termId, sessionId),
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  it('returns zero scores as numbers in result readbacks', () => {
+    const response = (
+      service as unknown as {
+        transformToResponseDto: (result: Result) => {
+          total_score: number | null;
+          average_score: number | null;
+          subject_lines: Array<{
+            ca_score: number | null;
+            exam_score: number | null;
+            total_score: number | null;
+          }>;
+        };
+      }
+    ).transformToResponseDto({
+      ...mockResult,
+      total_score: 0,
+      average_score: 0,
+      subject_lines: [
+        {
+          id: 'line-id',
+          subject: { id: 'subject-id', name: 'Mathematics' },
+          ca_score: 0,
+          exam_score: 0,
+          total_score: 0,
+          grade_letter: 'F',
+          remark: 'Fail',
+        },
+      ],
+    } as unknown as Result);
+
+    expect(response).toMatchObject({ total_score: 0, average_score: 0 });
+    expect(response.subject_lines[0]).toMatchObject({
+      ca_score: 0,
+      exam_score: 0,
+      total_score: 0,
     });
   });
 
@@ -715,6 +995,29 @@ describe('ResultService', () => {
       );
     });
 
+    it('returns the latest published revision instead of regenerated live values', async () => {
+      jest.spyOn(studentModelAction, 'get').mockResolvedValue(mockStudent);
+      jest.spyOn(resultModelAction, 'list').mockResolvedValue({
+        payload: [mockResult],
+        paginationMeta: mockPaginationMeta,
+      });
+      const published = {
+        ...service['transformToResponseDto'](mockResult),
+        total_score: 42,
+      };
+      dataSource.query.mockResolvedValueOnce([
+        { result_id: mockResult.id, snapshot: { result: published } },
+      ]);
+
+      const result = await service.getStudentResults(studentId, query);
+
+      expect(result.data[0]).toEqual(published);
+      expect(dataSource.query).toHaveBeenCalledWith(
+        expect.stringContaining('ORDER BY result_id, revision DESC'),
+        [[mockResult.id]],
+      );
+    });
+
     it('should filter results by term_id if provided', async () => {
       const queryWithTerm = { term_id: 'term1' };
       jest.spyOn(studentModelAction, 'get').mockResolvedValue(mockStudent);
@@ -820,15 +1123,19 @@ describe('ResultService', () => {
       subject_lines: [],
     };
 
-    it('should throw NotFoundException when no results found', async () => {
+    it('returns an empty page when no results have been generated', async () => {
       resultModelAction.list.mockResolvedValue({
         payload: [],
         paginationMeta: { total: 0, page, limit, total_pages: 0 },
       });
 
-      await expect(service.getResults({ page, limit })).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(service.getResults({ page, limit })).resolves.toEqual({
+        total: 0,
+        totalPages: 0,
+        page,
+        limit,
+        data: [],
+      });
     });
 
     it('should return paginated results with default subject_lines', async () => {

@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -14,6 +15,22 @@ import {
 import { Gender } from '../../shared/enums';
 
 export class CreateStudentDto {
+  @ApiProperty({
+    required: false,
+    description: 'Active class to enroll the student in during creation',
+  })
+  @IsOptional()
+  @IsUUID()
+  class_id?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Custom registration number when manual IDs are enabled',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  registration_number?: string;
   @ApiProperty({
     description: 'First name',
     example: 'Favour',
@@ -52,10 +69,11 @@ export class CreateStudentDto {
   @ApiProperty({
     description: 'Email address',
     example: 'chinaza110@gmail.com',
+    required: false,
   })
+  @IsOptional()
   @IsEmail()
-  @IsNotEmpty()
-  email: string;
+  email?: string;
 
   @ApiProperty({
     description: 'Password (minimum 8 characters)',

@@ -1,9 +1,10 @@
 import { Injectable, ForbiddenException, Inject } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
-import { ArrayContains } from 'typeorm';
+import { DataSource } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { ParentModelAction } from '../../parent/model-actions/parent-actions';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
@@ -32,6 +33,8 @@ export class ResolverService {
     private readonly teacherModelAction: TeacherModelAction,
     private readonly studentModelAction: StudentModelAction,
     private readonly parentModelAction: ParentModelAction,
+    private readonly academicSessionService: AcademicSessionService,
+    private readonly dataSource: DataSource,
     @Inject(WINSTON_MODULE_PROVIDER) baseLogger: Logger,
   ) {
     this.logger = baseLogger.child({ context: ResolverService.name });
@@ -40,6 +43,7 @@ export class ResolverService {
   async resolveDashboard(
     userId: string,
     tokenRole: UserRole[],
+    sessionId?: string,
   ): Promise<DashboardResolvedDataDto> {
     const user = await this.userService.findOne(userId);
 
@@ -74,7 +78,7 @@ export class ResolverService {
       case UserRole.ADMIN:
         dashboard = UserRole.ADMIN;
         modules = DASHBOARD_MODULES[UserRole.ADMIN];
-        metadata = await this.getAdminMetadata();
+        metadata = await this.getAdminMetadata(sessionId);
         break;
 
       case UserRole.TEACHER:
@@ -109,32 +113,41 @@ export class ResolverService {
     };
   }
 
-  private async getAdminMetadata(): Promise<DashboardMetadataAdmin> {
-    const { payload: students } = await this.userModelAction.list({
-      filterRecordOptions: {
-        role: ArrayContains([UserRole.STUDENT]),
-        is_active: true,
-      },
-    });
-
-    const { payload: teachers } = await this.userModelAction.list({
-      filterRecordOptions: {
-        role: ArrayContains([UserRole.TEACHER]),
-        is_active: true,
-      },
-    });
-
-    const { payload: parents } = await this.userModelAction.list({
-      filterRecordOptions: {
-        role: ArrayContains([UserRole.PARENT]),
-        is_active: true,
-      },
-    });
+  private async getAdminMetadata(
+    sessionId?: string,
+  ): Promise<DashboardMetadataAdmin> {
+    const [counts] = (await this.dataSource.query(
+      `SELECT
+        (SELECT COUNT(*)::int FROM students s
+          JOIN users u ON u.id = s.user_id AND u.is_active = true
+          WHERE s.is_deleted IS NOT TRUE) AS students,
+        (SELECT COUNT(DISTINCT cs.student_id)::int FROM class_students cs
+          JOIN students s ON s.id = cs.student_id AND s.is_deleted IS NOT TRUE
+          JOIN users u ON u.id = s.user_id AND u.is_active = true
+          WHERE cs.is_active = true AND cs.session_id = COALESCE(
+            $1::text,
+            (SELECT id::text FROM academic_sessions
+              WHERE status = 'Active' AND deleted_at IS NULL
+              ORDER BY start_date DESC LIMIT 1)
+          )) AS current_session_students,
+        (SELECT COUNT(*)::int FROM teachers t
+          JOIN users u ON u.id = t.user_id AND u.is_active = true
+          WHERE t.is_active = true) AS teachers,
+        (SELECT COUNT(*)::int FROM parents
+          WHERE is_active = true AND deleted_at IS NULL) AS parents`,
+      [sessionId ?? null],
+    )) as Array<{
+      students: number;
+      current_session_students: number;
+      teachers: number;
+      parents: number;
+    }>;
 
     return {
-      total_students: students.length,
-      total_teachers: teachers.length,
-      total_parents: parents.length,
+      total_students: counts?.students ?? 0,
+      current_session_students: counts?.current_session_students ?? 0,
+      total_teachers: counts?.teachers ?? 0,
+      total_parents: counts?.parents ?? 0,
     };
   }
 

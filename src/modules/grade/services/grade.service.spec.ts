@@ -7,6 +7,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
 
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
+import { LEGACY_GRADING_POLICY } from '../../result/policy/grading-policy';
+import { GradingPolicyService } from '../../result/policy/grading-policy.service';
 import { UserRole } from '../../shared/enums';
 import { StudentModelAction } from '../../student/model-actions';
 import { GradeSubmissionStatus } from '../entities/grade-submission.entity';
@@ -42,6 +45,19 @@ describe('GradeService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         GradeService,
+        {
+          provide: GradingPolicyService,
+          useValue: {
+            resolve: jest.fn().mockResolvedValue({
+              id: null,
+              definition: LEGACY_GRADING_POLICY,
+            }),
+          },
+        },
+        {
+          provide: StudentSubjectEnrollmentService,
+          useValue: { isStudentEligible: jest.fn().mockResolvedValue(true) },
+        },
         {
           provide: WINSTON_MODULE_PROVIDER,
           useValue: mockLogger,
@@ -148,6 +164,7 @@ describe('GradeService', () => {
     }).compile();
 
     service = module.get<GradeService>(GradeService);
+    mockClassSubjectRepo.findOne.mockResolvedValue({ id: 'assignment-1' });
     gradeModelAction = module.get(GradeModelAction);
     studentModelAction = module.get(StudentModelAction);
   });
@@ -195,6 +212,36 @@ describe('GradeService', () => {
 
       expect(result).toBeDefined();
       expect(gradeModelAction.update).toHaveBeenCalled();
+    });
+
+    it('keeps a zero total as a real F grade', async () => {
+      (gradeModelAction.get as jest.Mock).mockResolvedValue({
+        ...mockGrade,
+        ca_score: 0,
+        exam_score: 0,
+      });
+      (gradeModelAction.update as jest.Mock).mockResolvedValue(mockGrade);
+
+      await service.updateGrade(mockTeacherId, mockGradeId, { ca_score: 0 });
+
+      expect(gradeModelAction.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          updatePayload: expect.objectContaining({
+            total_score: 0,
+            grade_letter: 'F',
+          }),
+        }),
+      );
+    });
+
+    it('blocks editing a rejected grade after subject ownership changes', async () => {
+      (gradeModelAction.get as jest.Mock).mockResolvedValue(mockGrade);
+      mockClassSubjectRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.updateGrade(mockTeacherId, mockGradeId, { ca_score: 25 }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(gradeModelAction.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if grade not found', async () => {
@@ -249,6 +296,9 @@ describe('GradeService', () => {
       expect(calculateGrade(45)).toBe('E');
       expect(calculateGrade(30)).toBe('F');
       expect(calculateGrade(0)).toBe('F');
+      expect(calculateGrade(79.5)).toBe('B');
+      expect(calculateGrade(69.99)).toBe('C');
+      expect(() => calculateGrade(100.01)).toThrow(BadRequestException);
     });
   });
 

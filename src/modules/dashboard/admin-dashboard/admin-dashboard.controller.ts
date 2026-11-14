@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards, HttpStatus } from '@nestjs/common';
+import { Controller, Get, UseGuards, HttpStatus, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
 import { Roles } from '../../auth/decorators/roles.decorator';
@@ -17,15 +17,26 @@ import { AdminDashboardDataDto } from './dto/admin-dashboard-response.dto';
 export class AdminDashboardController {
   constructor(private readonly adminDashboardService: AdminDashboardService) {}
 
+  @Get('today-attendance')
+  @Roles(UserRole.ADMIN)
+  async loadTodayAttendance(@Query('session_id') sessionId?: string) {
+    return {
+      message: "Today's attendance loaded successfully",
+      status_code: HttpStatus.OK,
+      data: await this.adminDashboardService.loadTodayAttendance(sessionId),
+    };
+  }
+
   @Get('today-activities')
   @Roles(UserRole.ADMIN)
   @ApiLoadTodayActivities()
-  async loadTodayActivities(): Promise<{
+  async loadTodayActivities(@Query('session_id') sessionId?: string): Promise<{
     message: string;
     status_code: number;
     data: AdminDashboardDataDto;
   }> {
-    const data = await this.adminDashboardService.loadTodayActivities();
+    const data =
+      await this.adminDashboardService.loadTodayActivities(sessionId);
 
     return {
       message: "Today's activities loaded successfully",

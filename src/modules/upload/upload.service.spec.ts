@@ -15,6 +15,7 @@ describe('UploadService', () => {
   const mockMinioService = {
     uploadImage: jest.fn(),
     deleteImage: jest.fn(),
+    downloadFile: jest.fn(),
   };
 
   const mockLogger = {
@@ -62,6 +63,12 @@ describe('UploadService', () => {
   });
 
   describe('uploadPicture', () => {
+    it('rejects a missing file with a client error', async () => {
+      await expect(
+        service.uploadPicture(undefined as unknown as IMulterFile),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(minioService.uploadImage).not.toHaveBeenCalled();
+    });
     it('should upload a picture successfully with userId', async () => {
       const userId = 'user-uuid-123';
       const mockUploadResult = {
@@ -127,5 +134,35 @@ describe('UploadService', () => {
         BadRequestException,
       );
     });
+  });
+
+  it('stores receipts under a private object prefix', async () => {
+    mockMinioService.uploadImage.mockResolvedValue({
+      url: 'https://files.schoolbase.africa/demo/receipts/receipt.pdf',
+      publicId: 'receipts/receipt.pdf',
+    });
+    const file = { ...mockFile, mimetype: 'application/pdf' };
+    const result = await service.uploadReceipt(file);
+    expect(minioService.uploadImage).toHaveBeenCalledWith(file, 'receipts');
+    expect(result.publicId).toBe('receipts/receipt.pdf');
+  });
+
+  it('reads only receipt objects through the receipt download method', async () => {
+    const buffer = Buffer.from('%PDF-1.7');
+    mockMinioService.downloadFile.mockResolvedValue(buffer);
+    const url =
+      'https://files.example/demo/receipts/20a06a46-407a-4ee1-a395-17ddc20f8137.pdf';
+    await expect(service.downloadReceipt(url)).resolves.toEqual({
+      buffer,
+      mimeType: 'application/pdf',
+    });
+    expect(minioService.downloadFile).toHaveBeenCalledWith(
+      'receipts/20a06a46-407a-4ee1-a395-17ddc20f8137.pdf',
+    );
+    await expect(
+      service.downloadReceipt(
+        'https://files.example/demo/assignments/secret.pdf',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

@@ -44,8 +44,10 @@
     "@nestjs/mapped-types": "*",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.0",
+    "@nestjs/platform-socket.io": "^11.2.6",
     "@nestjs/swagger": "^11.2.2",
     "@nestjs/typeorm": "^11.0.0",
+    "@nestjs/websockets": "^11.2.6",
     "@types/multer": "^2.0.0",
     "@types/qrcode": "^1.5.6",
     "@types/speakeasy": "^2.0.10",
@@ -55,6 +57,7 @@
     "csv-parser": "^3.2.0",
     "dotenv": "^17.2.3",
     "google-auth-library": "^10.5.0",
+    "livekit-server-sdk": "^2.19.1",
     "minio": "^8.0.6",
     "morgan": "^1.10.1",
     "nest-winston": "^1.10.2",
@@ -67,9 +70,11 @@
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
     "sharp": "^0.34.5",
+    "socket.io": "^4.8.4",
     "speakeasy": "^2.0.0",
     "typeorm": "^0.3.27",
-    "winston": "^3.18.3"
+    "winston": "^3.18.3",
+    "yjs": "^13.6.33"
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.0",

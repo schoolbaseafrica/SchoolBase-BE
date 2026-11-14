@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
@@ -15,6 +16,7 @@ import {
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../constants/system.messages';
+import { SessionStatus } from '../academic-session/entities/academic-session.entity';
 import { ClassStudent } from '../class/entities/class-student.entity';
 import { ClassSubject } from '../class/entities/class-subject.entity';
 import { ClassStudentModelAction } from '../class/model-actions/class-student.action';
@@ -117,6 +119,7 @@ describe('ParentService', () => {
       release: jest.fn().mockResolvedValue(undefined),
       manager: {
         save: mockSave,
+        query: jest.fn().mockResolvedValue([]),
       },
     } as unknown as jest.Mocked<QueryRunner>;
 
@@ -144,6 +147,7 @@ describe('ParentService', () => {
 
     // Mock DataSource
     dataSource = {
+      query: jest.fn().mockResolvedValue([]),
       createQueryRunner: jest.fn().mockReturnValue(queryRunner),
       transaction: jest.fn().mockImplementation(async (callback) => {
         // Simulate transaction by calling callback with queryRunner.manager
@@ -179,6 +183,7 @@ describe('ParentService', () => {
 
     classStudentModelAction = {
       get: jest.fn(),
+      list: jest.fn(),
     } as unknown as jest.Mocked<ClassStudentModelAction>;
 
     classSubjectModelAction = {
@@ -252,6 +257,130 @@ describe('ParentService', () => {
     jest.clearAllMocks();
   });
 
+  describe('linkStaff', () => {
+    const adminId = '4f39dd2b-8791-4b46-9231-0b231f1030d4';
+
+    it.each([UserRole.ADMIN, UserRole.TEACHER])(
+      'adds a parent profile to an existing %s account',
+      async (role) => {
+        const person = { ...mockUser, id: adminId, role: [role] } as User;
+        const users = {
+          findOne: jest.fn().mockResolvedValue(person),
+          save: jest.fn().mockResolvedValue(person),
+        };
+        const parents = {
+          findOne: jest.fn().mockResolvedValue(null),
+          create: jest.fn((payload) => payload),
+          save: jest.fn().mockImplementation(async (payload) => ({
+            ...payload,
+            id: mockParentId,
+          })),
+        };
+        (queryRunner.manager.getRepository as jest.Mock) = jest.fn((entity) =>
+          entity === User ? users : parents,
+        );
+
+        const result = await service.linkStaff(adminId, adminId);
+
+        expect(result.id).toBe(mockParentId);
+        expect(users.save).toHaveBeenCalledWith(
+          expect.objectContaining({ role: [role, UserRole.PARENT] }),
+        );
+        expect(parents.save).toHaveBeenCalledWith(
+          expect.objectContaining({ user_id: adminId, is_active: true }),
+        );
+        expect(userModelAction.create).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects a second parent profile', async () => {
+      const users = {
+        findOne: jest.fn().mockResolvedValue({
+          ...mockUser,
+          id: adminId,
+          role: [UserRole.ADMIN],
+        }),
+        save: jest.fn(),
+      };
+      const parents = {
+        findOne: jest.fn().mockResolvedValue(mockParent),
+        save: jest.fn(),
+      };
+      (queryRunner.manager.getRepository as jest.Mock) = jest.fn((entity) =>
+        entity === User ? users : parents,
+      );
+
+      await expect(service.linkStaff(adminId, adminId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(users.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects an account without an active staff role', async () => {
+      const users = {
+        findOne: jest.fn().mockResolvedValue({
+          ...mockUser,
+          id: adminId,
+          role: [UserRole.STUDENT],
+        }),
+        save: jest.fn(),
+      };
+      (queryRunner.manager.getRepository as jest.Mock) = jest.fn(() => users);
+      await expect(service.linkStaff(adminId, adminId)).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(users.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('bulkCreate', () => {
+    it('creates valid rows and reports invalid rows without creating them', async () => {
+      const create = jest
+        .spyOn(service, 'create')
+        .mockResolvedValue({ id: 'parent-1' } as never);
+      const result = await service.bulkCreate([
+        {
+          first_name: 'Ada',
+          last_name: 'Okafor',
+          email: 'ada@example.com',
+          phone: '+2348012345678',
+          date_of_birth: '1985-01-01',
+          gender: 'Female',
+        },
+        {
+          first_name: 'Bad',
+          last_name: 'Row',
+          email: 'invalid',
+          phone: '+2348012345678',
+          date_of_birth: '1985-01-01',
+          gender: 'Female',
+        },
+      ]);
+      expect(result).toMatchObject({ total: 2, successful: 1, failed: 1 });
+      expect(create).toHaveBeenCalledTimes(1);
+      expect(result.results[1].error).toContain('Row 3: Email is invalid');
+    });
+
+    it('reports a malformed date and lost phone zero without creating the parent', async () => {
+      const create = jest.spyOn(service, 'create');
+      const result = await service.bulkCreate([
+        {
+          first_name: 'Ada',
+          last_name: 'Okafor',
+          email: 'ada@example.com',
+          phone: '8012345678',
+          date_of_birth: '15/05/1985',
+          gender: 'Female',
+        },
+      ]);
+      expect(result).toMatchObject({ total: 1, successful: 0, failed: 1 });
+      expect(result.results[0].error).toContain('Row 2:');
+      expect(result.results[0].error).toContain('08012345678');
+      expect(result.results[0].error).toContain('1985-05-15');
+      expect(create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('create', () => {
     const createDto: CreateParentDto = {
       first_name: 'John',
@@ -283,6 +412,15 @@ describe('ParentService', () => {
       expect(dataSource.transaction).toHaveBeenCalled();
     });
 
+    it('records creation with the acting admin in the same transaction', async () => {
+      await service.create(createDto, 'admin-id');
+
+      expect(queryRunner.manager.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO "activity_logs"'),
+        expect.arrayContaining(['admin-id', 'PARENT', mockParentId, 'CREATE']),
+      );
+    });
+
     it('should hash the password before creating user', async () => {
       await service.create(createDto);
 
@@ -303,6 +441,17 @@ describe('ParentService', () => {
         expect.objectContaining({
           createPayload: expect.objectContaining({
             role: [UserRole.PARENT],
+          }),
+        }),
+      );
+    });
+
+    it('marks a new parent as needing first password setup', async () => {
+      await service.create(createDto);
+      expect(userModelAction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          createPayload: expect.objectContaining({
+            password_setup_required: true,
           }),
         }),
       );
@@ -567,6 +716,26 @@ describe('ParentService', () => {
   });
 
   describe('update', () => {
+    it('cannot deactivate a teacher account through its parent profile', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.TEACHER, UserRole.PARENT] },
+      } as Parent);
+      await expect(
+        service.update(mockParentId, { is_active: false }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
+    it('cannot change account access for an admin who is also a parent', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.PARENT] },
+      } as Parent);
+      await expect(
+        service.update(mockParentId, { is_active: true }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     const updateDto: UpdateParentDto = {
       first_name: 'Updated',
       last_name: 'Name',
@@ -856,6 +1025,26 @@ describe('ParentService', () => {
   });
 
   describe('remove', () => {
+    it('cannot remove a parent profile by deactivating a shared teacher account', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.TEACHER, UserRole.PARENT] },
+      } as Parent);
+      await expect(service.remove(mockParentId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
+    it('cannot remove an admin who is also a parent', async () => {
+      parentModelAction.get.mockResolvedValue({
+        ...mockParent,
+        user: { ...mockUser, role: [UserRole.ADMIN, UserRole.PARENT] },
+      } as Parent);
+      await expect(service.remove(mockParentId)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(userModelAction.update).not.toHaveBeenCalled();
+    });
     beforeEach(() => {
       parentModelAction.get.mockResolvedValue(mockParent as Parent);
       parentModelAction.update.mockResolvedValue(mockParent as Parent);
@@ -945,6 +1134,13 @@ describe('ParentService', () => {
   });
 
   describe('linkStudentsToParent', () => {
+    let studentQueryBuilder: {
+      setLock: jest.Mock;
+      where: jest.Mock;
+      select: jest.Mock;
+      getOne: jest.Mock;
+      getRawOne: jest.Mock;
+    };
     const mockParentId = 'parent-uuid-123';
     const mockStudentId1 = 'student-uuid-001';
     const mockStudentId2 = 'student-uuid-002';
@@ -966,6 +1162,17 @@ describe('ParentService', () => {
     };
 
     beforeEach(() => {
+      studentQueryBuilder = {
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(mockStudent1),
+        getRawOne: jest.fn().mockResolvedValue({ parent_id: null }),
+      };
+      queryRunner.manager.createQueryBuilder = jest
+        .fn()
+        .mockReturnValue(studentQueryBuilder);
+      queryRunner.manager.update = jest.fn().mockResolvedValue({ affected: 1 });
       parentModelAction.get.mockResolvedValue(mockParent as Parent);
       studentModelAction.get.mockImplementation(async (options) => {
         const id = options.identifierOptions?.id;
@@ -973,7 +1180,6 @@ describe('ParentService', () => {
         if (id === mockStudentId2) return mockStudent2 as Student;
         return null;
       });
-      studentModelAction.update.mockResolvedValue({} as Student);
     });
 
     it('should link multiple students to parent successfully', async () => {
@@ -1080,30 +1286,16 @@ describe('ParentService', () => {
       await service.linkStudentsToParent(mockParentId, linkDto);
 
       expect(dataSource.transaction).toHaveBeenCalledTimes(1);
-      expect(studentModelAction.update).toHaveBeenCalledTimes(2);
-      expect(studentModelAction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          identifierOptions: { id: mockStudentId1 },
-          updatePayload: {
-            parent: { id: mockParentId },
-          },
-          transactionOptions: {
-            useTransaction: true,
-            transaction: expect.anything(),
-          },
-        }),
+      expect(queryRunner.manager.update).toHaveBeenCalledTimes(2);
+      expect(queryRunner.manager.update).toHaveBeenCalledWith(
+        Student,
+        mockStudentId1,
+        { parent: { id: mockParentId } },
       );
-      expect(studentModelAction.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          identifierOptions: { id: mockStudentId2 },
-          updatePayload: {
-            parent: { id: mockParentId },
-          },
-          transactionOptions: {
-            useTransaction: true,
-            transaction: expect.anything(),
-          },
-        }),
+      expect(queryRunner.manager.update).toHaveBeenCalledWith(
+        Student,
+        mockStudentId2,
+        { parent: { id: mockParentId } },
       );
     });
 
@@ -1132,7 +1324,43 @@ describe('ParentService', () => {
 
       expect(result.total_linked).toBe(1);
       expect(result.linked_students).toEqual([mockStudentId1]);
-      expect(studentModelAction.update).toHaveBeenCalledTimes(1);
+      expect(queryRunner.manager.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('requires explicit approval to replace another parent', async () => {
+      studentQueryBuilder.getRawOne.mockResolvedValue({
+        parent_id: 'old-parent',
+      });
+      await expect(
+        service.linkStudentsToParent(mockParentId, {
+          student_ids: [mockStudentId1],
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(queryRunner.manager.update).not.toHaveBeenCalled();
+    });
+
+    it('reassigns only when the confirmed previous parent matches', async () => {
+      studentQueryBuilder.getRawOne.mockResolvedValue({
+        parent_id: 'old-parent',
+      });
+      const dto: LinkStudentsDto = {
+        student_ids: [mockStudentId1],
+        allow_reassignment: true,
+        expected_parent_ids: { [mockStudentId1]: 'old-parent' },
+      };
+      await service.linkStudentsToParent(mockParentId, dto);
+      expect(queryRunner.manager.update).toHaveBeenCalledWith(
+        Student,
+        mockStudentId1,
+        { parent: { id: mockParentId } },
+      );
+
+      studentQueryBuilder.getRawOne.mockResolvedValue({
+        parent_id: 'different-parent',
+      });
+      await expect(
+        service.linkStudentsToParent(mockParentId, dto),
+      ).rejects.toThrow(ConflictException);
     });
   });
 
@@ -1579,6 +1807,9 @@ describe('ParentService', () => {
       // Default mocks for success case
       parentModelAction.get.mockResolvedValue(mockParent as Parent);
       studentModelAction.get.mockResolvedValue(mockStudent as Student);
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [{ class: mockClass }],
+      } as never);
     });
 
     it('should return a student profile if linked to the parent', async () => {
@@ -1599,9 +1830,38 @@ describe('ParentService', () => {
       expect(result.timetable?.id).toBe('timetable-uuid');
     });
 
-    it('should return a student profile with null academic details if not available', async () => {
-      const studentWithoutStream = { ...mockStudent, stream: null };
-      studentModelAction.get.mockResolvedValue(studentWithoutStream as Student);
+    it('uses the active enrollment when the legacy stream points to an old class', async () => {
+      studentModelAction.get.mockResolvedValue({
+        ...mockStudent,
+        stream: { class: { id: 'old-class', name: 'Old class' } },
+      } as Student);
+
+      const result = await service.getLinkedStudentProfileForParent(
+        mockParentId,
+        mockStudentId,
+      );
+
+      expect(result.class_details).toEqual({
+        id: 'class-uuid',
+        name: 'JSS 1A',
+      });
+    });
+
+    it('refuses to present an arbitrary class when two active enrollments exist', async () => {
+      classStudentModelAction.list.mockResolvedValue({
+        payload: [
+          { class: mockClass },
+          { class: { ...mockClass, id: 'other' } },
+        ],
+      } as never);
+
+      await expect(
+        service.getLinkedStudentProfileForParent(mockParentId, mockStudentId),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should return no current class when there is no active enrollment', async () => {
+      classStudentModelAction.list.mockResolvedValue({ payload: [] } as never);
 
       const result = await service.getLinkedStudentProfileForParent(
         mockParentId,
@@ -1633,17 +1893,20 @@ describe('ParentService', () => {
           parent: { id: mockParentId },
           is_deleted: false,
         },
-        relations: {
-          user: true,
-          stream: {
+        relations: { user: true },
+      });
+      expect(classStudentModelAction.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filterRecordOptions: {
+            student: { id: mockStudentId },
+            is_active: true,
             class: {
-              academicSession: true,
-              classSubjects: { subject: true, teacher: { user: true } },
-              timetable: true,
+              is_deleted: false,
+              academicSession: { status: SessionStatus.ACTIVE },
             },
           },
-        },
-      });
+        }),
+      );
     });
 
     it('should throw NotFoundException if parent not found', async () => {

@@ -19,6 +19,15 @@ export class FeeComponentResponseDto {
   })
   amount: number;
 
+  @ApiProperty({ format: 'uuid' })
+  session_id: string;
+
+  @ApiProperty({ format: 'uuid', nullable: true })
+  term_id: string | null;
+
+  @ApiProperty({ enum: ['TERM', 'SESSION'] })
+  period_type: 'TERM' | 'SESSION';
+
   @ApiProperty({
     description: 'The academic session associated with the fee',
     example: '2023/2024',

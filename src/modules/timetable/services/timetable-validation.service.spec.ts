@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { Logger } from 'winston';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { ClassSubject } from '../../class/entities/class-subject.entity';
 import { Class } from '../../class/entities/class.entity';
 import { Room } from '../../room/entities/room.entity';
 import { Subject } from '../../subject/entities/subject.entity';
@@ -24,6 +25,7 @@ import { TimetableValidationService } from './timetable-validation.service';
 describe('TimetableValidationService', () => {
   let service: TimetableValidationService;
   let classRepository: jest.Mocked<Repository<Class>>;
+  let classSubjectRepository: jest.Mocked<Repository<ClassSubject>>;
   let subjectRepository: jest.Mocked<Repository<Subject>>;
   let teacherRepository: jest.Mocked<Repository<Teacher>>;
   let roomRepository: jest.Mocked<Repository<Room>>;
@@ -57,6 +59,9 @@ describe('TimetableValidationService', () => {
     classRepository = {
       findOne: jest.fn(),
     } as unknown as jest.Mocked<Repository<Class>>;
+    classSubjectRepository = {
+      findOne: jest.fn().mockResolvedValue({ teacher: { id: mockTeacherId } }),
+    } as unknown as jest.Mocked<Repository<ClassSubject>>;
 
     subjectRepository = {
       findOne: jest.fn(),
@@ -82,6 +87,10 @@ describe('TimetableValidationService', () => {
         {
           provide: getRepositoryToken(Class),
           useValue: classRepository,
+        },
+        {
+          provide: getRepositoryToken(ClassSubject),
+          useValue: classSubjectRepository,
         },
         {
           provide: getRepositoryToken(Subject),
@@ -196,6 +205,40 @@ describe('TimetableValidationService', () => {
       });
     });
 
+    it('rejects a timetable teacher who cannot enter results for the class subject', async () => {
+      classRepository.findOne.mockResolvedValue({ id: mockClassId } as Class);
+      subjectRepository.findOne.mockResolvedValue({
+        id: mockSubjectId,
+      } as Subject);
+      teacherRepository.findOne.mockResolvedValue({
+        id: mockTeacherId,
+      } as Teacher);
+      classSubjectRepository.findOne.mockResolvedValue({
+        teacher: { id: 'different-teacher' },
+      } as ClassSubject);
+
+      await expect(service.validateNewSchedule(addScheduleDto)).rejects.toThrow(
+        'The timetable teacher differs from the class subject teacher',
+      );
+    });
+
+    it('requires a subject teacher assignment before adding a lesson', async () => {
+      classRepository.findOne.mockResolvedValue({ id: mockClassId } as Class);
+      subjectRepository.findOne.mockResolvedValue({
+        id: mockSubjectId,
+      } as Subject);
+      teacherRepository.findOne.mockResolvedValue({
+        id: mockTeacherId,
+      } as Teacher);
+      classSubjectRepository.findOne.mockResolvedValue({
+        teacher: null,
+      } as ClassSubject);
+
+      await expect(service.validateNewSchedule(addScheduleDto)).rejects.toThrow(
+        'Assign a teacher to this class subject',
+      );
+    });
+
     it('should throw NotFoundException if subject does not exist', async () => {
       // Setup mocks
       classRepository.findOne.mockResolvedValue({
@@ -211,6 +254,35 @@ describe('TimetableValidationService', () => {
       );
       await expect(service.validateNewSchedule(addScheduleDto)).rejects.toThrow(
         sysMsg.SUBJECT_NOT_FOUND,
+      );
+    });
+  });
+
+  describe('validateUpdateSchedule', () => {
+    it('rejects changing a lesson to a teacher without grade authority', async () => {
+      mockScheduleModelAction.getScheduleWithTimetable = jest
+        .fn()
+        .mockResolvedValue({
+          timetable: { class_id: mockClassId },
+          subject_id: mockSubjectId,
+          teacher_id: mockTeacherId,
+          day: DayOfWeek.MONDAY,
+          start_time: '09:00:00',
+          end_time: '10:00:00',
+        } as Schedule);
+      teacherRepository.findOne.mockResolvedValue({
+        id: 'different-teacher',
+      } as Teacher);
+      classSubjectRepository.findOne.mockResolvedValue({
+        teacher: { id: mockTeacherId },
+      } as ClassSubject);
+
+      await expect(
+        service.validateUpdateSchedule('schedule-1', {
+          teacher_id: 'different-teacher',
+        }),
+      ).rejects.toThrow(
+        'The timetable teacher differs from the class subject teacher',
       );
     });
   });

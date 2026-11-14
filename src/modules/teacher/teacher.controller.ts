@@ -23,6 +23,7 @@ import {
 import { Public } from '../../common/decorators/public.decorator';
 import { RateLimit } from '../../common/decorators/rate-limit.decorator';
 import { RateLimitGuard } from '../../common/guards/rate-limit.guard';
+import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -33,6 +34,7 @@ import {
   UpdateTeacherDto,
   TeacherResponseDto,
   GetTeachersQueryDto,
+  LinkAdminTeacherDto,
 } from './dto';
 import { GeneratePasswordResponseDto } from './dto/generate-password-response.dto';
 import { TeacherService } from './teacher.service';
@@ -43,6 +45,20 @@ import { TeacherService } from './teacher.service';
 @ApiBearerAuth()
 export class TeacherController {
   constructor(private readonly teacherService: TeacherService) {}
+
+  @Post('link-admin')
+  @Roles(UserRole.ADMIN)
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Give an existing admin a teacher profile and role',
+  })
+  @ApiBody({ type: LinkAdminTeacherDto })
+  async linkAdmin(
+    @Body() dto: LinkAdminTeacherDto,
+    @CurrentUser() actor: { id: string },
+  ): Promise<TeacherResponseDto> {
+    return this.teacherService.linkAdmin(dto, actor.id);
+  }
 
   // --- GET: GENERATE PASSWORD (PUBLIC ENDPOINT WITH RATE LIMITING) ---
   @Get('generate-password')
@@ -86,8 +102,9 @@ export class TeacherController {
   })
   async create(
     @Body() createDto: CreateTeacherDto,
+    @CurrentUser() actor: { id: string },
   ): Promise<TeacherResponseDto> {
-    return this.teacherService.create(createDto);
+    return this.teacherService.create(createDto, actor.id);
   }
 
   // --- GET: LIST ALL TEACHERS (PAGINATED / FILTERED) ---
@@ -152,8 +169,9 @@ export class TeacherController {
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() updateDto: UpdateTeacherDto,
+    @CurrentUser() actor: { id: string },
   ): Promise<TeacherResponseDto> {
-    return this.teacherService.update(id, updateDto);
+    return this.teacherService.update(id, updateDto, actor.id);
   }
 
   // --- DELETE: DEACTIVATE TEACHER (ADMIN ONLY) ---
@@ -168,7 +186,10 @@ export class TeacherController {
     description: 'Teacher deactivated successfully',
   })
   @ApiResponse({ status: 404, description: 'Teacher not found' })
-  async remove(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
-    return this.teacherService.remove(id);
+  async remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() actor: { id: string },
+  ): Promise<void> {
+    return this.teacherService.remove(id, actor.id);
   }
 }

@@ -8,12 +8,15 @@ import {
   Post,
   Put,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
 
+import { IRequestWithUser } from '../../common/types';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
 import { UserRole } from '../shared/enums';
 
 import {
@@ -43,24 +46,27 @@ export class TimetableController {
   }
 
   @Post('schedule')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
   @AddScheduleDocs()
-  addSchedule(@Body() dto: AddScheduleDto) {
-    return this.timetableService.addSchedule(dto);
+  addSchedule(@Body() dto: AddScheduleDto, @Req() req: IRequestWithUser) {
+    return this.timetableService.addSchedule(dto, req.user);
   }
 
   @Put('schedule/:schedule_id')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
   @EditScheduleDocs()
   editSchedule(
     @Param('schedule_id') scheduleId: string,
     @Body() dto: UpdateScheduleDto,
+    @Req() req: IRequestWithUser,
   ) {
-    return this.timetableService.editSchedule(scheduleId, dto);
+    return this.timetableService.editSchedule(scheduleId, dto, req.user);
   }
 
   @Patch('schedule/:schedule_id/unassign-room')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.ADMIN)
   @UnassignRoomDocs()
   unassignRoom(@Param('schedule_id') scheduleId: string) {
@@ -87,6 +93,16 @@ export class TimetableController {
     @Param('classId') classId: string,
   ): Promise<GetTimetableResponseDto> {
     return this.timetableService.findByClass(classId);
+  }
+
+  @Get('class/:classId/options')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.TEACHER)
+  getClassScheduleOptions(
+    @Param('classId') classId: string,
+    @Req() req: IRequestWithUser,
+  ) {
+    return this.timetableService.getClassScheduleOptions(classId, req.user);
   }
 
   @ApiExcludeEndpoint()

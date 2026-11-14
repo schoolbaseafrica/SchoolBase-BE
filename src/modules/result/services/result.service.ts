@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { DataSource } from 'typeorm';
@@ -14,10 +15,14 @@ import { ResultEventDto } from 'src/modules/notification/dto/event-trigger.dto';
 import { ResultNotificationService } from 'src/modules/notification/services/result.notification.service';
 
 import * as sysMsg from '../../../constants/system.messages';
+import { AcademicSessionService } from '../../academic-session/academic-session.service';
 import { AcademicSessionModelAction } from '../../academic-session/model-actions/academic-session-actions';
 import { TermModelAction } from '../../academic-term/model-actions';
+import { TermService } from '../../academic-term/term.service';
+import { writeActivityLog } from '../../activity-log/write-activity-log';
 import { ClassStudentModelAction } from '../../class/model-actions/class-student.action';
 import { ClassModelAction } from '../../class/model-actions/class.actions';
+import { StudentSubjectEnrollmentService } from '../../class/services/student-subject-enrollment.service';
 import { GradeSubmissionStatus } from '../../grade/entities';
 import { GradeModelAction } from '../../grade/model-actions';
 import { StudentModelAction } from '../../student/model-actions/student-actions';
@@ -33,7 +38,15 @@ import {
   ResultModelAction,
   ResultSubjectLineModelAction,
 } from '../model-actions';
-import { calculateGradeLetter, getOverallRemark } from '../utils/grading.util';
+import {
+  evaluateGradingPolicy,
+  LEGACY_GRADING_POLICY,
+} from '../policy/grading-policy';
+import { GradingPolicyService } from '../policy/grading-policy.service';
+
+function toNullableNumber(value: number | null | undefined): number | null {
+  return value === null || value === undefined ? null : Number(value);
+}
 
 @Injectable()
 export class ResultService {
@@ -49,11 +62,178 @@ export class ResultService {
     private readonly classStudentModelAction: ClassStudentModelAction,
     private readonly termModelAction: TermModelAction,
     private readonly academicSessionModelAction: AcademicSessionModelAction,
+    @Optional()
+    private readonly academicSessionService: AcademicSessionService | undefined,
+    @Optional()
+    private readonly termService: TermService | undefined,
     private readonly dataSource: DataSource,
     private readonly resultNotificationService: ResultNotificationService,
     private readonly classSubjectModelAction: ClassSubjectModelAction,
+    private readonly gradingPolicyService: GradingPolicyService,
+    private readonly subjectEnrollmentService: StudentSubjectEnrollmentService,
   ) {
     this.logger = baseLogger.child({ context: ResultService.name });
+  }
+
+  async getLatestPublication(resultId: string) {
+    const result = await this.resultModelAction.get({
+      identifierOptions: { id: resultId },
+    });
+    if (!result) throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
+    const rows = await this.dataSource.query(
+      `SELECT id, result_id, revision, snapshot, template_id, template_version,
+              grading_policy_version_id, published_by, published_at, correction_reason
+       FROM result_publications WHERE result_id = $1 ORDER BY revision DESC LIMIT 1`,
+      [resultId],
+    );
+    return rows[0] ?? null;
+  }
+
+  async getReportTemplate() {
+    const rows = await this.dataSource.query(
+      `SELECT COALESCE(settings.template_id, 'schoolbase-current-default') AS template_id,
+              COALESCE(settings.template_version, 1) AS template_version
+       FROM schools school LEFT JOIN report_template_settings settings ON settings.school_id = school.id
+       ORDER BY school.created_at LIMIT 1`,
+    );
+    if (rows.length !== 1)
+      throw new NotFoundException('School identity is unavailable');
+    return rows[0];
+  }
+
+  async setReportTemplate(templateId: string, actorId: string) {
+    if (
+      !['schoolbase-current-default', 'academic-atlas'].includes(templateId)
+    ) {
+      throw new BadRequestException('Unknown report template');
+    }
+    return this.dataSource.transaction(async (manager) => {
+      const school = await manager.query(
+        'SELECT id FROM schools ORDER BY created_at LIMIT 1',
+      );
+      if (school.length !== 1)
+        throw new NotFoundException('School identity is unavailable');
+      const rows = await manager.query(
+        `INSERT INTO report_template_settings (school_id, template_id, template_version, updated_by)
+         VALUES ($1, $2, 1, $3)
+         ON CONFLICT (school_id) DO UPDATE SET template_id = EXCLUDED.template_id,
+           template_version = EXCLUDED.template_version, updated_by = EXCLUDED.updated_by,
+           updated_at = now()
+         RETURNING template_id, template_version`,
+        [school[0].id, templateId, actorId],
+      );
+      await writeActivityLog(manager, {
+        actorUserId: actorId,
+        entityType: 'SCHOOL',
+        entityId: school[0].id,
+        action: 'UPDATE',
+        description: 'Report template changed',
+        newValues: { template_id: templateId, template_version: 1 },
+      });
+      return rows[0];
+    });
+  }
+
+  async publishResult(
+    resultId: string,
+    actorId: string,
+    correctionReason?: string,
+  ) {
+    return this.dataSource.transaction(async (manager) => {
+      const locked = await manager.query(
+        'SELECT id FROM results WHERE id = $1 FOR UPDATE',
+        [resultId],
+      );
+      if (!locked.length) throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
+      const result = await manager.getRepository(Result).findOne({
+        where: { id: resultId },
+        relations: {
+          student: { user: true },
+          class: true,
+          term: true,
+          academicSession: true,
+          subject_lines: { subject: true },
+        },
+      });
+      if (!result) throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
+      if (
+        !result.generated_at ||
+        !result.subject_lines?.length ||
+        result.subject_count !== result.subject_lines.length ||
+        result.average_score === null ||
+        !result.grade_letter
+      ) {
+        throw new BadRequestException(
+          'Generate a complete result with subject scores before publishing',
+        );
+      }
+      const previous = await manager.query(
+        'SELECT revision FROM result_publications WHERE result_id = $1 ORDER BY revision DESC LIMIT 1',
+        [resultId],
+      );
+      const revision = previous.length ? Number(previous[0].revision) + 1 : 1;
+      if (revision > 1 && !correctionReason?.trim()) {
+        throw new BadRequestException(
+          'A correction reason is required to publish a new revision',
+        );
+      }
+      const school = await manager.query(
+        'SELECT id, name, address, logo_url, primary_color FROM schools ORDER BY created_at LIMIT 1',
+      );
+      if (school.length !== 1) {
+        throw new BadRequestException(
+          'School identity is unavailable for publication',
+        );
+      }
+      const templateSettings = await manager.query(
+        'SELECT template_id, template_version FROM report_template_settings WHERE school_id = $1',
+        [school[0].id],
+      );
+      const subjectGroups = await manager.query(
+        `SELECT subject_id, is_elective FROM class_subjects
+         WHERE class_id = $1 AND subject_id = ANY($2::uuid[])`,
+        [result.class_id, result.subject_lines.map((line) => line.subject_id)],
+      );
+      const policy = result.grading_policy_version_id
+        ? await manager.query(
+            'SELECT policy_key, version, definition FROM grading_policy_versions WHERE id = $1',
+            [result.grading_policy_version_id],
+          )
+        : [];
+      if (result.grading_policy_version_id && policy.length !== 1) {
+        throw new BadRequestException(
+          'Result grading policy version is unavailable',
+        );
+      }
+      const snapshot = {
+        result: this.transformToResponseDto(result),
+        school: school[0],
+        subjectGroups,
+        gradingPolicy: policy[0] ?? {
+          policy_key: 'schoolbase-classic',
+          version: 1,
+          definition: LEGACY_GRADING_POLICY,
+        },
+      };
+      const inserted = await manager.query(
+        `INSERT INTO result_publications
+          (result_id, revision, snapshot, grading_policy_version_id, template_id, template_version, published_by, correction_reason)
+         VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, $8)
+         RETURNING id, result_id, revision, snapshot, template_id, template_version,
+                   grading_policy_version_id, published_by, published_at, correction_reason`,
+        [
+          resultId,
+          revision,
+          JSON.stringify(snapshot),
+          result.grading_policy_version_id,
+          templateSettings[0]?.template_id ?? 'schoolbase-current-default',
+          templateSettings[0]?.template_version ?? 1,
+          actorId,
+          correctionReason?.trim() ?? null,
+        ],
+      );
+      return inserted[0];
+    });
   }
 
   /**
@@ -65,9 +245,12 @@ export class ResultService {
 
     const filters: Partial<GetResultsQueryDto> = {};
 
-    if (query.academic_session_id)
-      filters.academic_session_id = query.academic_session_id;
-    if (query.term_id) filters.term_id = query.term_id;
+    const period = await this.resolveListPeriod(
+      query.academic_session_id,
+      query.term_id,
+    );
+    if (period.sessionId) filters.academic_session_id = period.sessionId;
+    if (period.termId) filters.term_id = period.termId;
     if (query.class_id) filters.class_id = query.class_id;
     if (query.student_id) filters.student_id = query.student_id;
 
@@ -85,12 +268,8 @@ export class ResultService {
       paginationPayload: { page, limit },
     });
 
-    if (!results.payload || results.payload.length === 0) {
-      throw new NotFoundException(sysMsg.RESULT_NOT_FOUND);
-    }
-
     // Transform to response DTOs
-    const transformedResults: ResultResponseDto[] = results.payload.map(
+    const transformedResults: ResultResponseDto[] = (results.payload ?? []).map(
       (result) => this.transformToResponseDto(result),
     );
 
@@ -131,13 +310,12 @@ export class ResultService {
       student_id: studentId,
     };
 
-    if (query.term_id) {
-      filterOptions.term_id = query.term_id;
-    }
-
-    if (query.academic_session_id) {
-      filterOptions.academic_session_id = query.academic_session_id;
-    }
+    const period = await this.resolveListPeriod(
+      query.academic_session_id,
+      query.term_id,
+    );
+    if (period.termId) filterOptions.term_id = period.termId;
+    if (period.sessionId) filterOptions.academic_session_id = period.sessionId;
 
     const page = query.page || 1;
     const limit = query.limit || 10;
@@ -155,8 +333,28 @@ export class ResultService {
       paginationPayload: { page, limit },
     });
 
-    const transformedResults = results.payload.map((result) =>
-      this.transformToResponseDto(result),
+    const resultIds = results.payload.map((result) => result.id);
+    const publications = resultIds.length
+      ? await this.dataSource.query(
+          `SELECT DISTINCT ON (result_id) result_id, snapshot
+           FROM result_publications
+           WHERE result_id = ANY($1::uuid[])
+           ORDER BY result_id, revision DESC`,
+          [resultIds],
+        )
+      : [];
+    const publishedByResultId = new Map<string, ResultResponseDto>(
+      publications.map(
+        (publication: {
+          result_id: string;
+          snapshot: { result: ResultResponseDto };
+        }) => [publication.result_id, publication.snapshot.result],
+      ),
+    );
+    const transformedResults = results.payload.map(
+      (result) =>
+        publishedByResultId.get(result.id) ??
+        this.transformToResponseDto(result),
     );
 
     return {
@@ -165,12 +363,23 @@ export class ResultService {
     };
   }
 
+  private async resolveListPeriod(sessionId?: string, termId?: string) {
+    if (sessionId || termId) return { sessionId, termId };
+    if (!this.academicSessionService || !this.termService) return {};
+    const [session, term] = await Promise.all([
+      this.academicSessionService.activeSessions(),
+      this.termService.getActiveTerm(),
+    ]);
+    return { sessionId: session.data.id, termId: term.id };
+  }
+
   /* Generate results for all students in a class for a specific term
    */
   async generateClassResults(
     classId: string,
     termId: string,
     academicSessionId?: string,
+    actorUserId?: string,
   ): Promise<{
     message: string;
     generated_count: number;
@@ -188,6 +397,11 @@ export class ResultService {
 
     // Use class's session if not provided
     const sessionId = academicSessionId || classEntity.academicSession.id;
+    if (sessionId !== classEntity.academicSession.id) {
+      throw new BadRequestException(
+        'Class does not belong to academic session',
+      );
+    }
 
     // Validate term and session
     const term = await this.termModelAction.get({
@@ -210,6 +424,11 @@ export class ResultService {
     if (!session) {
       throw new NotFoundException(sysMsg.ACADEMIC_SESSION_NOT_FOUND);
     }
+
+    const gradingPolicy = await this.gradingPolicyService.resolve(
+      termId,
+      classId,
+    );
 
     // Get all active students in the class for this session
     const studentAssignments = await this.classStudentModelAction.list({
@@ -286,14 +505,6 @@ export class ResultService {
     // Calculate positions
     const resultsWithPositions = this.calculatePositions(studentResults);
 
-    // 1. GET TOTAL EXPECTED SUBJECTS FOR THE CLASS
-    // We need this to compare against the student's processed results
-    const classSubjectsList = await this.classSubjectModelAction.list({
-      filterRecordOptions: { class: { id: classId } },
-      paginationPayload: { limit: 1000, page: 1 },
-    });
-    const totalClassSubjects = classSubjectsList.payload.length;
-
     // this holds data needed for notifications
     const studentsToNotify: { result_id: string; student_id: string }[] = [];
     // Save all results in a transaction
@@ -323,8 +534,13 @@ export class ResultService {
         result.academic_session_id = sessionId;
         result.total_score = resultData.total_score;
         result.average_score = resultData.average_score;
-        result.grade_letter = calculateGradeLetter(resultData.average_score);
-        result.remark = getOverallRemark(resultData.average_score);
+        const overallBand = evaluateGradingPolicy(
+          resultData.average_score,
+          gradingPolicy.definition,
+        );
+        result.grade_letter = overallBand?.grade ?? null;
+        result.remark = overallBand?.remark ?? 'No grades available';
+        result.grading_policy_version_id = gradingPolicy.id;
         result.position = resultData.position;
         result.subject_count = resultData.subject_count;
         result.generated_at = new Date();
@@ -344,20 +560,31 @@ export class ResultService {
           const line = new ResultSubjectLine();
           line.result_id = savedResult.id;
           line.subject_id = grade.subject_id;
-          line.ca_score = grade.ca_score ? Number(grade.ca_score) : null;
-          line.exam_score = grade.exam_score ? Number(grade.exam_score) : null;
-          line.total_score = grade.total_score
-            ? Number(grade.total_score)
-            : null;
-          line.grade_letter = grade.grade_letter;
-          line.remark = grade.comment || getOverallRemark(grade.total_score);
+          line.ca_score = toNullableNumber(grade.ca_score);
+          line.exam_score = toNullableNumber(grade.exam_score);
+          line.total_score = toNullableNumber(grade.total_score);
+          const subjectBand = evaluateGradingPolicy(
+            grade.total_score,
+            gradingPolicy.definition,
+          );
+          line.grade_letter = subjectBand?.grade ?? null;
+          line.remark =
+            grade.comment || subjectBand?.remark || 'No grades available';
           return line;
         });
 
         await queryRunner.manager.save(ResultSubjectLine, subjectLines);
 
-        // check if the student has a grade for every subject in the class
-        if (resultData.subject_count >= totalClassSubjects) {
+        const expectedSubjects =
+          await this.subjectEnrollmentService.expectedSubjectCount(
+            resultData.student_id,
+            classId,
+            termId,
+          );
+        if (
+          expectedSubjects > 0 &&
+          resultData.subject_count === expectedSubjects
+        ) {
           studentsToNotify.push({
             result_id: savedResult.id,
             student_id: resultData.student_id,
@@ -367,10 +594,22 @@ export class ResultService {
         generatedCount++;
       }
 
+      if (actorUserId) {
+        await writeActivityLog(queryRunner.manager, {
+          actorUserId,
+          entityType: 'RESULT',
+          entityId: classId,
+          action: 'PUBLISH',
+          description: 'Class results generated and published',
+          metadata: {
+            term_id: termId,
+            academic_session_id: sessionId,
+            count: generatedCount,
+          },
+        });
+      }
       await queryRunner.commitTransaction();
-      /* A non-blocking call (no await) is used so notification
-      errors don't fail the HTTP response. */
-      this.triggerResultNotifications(
+      await this.triggerResultNotifications(
         studentsToNotify,
         classId,
         termId,
@@ -414,8 +653,7 @@ export class ResultService {
       `Triggering result notifications for ${payloads.length} students`,
     );
 
-    // Process in background
-    Promise.allSettled(
+    const outcomes = await Promise.allSettled(
       payloads.map((payload) => {
         const eventDto: ResultEventDto = {
           result_id: payload.result_id,
@@ -427,11 +665,14 @@ export class ResultService {
         };
         return this.resultNotificationService.handleResultPublication(eventDto);
       }),
-    ).catch((err) =>
-      this.logger.error('Error triggering result notifications', {
-        error: err,
-      }),
     );
+    for (const outcome of outcomes) {
+      if (outcome.status === 'rejected') {
+        this.logger.error('Error triggering result notifications', {
+          error: outcome.reason,
+        });
+      }
+    }
   }
 
   /**
@@ -478,9 +719,9 @@ export class ResultService {
         subjectGradesMap.set(subjectId, {
           subject_id: subjectId,
           subject_name: subjectName,
-          ca_score: grade.ca_score ? Number(grade.ca_score) : null,
-          exam_score: grade.exam_score ? Number(grade.exam_score) : null,
-          total_score: grade.total_score ? Number(grade.total_score) : null,
+          ca_score: toNullableNumber(grade.ca_score),
+          exam_score: toNullableNumber(grade.exam_score),
+          total_score: toNullableNumber(grade.total_score),
           grade_letter: grade.grade_letter,
           comment: grade.comment,
         });
@@ -669,8 +910,8 @@ export class ResultService {
         name: result.academicSession?.name || '',
         academicYear: result.academicSession?.academicYear,
       },
-      total_score: result.total_score ? Number(result.total_score) : null,
-      average_score: result.average_score ? Number(result.average_score) : null,
+      total_score: toNullableNumber(result.total_score),
+      average_score: toNullableNumber(result.average_score),
       grade_letter: result.grade_letter,
       position: result.position,
       remark: result.remark,
@@ -682,9 +923,9 @@ export class ResultService {
             id: line.subject?.id || '',
             name: line.subject?.name || '',
           },
-          ca_score: line.ca_score ? Number(line.ca_score) : null,
-          exam_score: line.exam_score ? Number(line.exam_score) : null,
-          total_score: line.total_score ? Number(line.total_score) : null,
+          ca_score: toNullableNumber(line.ca_score),
+          exam_score: toNullableNumber(line.exam_score),
+          total_score: toNullableNumber(line.total_score),
           grade_letter: line.grade_letter,
           remark: line.remark,
         })) || [],
