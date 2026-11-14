@@ -329,6 +329,10 @@ describe('ResultService', () => {
         .mockResolvedValueOnce([{ id: mockResult.id }])
         .mockResolvedValueOnce([])
         .mockResolvedValueOnce([{ id: 'school1', name: 'SchoolBase' }])
+        .mockResolvedValueOnce([
+          { template_id: 'academic-atlas', template_version: 1 },
+        ])
+        .mockResolvedValueOnce([{ subject_id: 'subject1', is_elective: false }])
         .mockResolvedValueOnce([{ id: 'publication1', revision: 1 }]);
       const manager = {
         query,
@@ -346,11 +350,15 @@ describe('ResultService', () => {
       await expect(
         service.publishResult(mockResult.id, 'admin1'),
       ).resolves.toMatchObject({ revision: 1 });
-      const insert = query.mock.calls[3][1] as unknown[];
+      const insert = query.mock.calls[5][1] as unknown[];
       const snapshot = JSON.parse(insert[2] as string);
       expect(snapshot.result.student.registration_number).toBe('REG001');
       expect(snapshot.school.name).toBe('SchoolBase');
       expect(snapshot.gradingPolicy.policy_key).toBe('schoolbase-classic');
+      expect(snapshot.subjectGroups).toEqual([
+        { subject_id: 'subject1', is_elective: false },
+      ]);
+      expect(insert[4]).toBe('academic-atlas');
     });
 
     it('requires a reason before replacing the published revision', async () => {

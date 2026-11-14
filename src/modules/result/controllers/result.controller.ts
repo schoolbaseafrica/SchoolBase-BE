@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -18,7 +19,7 @@ import {
   ApiResponse,
   ApiBearerAuth,
 } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 import { StudentModelAction } from 'src/modules/student/model-actions';
 
@@ -56,6 +57,11 @@ class PublishResultDto {
   correction_reason?: string;
 }
 
+class SelectReportTemplateDto {
+  @IsIn(['schoolbase-current-default', 'academic-atlas'])
+  template_id: string;
+}
+
 @ApiTags('Results')
 @ApiBearerAuth()
 @Controller('results')
@@ -65,6 +71,24 @@ export class ResultController {
     private readonly resultService: ResultService,
     private readonly studentModelAction: StudentModelAction,
   ) {}
+
+  @Get('report-template')
+  @Roles(UserRole.ADMIN)
+  getReportTemplate() {
+    return this.resultService.getReportTemplate();
+  }
+
+  @Put('report-template')
+  @Roles(UserRole.ADMIN)
+  selectReportTemplate(
+    @Body() dto: SelectReportTemplateDto,
+    @Req() req: IRequestWithUser,
+  ) {
+    return this.resultService.setReportTemplate(
+      dto.template_id,
+      req.user.userId,
+    );
+  }
 
   @Post(':resultId/publish')
   @Roles(UserRole.ADMIN)

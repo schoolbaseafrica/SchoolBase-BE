@@ -87,7 +87,10 @@ export class GradeSubmissionController {
     @Req() req: IRequestWithUser,
     @Query() listDto: ListGradeSubmissionsDto,
   ) {
-    if (req.user.roles.includes(UserRole.TEACHER)) {
+    if (
+      req.user.roles.includes(UserRole.TEACHER) &&
+      !req.user.roles.includes(UserRole.ADMIN)
+    ) {
       const teacherId = req.user.teacher_id;
       if (!teacherId) {
         throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);

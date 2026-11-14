@@ -116,7 +116,10 @@ export class ClassSubjectController {
     @Req() req: IRequestWithUser,
     @Query() query: ListClassSubjectQueryDto,
   ) {
-    if (req.user.roles.includes(UserRole.TEACHER)) {
+    if (
+      req.user.roles.includes(UserRole.TEACHER) &&
+      !req.user.roles.includes(UserRole.ADMIN)
+    ) {
       const teacherId = req.user.teacher_id;
       if (!teacherId) {
         throw new BadRequestException(sysMsg.TEACHER_PROFILE_NOT_FOUND);

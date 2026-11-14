@@ -89,6 +89,51 @@ export class ResultService {
     return rows[0] ?? null;
   }
 
+  async getReportTemplate() {
+    const rows = await this.dataSource.query(
+      `SELECT COALESCE(settings.template_id, 'schoolbase-current-default') AS template_id,
+              COALESCE(settings.template_version, 1) AS template_version
+       FROM schools school LEFT JOIN report_template_settings settings ON settings.school_id = school.id
+       ORDER BY school.created_at LIMIT 1`,
+    );
+    if (rows.length !== 1)
+      throw new NotFoundException('School identity is unavailable');
+    return rows[0];
+  }
+
+  async setReportTemplate(templateId: string, actorId: string) {
+    if (
+      !['schoolbase-current-default', 'academic-atlas'].includes(templateId)
+    ) {
+      throw new BadRequestException('Unknown report template');
+    }
+    return this.dataSource.transaction(async (manager) => {
+      const school = await manager.query(
+        'SELECT id FROM schools ORDER BY created_at LIMIT 1',
+      );
+      if (school.length !== 1)
+        throw new NotFoundException('School identity is unavailable');
+      const rows = await manager.query(
+        `INSERT INTO report_template_settings (school_id, template_id, template_version, updated_by)
+         VALUES ($1, $2, 1, $3)
+         ON CONFLICT (school_id) DO UPDATE SET template_id = EXCLUDED.template_id,
+           template_version = EXCLUDED.template_version, updated_by = EXCLUDED.updated_by,
+           updated_at = now()
+         RETURNING template_id, template_version`,
+        [school[0].id, templateId, actorId],
+      );
+      await writeActivityLog(manager, {
+        actorUserId: actorId,
+        entityType: 'SCHOOL',
+        entityId: school[0].id,
+        action: 'UPDATE',
+        description: 'Report template changed',
+        newValues: { template_id: templateId, template_version: 1 },
+      });
+      return rows[0];
+    });
+  }
+
   async publishResult(
     resultId: string,
     actorId: string,
@@ -140,6 +185,15 @@ export class ResultService {
           'School identity is unavailable for publication',
         );
       }
+      const templateSettings = await manager.query(
+        'SELECT template_id, template_version FROM report_template_settings WHERE school_id = $1',
+        [school[0].id],
+      );
+      const subjectGroups = await manager.query(
+        `SELECT subject_id, is_elective FROM class_subjects
+         WHERE class_id = $1 AND subject_id = ANY($2::uuid[])`,
+        [result.class_id, result.subject_lines.map((line) => line.subject_id)],
+      );
       const policy = result.grading_policy_version_id
         ? await manager.query(
             'SELECT policy_key, version, definition FROM grading_policy_versions WHERE id = $1',
@@ -154,6 +208,7 @@ export class ResultService {
       const snapshot = {
         result: this.transformToResponseDto(result),
         school: school[0],
+        subjectGroups,
         gradingPolicy: policy[0] ?? {
           policy_key: 'schoolbase-classic',
           version: 1,
@@ -171,8 +226,8 @@ export class ResultService {
           revision,
           JSON.stringify(snapshot),
           result.grading_policy_version_id,
-          'schoolbase-current-default',
-          1,
+          templateSettings[0]?.template_id ?? 'schoolbase-current-default',
+          templateSettings[0]?.template_version ?? 1,
           actorId,
           correctionReason?.trim() ?? null,
         ],
