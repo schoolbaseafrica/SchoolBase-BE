@@ -886,7 +886,7 @@ export class StudentService {
     }
 
     const terms: Array<{ id: string }> = await this.dataSource.query(
-      `SELECT id FROM terms WHERE id = $1 AND session_id = $2 AND deleted_at IS NULL`,
+      `SELECT id FROM terms WHERE id = $1::uuid AND session_id = $2::uuid AND deleted_at IS NULL`,
       [termId, sessionId],
     );
     if (!terms.length) {
@@ -899,8 +899,8 @@ export class StudentService {
       await this.dataSource.query(
         `SELECT c.id, c.name || CASE WHEN c.arm IS NULL OR c.arm = '' THEN '' ELSE ' ' || c.arm END AS name
        FROM class_students cs JOIN class c ON c.id = cs.class_id
-       WHERE cs.student_id = $1 AND cs.session_id = $2 AND cs.is_active = true
-         AND c.academic_session_id = $2 AND c.is_deleted IS NOT TRUE
+       WHERE cs.student_id = $1::uuid AND cs.session_id = $2::text AND cs.is_active = true
+         AND c.academic_session_id = $2::uuid AND c.is_deleted IS NOT TRUE
        ORDER BY cs.created_at DESC LIMIT 1`,
         [studentId, sessionId],
       );
